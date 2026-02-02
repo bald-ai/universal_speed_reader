@@ -9,7 +9,6 @@ import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import SettingsModal from "@/components/reader/SettingsModal";
 import ChapterMenu from "@/components/reader/ChapterMenu";
-import ProgressBar from "@/components/shared/ProgressBar";
 
 import { getTokensForParagraph, getWordCountForParagraph } from "@/lib/utils/tokenCache";
 import type { Chapter, Paragraph } from "@/types/book";
@@ -21,7 +20,6 @@ type ParagraphRowProps = {
   highlightedWordIndex: number | null;
   onWordClick: (paragraphId: number, wordIndex: number) => void;
   fontSizeClass: string;
-  fontFamilyClass: string;
 };
 
 const ParagraphRow = memo(function ParagraphRow({
@@ -30,10 +28,9 @@ const ParagraphRow = memo(function ParagraphRow({
   highlightedWordIndex,
   onWordClick,
   fontSizeClass,
-  fontFamilyClass,
 }: ParagraphRowProps) {
   return (
-    <div className={`${fontFamilyClass} ${fontSizeClass} leading-relaxed text-neutral-200`}>
+    <div className={`font-editorial reading-text text-neutral-300 ${fontSizeClass}`}>
       {words.map((word, index) => {
         const isHighlighted = highlightedWordIndex === index;
         return (
@@ -42,10 +39,10 @@ const ParagraphRow = memo(function ParagraphRow({
             data-word-index={index}
             data-paragraph-id={paragraph.id}
             onClick={() => onWordClick(paragraph.id, index)}
-            className={`cursor-pointer rounded px-0.5 transition-colors duration-150 ${
+            className={`reading-word ${
               isHighlighted
-                ? "bg-amber-300/90 text-neutral-900"
-                : "hover:bg-neutral-800/70"
+                ? "reading-word-highlighted"
+                : ""
             }`}
           >
             {word}
@@ -75,28 +72,16 @@ export default function NormalReadingMode() {
   const fontSizeClass = useMemo(() => {
     switch (settings.fontSize) {
       case "small":
-        return "text-sm";
+        return "text-reading-sm";
       case "large":
-        return "text-lg";
+        return "text-reading-lg";
       case "xl":
-        return "text-xl";
+        return "text-reading-xl";
       case "medium":
       default:
-        return "text-base";
+        return "text-reading-base";
     }
   }, [settings.fontSize]);
-
-  const fontFamilyClass = useMemo(() => {
-    switch (settings.fontFamily) {
-      case "serif":
-        return "font-serif";
-      case "monospace":
-        return "font-mono";
-      case "sans-serif":
-      default:
-        return "font-sans";
-    }
-  }, [settings.fontFamily]);
 
   const paragraphIndexById = useMemo(() => {
     if (!book) return new Map<number, number>();
@@ -315,80 +300,80 @@ export default function NormalReadingMode() {
   const virtualItems = rowVirtualizer.getVirtualItems();
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950">
-      {/* Header with glassmorphism on scroll */}
+    <div className="flex h-screen flex-col bg-[#0a0a0a]">
+      {/* Header - minimal, floating */}
       <header 
-        className={`flex items-center gap-3 px-4 py-3 transition-all duration-300 z-20 ${
+        className={`flex items-center gap-4 px-6 py-4 transition-all duration-500 z-20 ${
           isScrolled 
-            ? "bg-neutral-950/90 backdrop-blur-xl border-b border-neutral-800/80 shadow-lg shadow-black/20" 
-            : "bg-neutral-950 border-b border-transparent"
+            ? "glass border-b border-neutral-800/50" 
+            : "bg-transparent"
         }`}
       >
         <button
           type="button"
           onClick={handleBack}
-          className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 
-            px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 
-            transition-all duration-150 hover:scale-105 active:scale-95"
+          className="group flex items-center gap-2 rounded-full px-3 py-2 text-neutral-500 hover:text-neutral-300 transition-colors duration-200"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-4 h-4 transition-transform duration-200 group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
-          <span className="hidden sm:inline">Back</span>
+          <span className="text-xs tracking-wide hidden sm:inline">Back</span>
         </button>
 
         <button
           type="button"
           onClick={() => setShowChapterMenu(true)}
-          className="flex-1 truncate text-center hover:scale-[1.02] transition-transform duration-150"
+          className="flex-1 truncate text-center py-1"
         >
           {currentChapter ? (
             <div className="flex flex-col items-center">
-              <span className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+              <span className="text-[9px] uppercase tracking-[0.25em] text-neutral-600 font-medium">
                 Chapter {currentChapter.index + 1}
               </span>
-              <span className="text-sm text-neutral-200 font-medium truncate max-w-[200px]">
+              <span className="text-sm text-neutral-400 font-medium truncate max-w-[200px] mt-0.5">
                 {currentChapter.title}
               </span>
             </div>
           ) : (
-            <span className="text-sm text-neutral-400">Full book</span>
+            <span className="text-sm text-neutral-500">Reading</span>
           )}
         </button>
 
         <button
           type="button"
           onClick={() => setShowSettings(true)}
-          className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 
-            px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 
-            transition-all duration-150 hover:scale-105 active:scale-95"
+          className="group flex items-center gap-2 rounded-full px-3 py-2 text-neutral-500 hover:text-neutral-300 transition-colors duration-200"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.212 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
-          <span className="hidden sm:inline">Settings</span>
         </button>
       </header>
 
-      {/* Progress Bar Section */}
-      <div className="px-4 pt-3 pb-2">
-        <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-2">
+      {/* Progress Bar - subtle line */}
+      <div className="px-6 pt-2 pb-4">
+        <div className="flex items-center justify-between text-[10px] tracking-wide text-neutral-600 mb-2">
           <span>
-            {currentChapter ? `Chapter ${currentChapter.index + 1}` : "Progress"}
+            {currentChapter ? `Ch. ${currentChapter.index + 1}` : "Progress"}
           </span>
-          <span className="font-medium text-neutral-400">
+          <span className="font-medium text-neutral-500">
             {progressPercent}%
           </span>
         </div>
-        <ProgressBar value={progressPercent} />
+        <div className="h-[2px] bg-neutral-800 rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-gradient-to-r from-amber-500/80 to-amber-400/80 transition-all duration-300 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
       </div>
 
       {/* Reading Content */}
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 pb-20 pt-4"
+        className="flex-1 overflow-y-auto reading-container pb-32 pt-6"
       >
         <div
           style={{
@@ -419,7 +404,7 @@ export default function NormalReadingMode() {
                   width: "100%",
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
-                className="pb-4"
+                className="reading-paragraph"
               >
                 <ParagraphRow
                   paragraph={paragraph}
@@ -427,7 +412,6 @@ export default function NormalReadingMode() {
                   highlightedWordIndex={highlightedWordIndex}
                   onWordClick={handleWordClick}
                   fontSizeClass={fontSizeClass}
-                  fontFamilyClass={fontFamilyClass}
                 />
               </div>
             );
@@ -435,23 +419,23 @@ export default function NormalReadingMode() {
         </div>
       </div>
 
-      {/* Speed Read FAB */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 pb-6 z-10">
+      {/* Speed Read FAB - minimal pill */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 pb-8 z-10">
         <motion.button
           type="button"
           onClick={handleResumeSpeedReading}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
           initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 0.6, y: 0 }}
-          transition={{ delay: 0.5, duration: 0.3 }}
-          className="pointer-events-auto flex items-center gap-2 rounded-xl bg-neutral-800/50
-            text-neutral-400 text-sm font-normal backdrop-blur-sm
-            px-4 py-2 border border-neutral-700/30 hover:border-neutral-600/50 hover:text-neutral-300
-            transition-all duration-200 hover:bg-neutral-800/70"
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5, duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
+          className="pointer-events-auto flex items-center gap-2.5 rounded-full glass-subtle
+            text-neutral-400 text-xs font-medium tracking-wide
+            px-5 py-2.5 border border-neutral-800/50 hover:border-neutral-700/50 hover:text-neutral-300
+            transition-all duration-300 group"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+          <svg className="w-3.5 h-3.5 text-amber-500/70 group-hover:text-amber-500 transition-colors" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z"/>
           </svg>
           Speed Read
         </motion.button>
