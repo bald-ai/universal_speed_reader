@@ -1,8 +1,6 @@
-"use client";
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useRouter } from "next/navigation";
+import { useLocation } from "wouter";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -27,7 +25,7 @@ function calculateDelayForWord(targetWpm: number, rampIndex: number, rampUpWords
 }
 
 export default function SpeedReadingMode() {
-  const router = useRouter();
+  const [, setLocation] = useLocation();
   const { book } = useBook();
   const { position, setMode, setPosition, setHighlightedWord, saveProgress } = useReading();
   const { settings, updateSettings } = useSettings();
@@ -130,7 +128,7 @@ export default function SpeedReadingMode() {
 
   const handleBackToLibrary = () => {
     saveProgress();
-    router.push("/");
+    setLocation("/");
   };
 
   const handlePause = () => {

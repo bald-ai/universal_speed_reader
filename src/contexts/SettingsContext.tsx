@@ -1,13 +1,9 @@
-"use client";
-
 import {
   createContext,
   useContext,
   useEffect,
   useState,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction
 } from "react";
 
 export type Theme = "light" | "dark";
@@ -32,13 +28,6 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
-
-function useIsomorphicLayoutEffect(effect: () => void | (() => void), deps: React.DependencyList) {
-  const useEffectHook: typeof useEffect =
-    typeof window === "undefined" ? (useEffect as Dispatch<SetStateAction<unknown>>) && useEffect : useEffect;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffectHook(effect, deps);
-}
 
 function getInitialSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;

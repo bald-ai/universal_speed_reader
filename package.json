@@ -3,24 +3,26 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "prebuild": "tsx scripts/process-epub.ts",
-    "build": "npm run prebuild && next build",
-    "start": "next start",
-    "lint": "next lint",
+    "dev": "vite",
+    "prebuild": "bun scripts/process-epub.ts",
+    "build": "npm run prebuild && tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "playwright": "playwright test",
     "runner:start": "node scripts/local-runner.mjs",
     "screenshots": "playwright test tests/visual/ui-screenshots.spec.ts",
-    "daytona:screenshots": "tsx scripts/daytona-ui-screenshots.ts"
+    "daytona:screenshots": "bun scripts/daytona-ui-screenshots.ts"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.18",
+    "@vitejs/plugin-react": "^5.1.3",
     "cheerio": "^1.0.0-rc.12",
     "epub2": "^3.0.2",
     "framer-motion": "^12.29.2",
-    "next": "14.2.5",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "vite": "^7.3.1",
+    "wouter": "^3.9.0"
   },
   "devDependencies": {
     "@daytonaio/sdk": "^0.138.0",
@@ -31,7 +33,6 @@
     "@types/react-dom": "^18.2.22",
     "autoprefixer": "^10.4.16",
     "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.5",
     "postcss": "^8.4.35",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.7.0",

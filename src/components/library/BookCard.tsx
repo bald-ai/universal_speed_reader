@@ -1,16 +1,4 @@
-"use client";
-
-import dynamic from "next/dynamic";
-
-const MotionButton = dynamic(
-  () => import("framer-motion").then((m) => ({ default: m.motion.button })),
-  { ssr: false }
-);
-
-const MotionDiv = dynamic(
-  () => import("framer-motion").then((m) => ({ default: m.motion.div })),
-  { ssr: false }
-);
+import { motion } from "framer-motion";
 import type { MouseEventHandler } from "react";
 
 const BOOK_ICON = (
@@ -42,7 +30,7 @@ export default function BookCard(props: BookCardProps) {
   const clampedProgress = Math.max(0, Math.min(100, Math.round(progress)));
 
   return (
-    <MotionButton
+    <motion.button
       type="button"
       onClick={onClick}
       initial={{ opacity: 0, y: 20 }}
@@ -77,7 +65,7 @@ export default function BookCard(props: BookCardProps) {
               <span className="font-medium text-neutral-300">{clampedProgress}%</span>
             </div>
             <div className="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
-              <MotionDiv
+              <motion.div
                 className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400"
                 initial={{ width: 0 }}
                 animate={{ width: `${clampedProgress}%` }}
@@ -87,6 +75,6 @@ export default function BookCard(props: BookCardProps) {
           </div>
         </div>
       </div>
-    </MotionButton>
+    </motion.button>
   );
 }
