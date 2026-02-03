@@ -1,8 +1,6 @@
-"use client";
-
 import { useEffect, useMemo, useRef, useState, useCallback, memo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
+import { useLocation } from "wouter";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
@@ -58,7 +56,7 @@ const ParagraphRow = memo(function ParagraphRow({
 });
 
 export default function NormalReadingMode() {
-  const router = useRouter();
+  const [, setLocation] = useLocation();
   const { book } = useBook();
   const { position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress } = useReading();
   const { settings } = useSettings();
@@ -176,20 +174,21 @@ export default function NormalReadingMode() {
   });
 
   const findAndScrollToWord = useCallback((target: Position, attempt = 0) => {
-    if (attempt > 10) return; // Max retries
+    if (attempt > 20) return; // Max retries
 
     const wordEl = scrollContainerRef.current?.querySelector(
       `[data-paragraph-id="${target.paragraphId}"][data-word-index="${target.wordIndex}"]`
     );
 
     if (wordEl) {
-      wordEl.scrollIntoView({ block: "center", behavior: "smooth" });
+      wordEl.scrollIntoView({ block: "center", behavior: "auto" });
     } else {
       // If not found, ensure paragraph is in view first
       const index = paragraphIndexById.get(target.paragraphId);
       if (index !== undefined && attempt === 0) {
         // Only scroll virtualizer on first attempt to avoid fighting
-        rowVirtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
+        // Use auto behavior to ensure immediate rendering
+        rowVirtualizer.scrollToIndex(index, { align: "center", behavior: "auto" });
       }
 
       // Retry with backoff
@@ -311,8 +310,8 @@ export default function NormalReadingMode() {
 
   const handleBack = useCallback(() => {
     saveProgress();
-    router.push("/");
-  }, [router, saveProgress]);
+    setLocation("/");
+  }, [setLocation, saveProgress]);
 
   if (!book) return null;
 
