@@ -25,3 +25,11 @@ out/
 
 # Better Context (btca)
 .btca/
+
+# Test artifacts
+test-results/
+test_results/
+test_screenshots/
+
+# Personal
+thoughtnotebook.md

@@ -2,6 +2,24 @@ import type { Book } from "@/types/book";
 import type { Position } from "@/types/reading";
 import { getTokensForParagraph, getWordCountForParagraph } from "./tokenCache";
 
+function getParagraphById(book: Book, id: number) {
+  // Optimization for 1-based sequential IDs (standard for this app)
+  if (id > 0 && id <= book.paragraphs.length) {
+    const p = book.paragraphs[id - 1];
+    if (p && p.id === id) return p;
+  }
+  return book.paragraphs.find((p) => p.id === id);
+}
+
+function getParagraphIndexById(book: Book, id: number) {
+  // Optimization for 1-based sequential IDs
+  if (id > 0 && id <= book.paragraphs.length) {
+    const p = book.paragraphs[id - 1];
+    if (p && p.id === id) return id - 1;
+  }
+  return book.paragraphs.findIndex((p) => p.id === id);
+}
+
 export function findChapterForParagraph(book: Book, paragraphId: number) {
   if (!book.chapters || book.chapters.length === 0) return null;
 
@@ -22,17 +40,21 @@ export function calculatePercentComplete(book: Book, position: Position): number
   if (!book.paragraphs.length || !book.totalWords) return 0;
 
   let wordsBefore = 0;
+  // We need the index of the current paragraph
+  const currentParaIndex = getParagraphIndexById(book, position.paragraphId);
+  
+  if (currentParaIndex === -1) return 0;
 
   for (let i = 0; i < book.paragraphs.length; i += 1) {
     const para = book.paragraphs[i];
     const wordsInParagraph = getWordCountForParagraph(book, para);
 
-    if (i < position.paragraphId) {
+    if (i < currentParaIndex) {
       wordsBefore += wordsInParagraph;
       continue;
     }
 
-    if (i === position.paragraphId) {
+    if (i === currentParaIndex) {
       const clampedIndex = Math.max(0, Math.min(wordsInParagraph, position.wordIndex));
       wordsBefore += clampedIndex;
       break;
@@ -44,7 +66,7 @@ export function calculatePercentComplete(book: Book, position: Position): number
 }
 
 export function getWordAtPosition(book: Book, position: Position): string | null {
-  const paragraph = book.paragraphs[position.paragraphId];
+  const paragraph = getParagraphById(book, position.paragraphId);
   if (!paragraph) return null;
 
   const words = getTokensForParagraph(book, paragraph);
@@ -56,7 +78,7 @@ export function getWordAtPosition(book: Book, position: Position): string | null
 }
 
 export function getNextPosition(book: Book, position: Position): Position | null {
-  const paragraph = book.paragraphs[position.paragraphId];
+  const paragraph = getParagraphById(book, position.paragraphId);
   if (!paragraph) return null;
 
   const words = getTokensForParagraph(book, paragraph);
@@ -67,16 +89,21 @@ export function getNextPosition(book: Book, position: Position): Position | null
     };
   }
 
-  let nextParagraphId = position.paragraphId + 1;
-  while (nextParagraphId < book.paragraphs.length) {
-    const next = book.paragraphs[nextParagraphId];
+  // Move to next paragraph
+  const currentIndex = getParagraphIndexById(book, position.paragraphId);
+  if (currentIndex === -1) return null;
+  
+  let nextIndex = currentIndex + 1;
+  
+  while (nextIndex < book.paragraphs.length) {
+    const next = book.paragraphs[nextIndex];
     const nextWords = getTokensForParagraph(book, next);
     if (nextWords.length === 0) {
-      nextParagraphId += 1;
+      nextIndex += 1;
       continue;
     }
     return {
-      paragraphId: nextParagraphId,
+      paragraphId: next.id,
       wordIndex: 0
     };
   }

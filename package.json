@@ -7,7 +7,11 @@
     "prebuild": "tsx scripts/process-epub.ts",
     "build": "npm run prebuild && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "playwright": "playwright test",
+    "runner:start": "node scripts/local-runner.mjs",
+    "screenshots": "playwright test tests/visual/ui-screenshots.spec.ts",
+    "daytona:screenshots": "tsx scripts/daytona-ui-screenshots.ts"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.18",
@@ -19,6 +23,8 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@daytonaio/sdk": "^0.138.0",
+    "@playwright/test": "^1.58.1",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^20.11.17",
     "@types/react": "^18.2.66",

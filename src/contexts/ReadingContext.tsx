@@ -62,6 +62,23 @@ export function ReadingProvider(props: ProviderProps) {
     bookRef.current = book;
   }, [book]);
 
+  // Ensure valid initial position when book loads
+  useEffect(() => {
+    if (!book || book.paragraphs.length === 0) return;
+
+    // Check if current position points to a valid paragraph
+    // If we're at default (0) and book starts at 1, this will be undefined
+    const isValid = book.paragraphs.some(p => p.id === position.paragraphId);
+    
+    if (!isValid) {
+      // Default to first paragraph if current ID is invalid
+      setPositionState({
+        paragraphId: book.paragraphs[0].id,
+        wordIndex: 0
+      });
+    }
+  }, [book, position.paragraphId]);
+
   // Load last progress on mount
   useEffect(() => {
     if (typeof window === "undefined") return;
