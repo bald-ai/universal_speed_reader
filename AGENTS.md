@@ -13,7 +13,7 @@ Prototype mode (figure out what you want)
 ## Structure
 - `src/types/` — data shapes (Book, Chapter, Paragraph, Position, Mode)
 - `src/components/` — React components
-- `src/app/` — Next.js pages and layout
+- `src/app/` — Vite React app entry and layout
 - `scripts/` — EPUB processing
 - `Devnotes/` — personal task capture, ignore unless user explicitly asks
 
@@ -23,27 +23,8 @@ Prototype mode (figure out what you want)
 - Use existing types, don't reinvent shapes
 
 ## Commands
-- Use npm for this repo
-- Default dev command: `npm run dev`
+- Use bun for this repo
+- Default dev command: `bun run dev`
 
 ## UI Closed-Loop Testing
-- Make UI changes
-- Run `npm run screenshots` (or `npm run playwright` for the full suite)
-- Review outputs in `test_screenshots/` and confirm the visual change
-- Iterate by repeating the change → screenshots → review loop
-- For agent-driven runs, a local runner/listener must be started in a terminal (so the agent can trigger tests over HTTP)
-- Start the local runner in a terminal: `npm run runner:start`
-- Runner default port: `7331` (override with `RUNNER_PORT` or `PORT`)
-- Follow user instructions for testing flows exactly. Do not add extra screenshots or steps unless explicitly requested.
-- Trigger screenshots over HTTP from another terminal:
-  ```bash
-  curl -s -X POST http://127.0.0.1:7331/run \
-    -H 'content-type: application/json' \
-    -d '{"task":"screenshots"}'
-  ```
-- Trigger the full Playwright suite over HTTP:
-  ```bash
-  curl -s -X POST http://127.0.0.1:7331/run \
-    -H 'content-type: application/json' \
-    -d '{"task":"playwright"}'
-  ```
+Not set up in this repo.

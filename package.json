@@ -3,15 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "vite",
+    "dev:vite": "vite",
+    "tts:server": "python3 tools/tts-server/server.py",
+    "dev": "bun scripts/dev.mjs",
     "prebuild": "bun scripts/process-epub.ts",
-    "build": "npm run prebuild && tsc && vite build",
+    "build": "bun run prebuild && tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "playwright": "playwright test",
-    "runner:start": "node scripts/local-runner.mjs",
-    "screenshots": "playwright test tests/visual/ui-screenshots.spec.ts",
-    "daytona:screenshots": "bun scripts/daytona-ui-screenshots.ts"
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.18",
@@ -25,8 +23,6 @@
     "wouter": "^3.9.0"
   },
   "devDependencies": {
-    "@daytonaio/sdk": "^0.138.0",
-    "@playwright/test": "^1.58.1",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^20.11.17",
     "@types/react": "^18.2.66",

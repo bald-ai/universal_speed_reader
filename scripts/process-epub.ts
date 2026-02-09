@@ -7,8 +7,8 @@ import EPub from "epub2";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const BOOK_ID = "la-sangre-de-los-elfos";
-const EPUB_FILENAME = "La Sangre de los Elfos - Andrzej Sapkowski.epub";
+const BOOK_ID = "test";
+const EPUB_FILENAME = "test.epub";
 
 type Paragraph = {
   id: number;
@@ -267,8 +267,8 @@ async function processEpub() {
 
   const epub = await EPub.createAsync(epubPath, "/images/", "/chapters/");
 
-  const title = (epub.metadata && epub.metadata.title) || "La Sangre de los Elfos";
-  const author = (epub.metadata && epub.metadata.creator) || "Andrzej Sapkowski";
+  const title = (epub.metadata && epub.metadata.title) || "Pride and Prejudice";
+  const author = (epub.metadata && epub.metadata.creator) || "Jane Austen";
 
   const paragraphs: Paragraph[] = [];
   const chapters: Chapter[] = [];
@@ -343,6 +343,32 @@ async function processEpub() {
     const startParagraphIdForFile = paragraphCount;
 
     for (const para of chapterContent) {
+      const normalizedParaText = normalizeForDedup(para.text);
+
+      // Skip structural headings (title page, TOC, etc.)
+      if (IGNORED_HEADINGS.has(normalizedParaText)) continue;
+
+      // Check if any anchor matches TOC (before creating the paragraph)
+      let matchedTocTitle: string | null = null;
+      for (const anchor of para.anchors) {
+        const tocTitle = fileAnchorMap.get(anchor);
+        if (tocTitle) {
+          matchedTocTitle = tocTitle;
+          break;
+        }
+      }
+
+      // Skip paragraphs that are just a chapter/TOC title repeated as body text
+      const isTocTitle =
+        matchedTocTitle && normalizeForDedup(matchedTocTitle) === normalizedParaText;
+      const matchesAnyTocEntry = tocEntries.some(
+        (e) => normalizeForDedup(e.title) === normalizedParaText
+      );
+      const isBookTitle =
+        normalizedParaText === normalizeForDedup(title) ||
+        normalizedParaText === normalizeForDedup(`${title}${title}`);
+      if (isTocTitle || matchesAnyTocEntry || isBookTitle) continue;
+
       paragraphCount += 1;
       const paragraph: Paragraph = {
         id: paragraphCount,
@@ -350,15 +376,11 @@ async function processEpub() {
         chapterIndex: flowIndex,
       };
 
-      // Check if any anchor matches TOC
-      for (const anchor of para.anchors) {
-        const tocTitle = fileAnchorMap.get(anchor);
-        if (tocTitle) {
-          const normalizedKey = normalizeForDedup(tocTitle);
-          if (!seenChapterTitles.has(normalizedKey)) {
-            seenChapterTitles.add(normalizedKey);
-            fileChapters.push({ paragraphId: paragraphCount, title: tocTitle });
-          }
+      if (matchedTocTitle) {
+        const normalizedKey = normalizeForDedup(matchedTocTitle);
+        if (!seenChapterTitles.has(normalizedKey)) {
+          seenChapterTitles.add(normalizedKey);
+          fileChapters.push({ paragraphId: paragraphCount, title: matchedTocTitle });
         }
       }
 

@@ -1,9 +1,8 @@
 import { motion } from "framer-motion";
-import type { MouseEventHandler } from "react";
 
 const BOOK_ICON = (
   <svg
-    className="w-8 h-8 text-violet-400/60"
+    className="w-8 h-8"
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"
@@ -20,19 +19,86 @@ const BOOK_ICON = (
 type BookCardProps = {
   title: string;
   author: string;
+  genre?: string;
+  description?: string;
+  coverUrl?: string;
+  isMock?: boolean;
+  readLabel?: string;
+  readDisabled?: boolean;
   progress: number;
-  onClick: MouseEventHandler<HTMLButtonElement>;
+  onRead: () => void;
+  onPrepareTts: () => void;
+  tts: {
+    available: boolean;
+    state: "missing" | "preparing" | "ready" | "error";
+    progressPercent?: number;
+    progressLabel?: string;
+  };
   index?: number;
 };
 
 export default function BookCard(props: BookCardProps) {
-  const { title, author, progress, onClick, index = 0 } = props;
+  const {
+    title,
+    author,
+    genre,
+    description,
+    coverUrl,
+    isMock,
+    readLabel,
+    readDisabled,
+    progress,
+    onRead,
+    onPrepareTts,
+    tts,
+    index = 0,
+  } = props;
   const clampedProgress = Math.max(0, Math.min(100, Math.round(progress)));
 
+  const coverTheme = (() => {
+    const g = (genre ?? "").toLowerCase();
+    if (g === "romance") {
+      return {
+        bg: "from-rose-500/20 to-pink-500/20",
+        border: "border-rose-500/25",
+        icon: "text-rose-300/70",
+        chip: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+      };
+    }
+    if (g === "science") {
+      return {
+        bg: "from-sky-500/20 to-emerald-500/20",
+        border: "border-sky-500/25",
+        icon: "text-sky-300/70",
+        chip: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+      };
+    }
+    if (g === "fantasy") {
+      return {
+        bg: "from-amber-500/20 to-fuchsia-500/20",
+        border: "border-amber-500/25",
+        icon: "text-amber-300/70",
+        chip: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+      };
+    }
+    if (g === "casual nonfiction") {
+      return {
+        bg: "from-lime-500/20 to-teal-500/20",
+        border: "border-lime-500/25",
+        icon: "text-lime-300/70",
+        chip: "border-lime-500/30 bg-lime-500/10 text-lime-200",
+      };
+    }
+    return {
+      bg: "from-violet-600/20 to-cyan-600/20",
+      border: "border-violet-500/20",
+      icon: "text-violet-400/60",
+      chip: "border-violet-500/30 bg-violet-500/10 text-violet-200",
+    };
+  })();
+
   return (
-    <motion.button
-      type="button"
-      onClick={onClick}
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ 
@@ -44,21 +110,55 @@ export default function BookCard(props: BookCardProps) {
         y: -4, 
         transition: { duration: 0.2, ease: "easeOut" }
       }}
-      whileTap={{ scale: 0.98 }}
       className="w-full rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900/95 to-neutral-800/90 
         p-5 text-left shadow-lg shadow-black/40 
         hover:border-violet-500/40 hover:shadow-violet-500/10 
-        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 
-        focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 transition-colors duration-200"
+        transition-colors duration-200"
     >
       <div className="flex items-start gap-4">
-        <div className="h-20 w-14 shrink-0 rounded-lg bg-gradient-to-br from-violet-600/20 to-cyan-600/20 
-          border border-violet-500/20 flex items-center justify-center overflow-hidden">
-          {BOOK_ICON}
+        <div
+          className={`h-20 w-14 shrink-0 rounded-lg bg-gradient-to-br ${coverTheme.bg} 
+          border ${coverTheme.border} flex items-center justify-center overflow-hidden`}
+        >
+          {coverUrl ? (
+            <img
+              src={coverUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            <div className={coverTheme.icon}>{BOOK_ICON}</div>
+          )}
         </div>
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight text-neutral-100 truncate">{title}</h2>
-          <p className="text-sm text-neutral-400 mt-1">{author}</p>
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="text-lg font-semibold tracking-tight text-neutral-100 truncate">{title}</h2>
+            {isMock ? (
+              <span className="shrink-0 rounded-full border border-neutral-700 bg-neutral-900/60 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-neutral-300">
+                MOCK
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-sm text-neutral-400">{author}</p>
+            {genre ? (
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wider ${coverTheme.chip}`}
+              >
+                {genre}
+              </span>
+            ) : null}
+          </div>
+
+          {description ? (
+            <p className="mt-2 text-sm text-neutral-400 leading-snug line-clamp-2">
+              {description}
+            </p>
+          ) : null}
+
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs text-neutral-400 mb-2">
               <span className="uppercase tracking-wider text-[10px]">Progress</span>
@@ -73,8 +173,63 @@ export default function BookCard(props: BookCardProps) {
               />
             </div>
           </div>
+
+          <div className="mt-5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onRead}
+              disabled={!!readDisabled}
+              className="flex-1 rounded-xl bg-neutral-100 text-neutral-900 text-sm font-semibold px-4 py-2
+                hover:bg-white transition-colors duration-150 disabled:bg-neutral-800 disabled:text-neutral-400 disabled:hover:bg-neutral-800 disabled:cursor-not-allowed"
+            >
+              {readLabel ?? "Read"}
+            </button>
+
+            {tts.available ? (
+              <button
+                type="button"
+                onClick={onPrepareTts}
+                disabled={tts.state === "preparing" || !!readDisabled}
+                className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
+                  tts.state === "ready"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                    : tts.state === "preparing"
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    : "border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:bg-neutral-900"
+                } ${tts.state === "preparing" || !!readDisabled ? "opacity-80 cursor-not-allowed" : ""}`}
+                title={tts.progressLabel}
+              >
+                {tts.state === "ready" ? "Rebuild TTS" : tts.state === "preparing" ? "Preparing…" : "Prepare TTS"}
+              </button>
+            ) : (
+              <div className="rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-2 text-sm text-neutral-500">
+                TTS Offline
+              </div>
+            )}
+          </div>
+
+          {tts.available && tts.state === "preparing" ? (
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-1.5">
+                <span>Preparing TTS</span>
+                <span className="text-neutral-400 font-medium">
+                  {typeof tts.progressPercent === "number" ? `${Math.round(tts.progressPercent)}%` : ""}
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-300 to-amber-500"
+                  style={{ width: `${Math.max(0, Math.min(100, tts.progressPercent ?? 0))}%` }}
+                />
+              </div>
+            </div>
+          ) : tts.available && tts.state === "error" ? (
+            <div className="mt-3 text-[11px] text-red-300 bg-red-950/30 border border-red-500/20 rounded-xl px-3 py-2">
+              TTS error: {tts.progressLabel ?? "Unknown error"}
+            </div>
+          ) : null}
         </div>
       </div>
-    </motion.button>
+    </motion.div>
   );
 }

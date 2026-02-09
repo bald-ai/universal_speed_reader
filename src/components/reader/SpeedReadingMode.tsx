@@ -24,6 +24,17 @@ function calculateDelayForWord(targetWpm: number, rampIndex: number, rampUpWords
   return delay;
 }
 
+function splitWordMiddle(word: string): { before: string; middle: string; after: string } {
+  if (!word) return { before: "", middle: "", after: "" };
+  // For even-length words, pick the left-middle character (closer to typical speed-reading ORP).
+  const idx = Math.max(0, Math.floor((word.length - 1) / 2));
+  return {
+    before: word.slice(0, idx),
+    middle: word.slice(idx, idx + 1),
+    after: word.slice(idx + 1),
+  };
+}
+
 export default function SpeedReadingMode() {
   const [, setLocation] = useLocation();
   const { book } = useBook();
@@ -190,7 +201,20 @@ export default function SpeedReadingMode() {
                 transition={{ duration: 0.08, ease: "easeOut" }}
                 className="inline-block"
               >
-                {displayedWord}
+                {(() => {
+                  const { before, middle, after } = splitWordMiddle(displayedWord);
+                  return (
+                    <span>
+                      {before}
+                      <span
+                        className="bg-gradient-to-r from-emerald-500 to-teal-400 bg-clip-text text-transparent"
+                      >
+                        {middle}
+                      </span>
+                      {after}
+                    </span>
+                  );
+                })()}
               </motion.span>
             ) : (
               <motion.span

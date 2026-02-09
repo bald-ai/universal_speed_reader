@@ -10,6 +10,7 @@ export type Theme = "light" | "dark";
 
 export type Settings = {
   wpm: number;
+  ttsPlaybackRate: number;
   fontSize: "small" | "medium" | "large" | "xl";
   fontFamily: "serif" | "sans-serif" | "monospace";
   theme: Theme;
@@ -22,6 +23,7 @@ type SettingsContextValue = {
 
 const DEFAULT_SETTINGS: Settings = {
   wpm: 250,
+  ttsPlaybackRate: 1.0,
   fontSize: "medium",
   fontFamily: "serif",
   theme: "dark"
@@ -69,7 +71,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
     } else {
       root.classList.remove("dark");
     }
-  }, [settings.wpm, settings.fontSize, settings.fontFamily, settings.theme]);
+  }, [settings.wpm, settings.ttsPlaybackRate, settings.fontSize, settings.fontFamily, settings.theme]);
 
   const updateSettings = (partial: Partial<Settings>) => {
     setSettings((prev) => ({

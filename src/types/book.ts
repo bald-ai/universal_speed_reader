@@ -19,3 +19,11 @@ export type Book = {
   chapters: Chapter[];
   totalWords: number;
 };
+
+// A lightweight "preview" shape for the library UI.
+// Derived from Book so we don't invent a totally new shape.
+export type LibraryBook = Pick<Book, "id" | "title" | "author" | "coverUrl"> & {
+  genre: string;
+  description: string;
+  isMock?: boolean;
+};

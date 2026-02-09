@@ -5,9 +5,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import { useTts } from "@/contexts/TtsContext";
 import SettingsModal from "@/components/reader/SettingsModal";
 import ChapterMenu from "@/components/reader/ChapterMenu";
 import ProgressBar from "@/components/shared/ProgressBar";
+import TtsMiniBar from "@/components/reader/TtsMiniBar";
 
 import { getTokensForParagraph, getWordCountForParagraph } from "@/lib/utils/tokenCache";
 import type { Chapter, Paragraph } from "@/types/book";
@@ -18,6 +20,7 @@ type ParagraphRowProps = {
   words: string[];
   highlightedWordIndex: number | null;
   onWordClick: (paragraphId: number, wordIndex: number) => void;
+  wordClicksDisabled: boolean;
   fontSizeClass: string;
   fontFamilyClass: string;
 };
@@ -27,11 +30,12 @@ const ParagraphRow = memo(function ParagraphRow({
   words,
   highlightedWordIndex,
   onWordClick,
+  wordClicksDisabled,
   fontSizeClass,
   fontFamilyClass,
 }: ParagraphRowProps) {
   return (
-    <div className={`${fontFamilyClass} ${fontSizeClass} leading-relaxed text-neutral-200`}>
+    <div className={`${fontFamilyClass} ${fontSizeClass} leading-relaxed text-neutral-300 text-left`}>
       {words.map((word, index) => {
         const isHighlighted = highlightedWordIndex === index;
         return (
@@ -39,11 +43,13 @@ const ParagraphRow = memo(function ParagraphRow({
             key={index}
             data-word-index={index}
             data-paragraph-id={paragraph.id}
-            onClick={() => onWordClick(paragraph.id, index)}
-            className={`cursor-pointer rounded px-0.5 transition-colors duration-150 ${
+            onClick={wordClicksDisabled ? undefined : () => onWordClick(paragraph.id, index)}
+            className={`rounded-sm transition-colors duration-150 ${
               isHighlighted
-                ? "bg-amber-300/90 text-neutral-900"
-                : "hover:bg-neutral-800/70"
+                ? "bg-amber-300/90 text-neutral-900 shadow-[0_0_0_2px_rgba(253,224,71,0.9)] z-10 relative"
+                : wordClicksDisabled
+                  ? "cursor-not-allowed"
+                  : "cursor-pointer hover:bg-neutral-800/70"
             }`}
           >
             {word}
@@ -60,24 +66,32 @@ export default function NormalReadingMode() {
   const { book } = useBook();
   const { position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress } = useReading();
   const { settings } = useSettings();
+  const tts = useTts();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showChapterMenu, setShowChapterMenu] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [isTtsBarOpen, setIsTtsBarOpen] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const hasScrolledToInitialPosition = useRef(false);
   const lastScrollUpdateRef = useRef<number>(0);
   const initialScrollTimeoutRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    if (!highlightedWord) {
+      setIsTtsBarOpen(false);
+    }
+  }, [highlightedWord]);
+
   const fontSizeClass = useMemo(() => {
     switch (settings.fontSize) {
       case "small":
         return "text-sm";
       case "large":
-        return "text-lg";
-      case "xl":
         return "text-xl";
+      case "xl":
+        return "text-2xl";
       case "medium":
       default:
         return "text-base";
@@ -239,11 +253,42 @@ export default function NormalReadingMode() {
     // Avoid double-scrolling on initial mount if possible, 
     // but ensures we catch updates or missed initial scrolls.
     const t = setTimeout(() => {
-      findAndScrollToWord(highlightedWord);
+      const isTtsActive = tts.status === "playing" || tts.status === "paused";
+      if (!isTtsActive) {
+        findAndScrollToWord(highlightedWord);
+        return;
+      }
+
+      const container = scrollContainerRef.current;
+      if (!container) {
+        findAndScrollToWord(highlightedWord);
+        return;
+      }
+
+      const wordEl = container.querySelector(
+        `[data-paragraph-id="${highlightedWord.paragraphId}"][data-word-index="${highlightedWord.wordIndex}"]`
+      ) as HTMLElement | null;
+
+      if (!wordEl) {
+        findAndScrollToWord(highlightedWord);
+        return;
+      }
+
+      const cRect = container.getBoundingClientRect();
+      const wRect = wordEl.getBoundingClientRect();
+      const relTop = wRect.top - cRect.top;
+      const relBottom = wRect.bottom - cRect.top;
+      const h = cRect.height || 1;
+      const bandTop = h * 0.25;
+      const bandBottom = h * 0.75;
+
+      if (relTop < bandTop || relBottom > bandBottom) {
+        wordEl.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
     }, 50);
     
     return () => clearTimeout(t);
-  }, [book, highlightedWord, findAndScrollToWord]);
+  }, [book, highlightedWord, findAndScrollToWord, tts.status]);
 
   const handleScroll = useCallback(() => {
     if (!book || !scrollContainerRef.current) return;
@@ -279,13 +324,27 @@ export default function NormalReadingMode() {
   }, [book, position.paragraphId, rowVirtualizer, setPosition]);
 
   const handleWordClick = useCallback((paragraphId: number, wordIndex: number) => {
+    // When TTS is playing, don't allow changing the current word via clicks.
+    // User must pause/stop first, then pick a word, then play again.
+    if (tts.status === "playing") {
+      return;
+    }
+
+    // When TTS is paused, clicks mean "jump" (set new resume point).
+    if (tts.status === "paused") {
+      const next = { paragraphId, wordIndex };
+      setHighlightedWord(next);
+      setPosition(next);
+      tts.jumpTo(next);
+      return;
+    }
     if (highlightedWord && highlightedWord.paragraphId === paragraphId && highlightedWord.wordIndex === wordIndex) {
       setHighlightedWord(null);
     } else {
       setHighlightedWord({ paragraphId, wordIndex });
       setPosition({ paragraphId, wordIndex });
     }
-  }, [highlightedWord, setHighlightedWord, setPosition]);
+  }, [highlightedWord, setHighlightedWord, setPosition, tts]);
 
   const handleResumeSpeedReading = useCallback(() => {
     if (!book) return;
@@ -309,9 +368,10 @@ export default function NormalReadingMode() {
   }, [book, paragraphIndexById, rowVirtualizer, setPosition]);
 
   const handleBack = useCallback(() => {
+    tts.stop();
     saveProgress();
     setLocation("/");
-  }, [setLocation, saveProgress]);
+  }, [setLocation, saveProgress, tts]);
 
   if (!book) return null;
 
@@ -361,7 +421,10 @@ export default function NormalReadingMode() {
 
         <button
           type="button"
-          onClick={() => setShowSettings(true)}
+          onClick={() => {
+            tts.stop();
+            setShowSettings(true);
+          }}
           className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 
             px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 
             transition-all duration-150 hover:scale-105 active:scale-95"
@@ -422,13 +485,14 @@ export default function NormalReadingMode() {
                   width: "100%",
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
-                className="pb-4"
+                className="pb-4 max-w-2xl mx-auto px-6"
               >
                 <ParagraphRow
                   paragraph={paragraph}
                   words={words}
                   highlightedWordIndex={highlightedWordIndex}
                   onWordClick={handleWordClick}
+                  wordClicksDisabled={tts.status === "playing"}
                   fontSizeClass={fontSizeClass}
                   fontFamilyClass={fontFamilyClass}
                 />
@@ -439,26 +503,62 @@ export default function NormalReadingMode() {
       </div>
 
       {/* Speed Read FAB */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 pb-6 z-10">
-        <motion.button
-          type="button"
-          onClick={handleResumeSpeedReading}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 0.6, y: 0 }}
-          transition={{ delay: 0.5, duration: 0.3 }}
-          className="pointer-events-auto flex items-center gap-2 rounded-xl bg-neutral-800/50
-            text-neutral-400 text-sm font-normal backdrop-blur-sm
-            px-4 py-2 border border-neutral-700/30 hover:border-neutral-600/50 hover:text-neutral-300
-            transition-all duration-200 hover:bg-neutral-800/70"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-          </svg>
-          Speed Read
-        </motion.button>
-      </div>
+      {highlightedWord && !isTtsBarOpen ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 pb-6 z-10">
+          <div className="pointer-events-auto flex items-center gap-2">
+            <motion.button
+              type="button"
+              onClick={handleResumeSpeedReading}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 0.9, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.25 }}
+              className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
+                text-neutral-300 text-sm font-medium backdrop-blur-md
+                px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-neutral-200
+                transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+              </svg>
+              Speed Read
+            </motion.button>
+
+            {tts.preparedState === "ready" && tts.serverAvailable ? (
+              <motion.button
+                type="button"
+                onClick={() => setIsTtsBarOpen((v) => !v)}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 0.9, y: 0 }}
+                transition={{ delay: 0.35, duration: 0.25 }}
+                className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
+                  text-neutral-300 text-sm font-medium backdrop-blur-md
+                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-neutral-200
+                  transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20 ${
+                    tts.isReady ? "" : "opacity-70"
+                  }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6.75 6.75 0 006.75-6.75v-1.5a6.75 6.75 0 10-13.5 0v1.5A6.75 6.75 0 0012 18.75z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 18.75v.75a3 3 0 006 0v-.75" />
+                </svg>
+                TTS
+              </motion.button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {highlightedWord && tts.preparedState === "ready" && tts.serverAvailable ? (
+        <TtsMiniBar
+          isOpen={isTtsBarOpen}
+          startFrom={highlightedWord}
+          onClose={() => setIsTtsBarOpen(false)}
+        />
+      ) : null}
 
       <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <ChapterMenu

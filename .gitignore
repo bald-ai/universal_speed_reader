@@ -31,5 +31,12 @@ test-results/
 test_results/
 test_screenshots/
 
+# Local TTS artifacts
+.tts_data/
+
+# Local TTS models/cache (large)
+tools/tts-server/voices/
+tools/tts-server/.venv/
+
 # Personal
 thoughtnotebook.md

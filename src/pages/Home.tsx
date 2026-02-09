@@ -2,6 +2,10 @@ import { useEffect, useState, memo } from "react";
 import { useLocation } from "wouter";
 import BookCard from "@/components/library/BookCard";
 import { motion } from "framer-motion";
+import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
+import { getTtsBookStatus, prepareTtsBook, ttsHealth } from "@/lib/ttsClient";
+import type { LibraryBook } from "@/types/book";
+import { MOCK_LIBRARY_BOOKS } from "@/lib/mockLibraryBooks"; // MOCK DATA — remove when real upload is implemented.
 
 const BackgroundDecoration = memo(function BackgroundDecoration() {
   return (
@@ -12,7 +16,7 @@ const BackgroundDecoration = memo(function BackgroundDecoration() {
   );
 });
 
-const BOOK_ID = "la-sangre-de-los-elfos";
+const BOOK_ID = "test";
 
 type ProgressState = {
   percentComplete: number;
@@ -21,6 +25,12 @@ type ProgressState = {
 export default function Home() {
   const [, setLocation] = useLocation();
   const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [ttsAvailable, setTtsAvailable] = useState(false);
+  const [ttsState, setTtsState] = useState<{
+    state: "missing" | "preparing" | "ready" | "error";
+    progressPercent?: number;
+    progressLabel?: string;
+  }>({ state: "missing" });
 
   useEffect(() => {
     try {
@@ -34,6 +44,161 @@ export default function Home() {
       // ignore malformed progress
     }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = await ttsHealth();
+      if (cancelled) return;
+      setTtsAvailable(ok);
+      if (!ok) {
+        setTtsState({ state: "missing" });
+        return;
+      }
+      try {
+        const st = await getTtsBookStatus(BOOK_ID);
+        if (cancelled) return;
+        if (st.state === "preparing") {
+          const done = st.progress?.doneParas ?? 0;
+          const total = st.progress?.totalParas ?? 0;
+          const percent = total > 0 ? (done / total) * 100 : 0;
+          setTtsState({
+            state: "preparing",
+            progressPercent: percent,
+            progressLabel: `${done}/${total}`,
+          });
+        } else if (st.state === "ready") {
+          setTtsState({ state: "ready" });
+        } else if (st.state === "error") {
+          setTtsState({ state: "error", progressLabel: st.error });
+        } else {
+          setTtsState({ state: "missing" });
+        }
+      } catch {
+        setTtsAvailable(false);
+        setTtsState({ state: "missing" });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ttsAvailable) return;
+    if (ttsState.state !== "preparing") return;
+
+    const t = window.setInterval(async () => {
+      try {
+        const st = await getTtsBookStatus(BOOK_ID);
+        // eslint-disable-next-line no-console
+        console.log("[TTS][UI] status poll", st);
+        if (st.state === "preparing") {
+          const done = st.progress?.doneParas ?? 0;
+          const total = st.progress?.totalParas ?? 0;
+          const percent = total > 0 ? (done / total) * 100 : 0;
+          setTtsState({
+            state: "preparing",
+            progressPercent: percent,
+            progressLabel: `${done}/${total}`,
+          });
+        } else if (st.state === "ready") {
+          setTtsState({ state: "ready" });
+        } else if (st.state === "error") {
+          setTtsState({ state: "error", progressLabel: st.error });
+        } else {
+          setTtsState({ state: "missing" });
+        }
+      } catch {
+        setTtsAvailable(false);
+        setTtsState({ state: "missing" });
+      }
+    }, 1000);
+
+    return () => window.clearInterval(t);
+  }, [ttsAvailable, ttsState.state]);
+
+  const handlePrepareTts = async () => {
+    if (!ttsAvailable) return;
+    if (ttsState.state === "preparing") return;
+
+    try {
+      // eslint-disable-next-line no-console
+      console.log("[TTS][UI] Prepare clicked", { bookId: BOOK_ID, ttsAvailable, ttsState });
+      setTtsState({ state: "preparing", progressPercent: 0, progressLabel: "0/0" });
+      // Avoid 304 responses from dev server cache; Response.ok is false for 304.
+      const bookUrl = `/books/${BOOK_ID}.json`;
+      const res = await fetch(bookUrl, {
+        cache: "reload",
+        headers: {
+          "cache-control": "no-cache",
+        },
+      });
+      // eslint-disable-next-line no-console
+      console.log("[TTS][UI] book fetch", {
+        url: res.url,
+        status: res.status,
+        ok: res.ok,
+        etag: res.headers.get("etag"),
+        cacheControl: res.headers.get("cache-control"),
+      });
+      if (!res.ok) {
+        let body = "";
+        try {
+          body = await res.text();
+        } catch {}
+        // eslint-disable-next-line no-console
+        console.log("[TTS][UI] book fetch body", body.slice(0, 800));
+        throw new Error(`Could not load book (${res.status})`);
+      }
+      const book = (await res.json()) as {
+        id: string;
+        paragraphs: Array<{ id: number; text: string }>;
+      };
+      // eslint-disable-next-line no-console
+      console.log("[TTS][UI] book parsed", {
+        id: book?.id,
+        paragraphs: book?.paragraphs?.length ?? 0,
+        first: book?.paragraphs?.[0]?.id,
+      });
+
+      const paragraphs = (book.paragraphs ?? []).map((p) => ({
+        paragraphId: p.id,
+        tokens: tokenizeParagraph(p.text),
+      }));
+
+      const totalTokens = paragraphs.reduce((sum, p) => sum + p.tokens.length, 0);
+      // eslint-disable-next-line no-console
+      console.log("[TTS][UI] tokenized", {
+        paragraphCount: paragraphs.length,
+        totalTokens,
+        sampleTokens: paragraphs[0]?.tokens?.slice(0, 12),
+      });
+
+      await prepareTtsBook(BOOK_ID, {
+        paragraphs,
+        pauseMsBetweenParagraphs: 200,
+        force: ttsState.state === "ready",
+      });
+      // eslint-disable-next-line no-console
+      console.log("[TTS][UI] prepare POST done");
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log("[TTS][UI] Prepare failed", e);
+      setTtsState({ state: "error", progressLabel: e instanceof Error ? e.message : "Prepare failed" });
+    }
+  };
+
+  const realLibraryBook: LibraryBook = {
+    id: BOOK_ID,
+    title: "Pride and Prejudice (Ch 1-2)",
+    author: "Jane Austen",
+    genre: "Romance",
+    description: "Real bundled sample book. This one is readable and supports TTS prep.",
+  };
+
+  const libraryBooks: LibraryBook[] = [realLibraryBook, ...MOCK_LIBRARY_BOOKS];
 
   return (
     <main className="min-h-screen flex flex-col items-center px-4 py-8 bg-neutral-950 text-neutral-100 relative overflow-hidden">
@@ -97,14 +262,40 @@ export default function Home() {
           >
             Your Library
           </motion.h2>
-          
-          <BookCard
-            title="La Sangre de los Elfos"
-            author="Andrzej Sapkowski"
-            progress={progress?.percentComplete ?? 0}
-            onClick={() => setLocation(`/reader/${BOOK_ID}`)}
-            index={0}
-          />
+
+          <div className="space-y-4">
+            {libraryBooks.map((book, index) => {
+              const isReal = book.id === BOOK_ID;
+              const isMock = !!book.isMock;
+              return (
+                <BookCard
+                  key={book.id}
+                  title={book.title}
+                  author={book.author ?? "Unknown author"}
+                  genre={book.genre}
+                  description={book.description}
+                  coverUrl={book.coverUrl}
+                  isMock={isMock}
+                  readLabel={isReal ? "Read" : "Coming soon"}
+                  readDisabled={!isReal}
+                  progress={isReal ? progress?.percentComplete ?? 0 : 0}
+                  onRead={isReal ? () => setLocation(`/reader/${BOOK_ID}`) : () => {}}
+                  onPrepareTts={isReal ? handlePrepareTts : () => {}}
+                  tts={
+                    isReal
+                      ? {
+                          available: ttsAvailable,
+                          state: ttsState.state,
+                          progressPercent: ttsState.progressPercent,
+                          progressLabel: ttsState.progressLabel,
+                        }
+                      : { available: false, state: "missing" }
+                  }
+                  index={index}
+                />
+              );
+            })}
+          </div>
         </motion.section>
 
         {/* Footer */}

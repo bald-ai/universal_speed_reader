@@ -194,6 +194,57 @@ export default function SettingsModal(props: SettingsModalProps) {
                   </div>
                 </div>
               </section>
+
+              {/* TTS Speed */}
+              <section>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-medium text-neutral-200">TTS speed</span>
+                  <motion.span 
+                    key={settings.ttsPlaybackRate}
+                    initial={{ scale: 1.2, color: "#fbbf24" }}
+                    animate={{ scale: 1, color: "#fbbf24" }}
+                    className="text-xs font-medium"
+                  >
+                    {settings.ttsPlaybackRate.toFixed(2)}x
+                  </motion.span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="range"
+                    min={0.7}
+                    max={1.4}
+                    step={0.01}
+                    value={settings.ttsPlaybackRate}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      const clamped = Math.max(0.7, Math.min(1.4, value));
+                      updateSettings({ ttsPlaybackRate: clamped });
+                    }}
+                    className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
+                      [&::-webkit-slider-thumb]:appearance-none
+                      [&::-webkit-slider-thumb]:w-5
+                      [&::-webkit-slider-thumb]:h-5
+                      [&::-webkit-slider-thumb]:rounded-full
+                      [&::-webkit-slider-thumb]:bg-amber-400
+                      [&::-webkit-slider-thumb]:shadow-lg
+                      [&::-webkit-slider-thumb]:shadow-amber-400/20
+                      [&::-webkit-slider-thumb]:transition-transform
+                      [&::-webkit-slider-thumb]:hover:scale-110
+                      [&::-moz-range-thumb]:w-5
+                      [&::-moz-range-thumb]:h-5
+                      [&::-moz-range-thumb]:rounded-full
+                      [&::-moz-range-thumb]:bg-amber-400
+                      [&::-moz-range-thumb]:border-0
+                      [&::-moz-range-thumb]:shadow-lg
+                      [&::-moz-range-thumb]:shadow-amber-400/20"
+                  />
+                  <div className="flex justify-between text-xs text-neutral-500 mt-2">
+                    <span>0.70x</span>
+                    <span>1.00x</span>
+                    <span>1.40x</span>
+                  </div>
+                </div>
+              </section>
             </div>
           </motion.div>
         </motion.div>
