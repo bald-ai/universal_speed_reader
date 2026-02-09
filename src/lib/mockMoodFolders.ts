@@ -8,6 +8,7 @@ export const MOCK_MOOD_FOLDERS: MoodFolder[] = [
   {
     id: "mood-tired",
     label: "Tired",
+    color: "rose",
     bookIds: [
       "test",
       "mock-romance-moonlight-over-camden",
@@ -23,6 +24,7 @@ export const MOCK_MOOD_FOLDERS: MoodFolder[] = [
   {
     id: "mood-chill",
     label: "Chill",
+    color: "emerald",
     bookIds: [
       "mock-casual-nonfiction-atomic-habits",
       "mock-casual-nonfiction-freakonomics",
@@ -37,6 +39,7 @@ export const MOCK_MOOD_FOLDERS: MoodFolder[] = [
   {
     id: "mood-magical",
     label: "Magical",
+    color: "fuchsia",
     bookIds: [
       "mock-fantasy-the-hobbit",
       "mock-fantasy-a-game-of-thrones",
@@ -51,6 +54,7 @@ export const MOCK_MOOD_FOLDERS: MoodFolder[] = [
   {
     id: "mood-curious",
     label: "Curious",
+    color: "sky",
     bookIds: [
       "mock-science-a-brief-history-of-time",
       "mock-science-cosmos",

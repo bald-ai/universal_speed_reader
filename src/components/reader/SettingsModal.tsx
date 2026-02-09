@@ -195,6 +195,78 @@ export default function SettingsModal(props: SettingsModalProps) {
                 </div>
               </section>
 
+              {/* ORP Highlight Toggle */}
+              <section>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-neutral-200">Middle letter highlight</span>
+                  <motion.button
+                    type="button"
+                    onClick={() => updateSettings({ orpHighlight: !settings.orpHighlight })}
+                    whileTap={{ scale: 0.95 }}
+                    className={`relative w-12 h-7 rounded-full transition-colors duration-200 ${
+                      settings.orpHighlight
+                        ? "bg-violet-500"
+                        : "bg-neutral-700"
+                    }`}
+                  >
+                    <motion.div
+                      className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md"
+                      animate={{ x: settings.orpHighlight ? 20 : 0 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                    />
+                  </motion.button>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">
+                  Highlights the center letter of each word (ORP) for faster recognition.
+                </p>
+              </section>
+
+              {/* Highlight Color */}
+              {settings.orpHighlight && (
+                <section>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-medium text-neutral-200">Highlight color</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {[
+                      { color: "#10b981", label: "Emerald" },
+                      { color: "#f59e0b", label: "Amber" },
+                      { color: "#ef4444", label: "Red" },
+                      { color: "#3b82f6", label: "Blue" },
+                      { color: "#a855f7", label: "Purple" },
+                      { color: "#ec4899", label: "Pink" },
+                    ].map((option) => (
+                      <motion.button
+                        key={option.color}
+                        type="button"
+                        onClick={() => updateSettings({ orpHighlightColor: option.color })}
+                        whileHover={{ scale: 1.15 }}
+                        whileTap={{ scale: 0.9 }}
+                        title={option.label}
+                        className={`w-8 h-8 rounded-full border-2 transition-all duration-200 ${
+                          settings.orpHighlightColor === option.color
+                            ? "border-white scale-110"
+                            : "border-neutral-700 hover:border-neutral-500"
+                        }`}
+                        style={{ backgroundColor: option.color }}
+                      />
+                    ))}
+                    <div className="ml-auto flex items-center gap-2">
+                      <label className="text-xs text-neutral-500">Custom</label>
+                      <input
+                        type="color"
+                        value={settings.orpHighlightColor}
+                        onChange={(event) => updateSettings({ orpHighlightColor: event.target.value })}
+                        className="w-8 h-8 rounded-full border border-neutral-700 bg-transparent cursor-pointer
+                          [&::-webkit-color-swatch-wrapper]:p-0
+                          [&::-webkit-color-swatch]:rounded-full
+                          [&::-webkit-color-swatch]:border-0"
+                      />
+                    </div>
+                  </div>
+                </section>
+              )}
+
               {/* TTS Speed */}
               <section>
                 <div className="flex items-center justify-between mb-3">

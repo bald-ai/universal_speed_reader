@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useLocation } from "wouter";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -26,7 +25,6 @@ function calculateDelayForWord(targetWpm: number, rampIndex: number, rampUpWords
 
 function splitWordMiddle(word: string): { before: string; middle: string; after: string } {
   if (!word) return { before: "", middle: "", after: "" };
-  // For even-length words, pick the left-middle character (closer to typical speed-reading ORP).
   const idx = Math.max(0, Math.floor((word.length - 1) / 2));
   return {
     before: word.slice(0, idx),
@@ -36,7 +34,6 @@ function splitWordMiddle(word: string): { before: string; middle: string; after:
 }
 
 export default function SpeedReadingMode() {
-  const [, setLocation] = useLocation();
   const { book } = useBook();
   const { position, setMode, setPosition, setHighlightedWord, saveProgress } = useReading();
   const { settings, updateSettings } = useSettings();
@@ -137,9 +134,11 @@ export default function SpeedReadingMode() {
     setShowControls((prev) => !prev);
   };
 
-  const handleBackToLibrary = () => {
-    saveProgress();
-    setLocation("/");
+  const handleBackToNormal = () => {
+    if (position) {
+      setHighlightedWord(position);
+    }
+    setMode("normal");
   };
 
   const handlePause = () => {
@@ -202,13 +201,14 @@ export default function SpeedReadingMode() {
                 className="inline-block"
               >
                 {(() => {
+                  if (!settings.orpHighlight) {
+                    return <span>{displayedWord}</span>;
+                  }
                   const { before, middle, after } = splitWordMiddle(displayedWord);
                   return (
                     <span>
                       {before}
-                      <span
-                        className="bg-gradient-to-r from-emerald-500 to-teal-400 bg-clip-text text-transparent"
-                      >
+                      <span style={{ color: settings.orpHighlightColor }}>
                         {middle}
                       </span>
                       {after}
@@ -216,15 +216,7 @@ export default function SpeedReadingMode() {
                   );
                 })()}
               </motion.span>
-            ) : (
-              <motion.span
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="text-neutral-500 text-2xl"
-              >
-                Tap to start
-              </motion.span>
-            )}
+            ) : null}
           </AnimatePresence>
         </div>
         
@@ -249,7 +241,7 @@ export default function SpeedReadingMode() {
             <div className="relative flex items-center justify-between">
               <motion.button
                 type="button"
-                onClick={handleBackToLibrary}
+                onClick={handleBackToNormal}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 

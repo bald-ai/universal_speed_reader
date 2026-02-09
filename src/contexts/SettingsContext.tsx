@@ -14,6 +14,8 @@ export type Settings = {
   fontSize: "small" | "medium" | "large" | "xl";
   fontFamily: "serif" | "sans-serif" | "monospace";
   theme: Theme;
+  orpHighlight: boolean;
+  orpHighlightColor: string;
 };
 
 type SettingsContextValue = {
@@ -26,7 +28,9 @@ const DEFAULT_SETTINGS: Settings = {
   ttsPlaybackRate: 1.0,
   fontSize: "medium",
   fontFamily: "serif",
-  theme: "dark"
+  theme: "dark",
+  orpHighlight: true,
+  orpHighlightColor: "#10b981",
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
@@ -71,7 +75,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
     } else {
       root.classList.remove("dark");
     }
-  }, [settings.wpm, settings.ttsPlaybackRate, settings.fontSize, settings.fontFamily, settings.theme]);
+  }, [settings.wpm, settings.ttsPlaybackRate, settings.fontSize, settings.fontFamily, settings.theme, settings.orpHighlight, settings.orpHighlightColor]);
 
   const updateSettings = (partial: Partial<Settings>) => {
     setSettings((prev) => ({

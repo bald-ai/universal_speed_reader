@@ -31,7 +31,9 @@ export type LibraryBook = Pick<Book, "id" | "title" | "author" | "coverUrl"> & {
 export type MoodFolder = {
   id: string;
   label: string;
-  imageUrl?: string; // folder cover image
-  bookIds: string[]; // references LibraryBook.id
+  icon?: string;
+  color?: string;
+  imageUrl?: string;
+  bookIds: string[];
   isMock?: boolean;
 };

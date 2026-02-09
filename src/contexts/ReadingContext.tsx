@@ -97,9 +97,7 @@ export function ReadingProvider(props: ProviderProps) {
           wordIndex: parsed.wordIndex ?? 0
         });
       }
-      if (parsed.mode === "normal" || parsed.mode === "speed") {
-        setModeState(parsed.mode);
-      }
+      setModeState("normal");
     } catch {
       // ignore malformed progress
     }
