@@ -1,6 +1,7 @@
 import { useEffect, useState, memo } from "react";
 import { useLocation } from "wouter";
 import BookCard from "@/components/library/BookCard";
+import MoodView from "@/components/library/MoodView";
 import { motion } from "framer-motion";
 import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
 import { getTtsBookStatus, prepareTtsBook, ttsHealth } from "@/lib/ttsClient";
@@ -25,6 +26,7 @@ type ProgressState = {
 export default function Home() {
   const [, setLocation] = useLocation();
   const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [view, setView] = useState<"mood" | "library">("mood");
   const [ttsAvailable, setTtsAvailable] = useState(false);
   const [ttsState, setTtsState] = useState<{
     state: "missing" | "preparing" | "ready" | "error";
@@ -248,55 +250,117 @@ export default function Home() {
           </motion.p>
         </motion.header>
 
-        {/* Book Section */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
+        {/* View Toggle */}
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.4 }}
+          transition={{ duration: 0.45, delay: 0.38, ease: [0.25, 0.46, 0.45, 0.94] }}
+          className="flex justify-center"
         >
-          <motion.h2 
-            className="text-xs uppercase tracking-[0.2em] text-neutral-500 mb-4 px-1"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-          >
-            Your Library
-          </motion.h2>
-
-          <div className="space-y-4">
-            {libraryBooks.map((book, index) => {
-              const isReal = book.id === BOOK_ID;
-              const isMock = !!book.isMock;
-              return (
-                <BookCard
-                  key={book.id}
-                  title={book.title}
-                  author={book.author ?? "Unknown author"}
-                  genre={book.genre}
-                  description={book.description}
-                  coverUrl={book.coverUrl}
-                  isMock={isMock}
-                  readLabel={isReal ? "Read" : "Coming soon"}
-                  readDisabled={!isReal}
-                  progress={isReal ? progress?.percentComplete ?? 0 : 0}
-                  onRead={isReal ? () => setLocation(`/reader/${BOOK_ID}`) : () => {}}
-                  onPrepareTts={isReal ? handlePrepareTts : () => {}}
-                  tts={
-                    isReal
-                      ? {
-                          available: ttsAvailable,
-                          state: ttsState.state,
-                          progressPercent: ttsState.progressPercent,
-                          progressLabel: ttsState.progressLabel,
-                        }
-                      : { available: false, state: "missing" }
-                  }
-                  index={index}
-                />
-              );
-            })}
+          <div className="w-full rounded-xl bg-neutral-900 border border-neutral-800 p-1 h-9 flex items-center">
+            <div className="relative w-full grid grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setView("mood")}
+                className="relative h-7 rounded-lg"
+              >
+                {view === "mood" ? (
+                  <motion.div
+                    layoutId="home-view-pill"
+                    className="absolute inset-0 rounded-lg bg-neutral-100"
+                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                  />
+                ) : null}
+                <span
+                  className={`relative z-10 text-xs font-semibold transition-colors ${
+                    view === "mood" ? "text-neutral-900" : "text-neutral-400"
+                  }`}
+                >
+                  Mood
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("library")}
+                className="relative h-7 rounded-lg"
+              >
+                {view === "library" ? (
+                  <motion.div
+                    layoutId="home-view-pill"
+                    className="absolute inset-0 rounded-lg bg-neutral-100"
+                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                  />
+                ) : null}
+                <span
+                  className={`relative z-10 text-xs font-semibold transition-colors ${
+                    view === "library" ? "text-neutral-900" : "text-neutral-400"
+                  }`}
+                >
+                  Library
+                </span>
+              </button>
+            </div>
           </div>
-        </motion.section>
+        </motion.div>
+
+        {/* Book Section */}
+        {view === "library" ? (
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.4 }}
+          >
+            <motion.h2 
+              className="text-xs uppercase tracking-[0.2em] text-neutral-500 mb-4 px-1"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.4, delay: 0.5 }}
+            >
+              Your Library
+            </motion.h2>
+
+            <div className="space-y-4">
+              {libraryBooks.map((book, index) => {
+                const isReal = book.id === BOOK_ID;
+                const isMock = !!book.isMock;
+                return (
+                  <BookCard
+                    key={book.id}
+                    title={book.title}
+                    author={book.author ?? "Unknown author"}
+                    genre={book.genre}
+                    description={book.description}
+                    coverUrl={book.coverUrl}
+                    isMock={isMock}
+                    readLabel={isReal ? "Read" : "Coming soon"}
+                    readDisabled={!isReal}
+                    progress={isReal ? progress?.percentComplete ?? 0 : 0}
+                    onRead={isReal ? () => setLocation(`/reader/${BOOK_ID}`) : () => {}}
+                    onPrepareTts={isReal ? handlePrepareTts : () => {}}
+                    tts={
+                      isReal
+                        ? {
+                            available: ttsAvailable,
+                            state: ttsState.state,
+                            progressPercent: ttsState.progressPercent,
+                            progressLabel: ttsState.progressLabel,
+                          }
+                        : { available: false, state: "missing" }
+                    }
+                    index={index}
+                  />
+                );
+              })}
+            </div>
+          </motion.section>
+        ) : (
+          <MoodView
+            books={libraryBooks}
+            onOpenBook={(bookId) => {
+              if (bookId === BOOK_ID) setLocation(`/reader/${BOOK_ID}`);
+            }}
+          />
+        )}
 
         {/* Footer */}
         <motion.footer

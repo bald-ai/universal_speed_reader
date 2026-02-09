@@ -27,3 +27,11 @@ export type LibraryBook = Pick<Book, "id" | "title" | "author" | "coverUrl"> & {
   description: string;
   isMock?: boolean;
 };
+
+export type MoodFolder = {
+  id: string;
+  label: string;
+  imageUrl?: string; // folder cover image
+  bookIds: string[]; // references LibraryBook.id
+  isMock?: boolean;
+};
