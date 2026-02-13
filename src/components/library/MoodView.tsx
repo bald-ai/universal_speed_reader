@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, Reorder, motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { LibraryBook, MoodFolder } from "@/types/book";
 import { getUnassignedBooks, loadFolders, loadRecent, saveFolders, setRecent } from "@/lib/moodStore";
 import { MOOD_ICONS, getIconEmoji } from "@/lib/moodIcons";
@@ -124,7 +139,6 @@ export default function MoodView(props: MoodViewProps) {
   const [folders, setFolders] = useState<MoodFolder[]>([]);
   const [recent, setRecentMap] = useState<Record<string, string>>({});
   const [newEditId, setNewEditId] = useState<string | null>(null);
-  const [expandedFolderId, setExpandedFolderId] = useState<string | null>(null);
   const [pickerFor, setPickerFor] = useState<string | null>(null); // bookId
 
   useEffect(() => {
@@ -143,14 +157,6 @@ export default function MoodView(props: MoodViewProps) {
         const has = f.bookIds.includes(bookId);
         return { ...f, bookIds: has ? f.bookIds.filter((id) => id !== bookId) : [...f.bookIds, bookId] };
       });
-      saveFolders(next);
-      return next;
-    });
-  };
-
-  const removeBookFromFolder = (folderId: string, bookId: string) => {
-    setFolders((prev) => {
-      const next = prev.map((f) => (f.id === folderId ? { ...f, bookIds: f.bookIds.filter((id) => id !== bookId) } : f));
       saveFolders(next);
       return next;
     });
@@ -191,120 +197,52 @@ export default function MoodView(props: MoodViewProps) {
     onOpenBook(bookId);
   };
 
-  const expandedFolder = expandedFolderId ? folders.find((f) => f.id === expandedFolderId) : undefined;
-  const expandedBooks = useMemo(() => {
-    if (!expandedFolder) return [];
-    return expandedFolder.bookIds.map((id) => bookById.get(id)).filter(Boolean) as LibraryBook[];
-  }, [expandedFolder, bookById]);
+  const sensors = useSensors(
+   useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+   const { active, over } = event;
+   if (!over || active.id === over.id) return;
+   setFolders((prev) => {
+     const oldIndex = prev.findIndex((f) => f.id === active.id);
+     const newIndex = prev.findIndex((f) => f.id === over.id);
+     if (oldIndex === -1 || newIndex === -1) return prev;
+     const next = arrayMove(prev, oldIndex, newIndex);
+     saveFolders(next);
+     return next;
+   });
+  }, []);
+
+  const folderIds = useMemo(() => folders.map((f) => f.id), [folders]);
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="space-y-6"
-    >
-      <Reorder.Group
-        axis="y"
-        values={folders}
-        onReorder={(next) => {
-          setFolders(next);
-          saveFolders(next);
-        }}
-        className="grid grid-cols-2 gap-4"
-      >
-        {folders.map((folder) => (
-          <FolderCard
-            key={folder.id}
-            folder={folder}
-            bookById={bookById}
-            recentBookId={recent[folder.id]}
-            expanded={expandedFolderId === folder.id}
-            onToggleExpanded={() => setExpandedFolderId((cur) => (cur === folder.id ? null : folder.id))}
-            onOpenRecent={openMostRecent}
-            onToggleBook={(bookId) => toggleBookInFolder(folder.id, bookId)}
-            startInEditMode={newEditId === folder.id}
-            onConsumeEditMode={() => setNewEditId(null)}
-            onCommitEdit={commitEdit}
-            onDeleteFolder={deleteFolder}
-          />
-        ))}
-      </Reorder.Group>
-
-      <AnimatePresence initial={false}>
-        {expandedFolder ? (
-          <motion.div
-            key={expandedFolder.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            transition={{ duration: 0.2 }}
-            className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900/95 to-neutral-800/90 p-5 shadow-lg shadow-black/40"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs uppercase tracking-[0.2em] text-neutral-500">Folder</div>
-                <div className="mt-1 text-lg font-semibold text-neutral-100 truncate">{expandedFolder.label}</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setExpandedFolderId(null)}
-                className="h-9 w-9 rounded-xl border border-neutral-800 bg-neutral-900/60 text-neutral-300 hover:bg-neutral-900 transition-colors"
-                aria-label="Close folder"
-                title="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {expandedBooks.length === 0 ? (
-                <div className="text-sm text-neutral-500">No books in this folder yet.</div>
-              ) : (
-                expandedBooks.map((b) => (
-                  <div
-                    key={b.id}
-                    className="relative flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950/25 px-3 py-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-neutral-100 truncate">{b.title}</div>
-                      <div className="text-xs text-neutral-500 truncate">{b.author ?? "Unknown author"}</div>
-                    </div>
-
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setPickerFor((cur) => (cur === b.id ? null : b.id))}
-                        className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-2 py-1 text-[11px] font-semibold text-neutral-200 hover:bg-neutral-900 transition-colors"
-                        title="Add to other folders"
-                      >
-                        Add
-                      </button>
-                      <FolderPicker
-                        folders={folders}
-                        book={b}
-                        open={pickerFor === b.id}
-                        onClose={() => setPickerFor(null)}
-                        onToggleInFolder={toggleBookInFolder}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => removeBookFromFolder(expandedFolder.id, b.id)}
-                      className="text-neutral-500 hover:text-red-400 transition-colors"
-                      aria-label="Remove from folder"
-                      title="Remove from this folder"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+   <motion.section
+     initial={{ opacity: 0, y: 14 }}
+     animate={{ opacity: 1, y: 0 }}
+     transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
+     className="space-y-6"
+   >
+     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+       <SortableContext items={folderIds} strategy={rectSortingStrategy}>
+         <div className="grid grid-cols-2 gap-4">
+           {folders.map((folder) => (
+             <FolderCard
+               key={folder.id}
+               folder={folder}
+               bookById={bookById}
+               recentBookId={recent[folder.id]}
+               onOpenRecent={openMostRecent}
+               onToggleBook={(bookId) => toggleBookInFolder(folder.id, bookId)}
+               startInEditMode={newEditId === folder.id}
+               onConsumeEditMode={() => setNewEditId(null)}
+               onCommitEdit={commitEdit}
+               onDeleteFolder={deleteFolder}
+             />
+           ))}
+         </div>
+       </SortableContext>
+     </DndContext>
 
       <button
         type="button"
@@ -378,8 +316,6 @@ function FolderCard(props: {
   folder: MoodFolder;
   bookById: Map<string, LibraryBook>;
   recentBookId: string | undefined;
-  expanded: boolean;
-  onToggleExpanded: () => void;
   onOpenRecent: (folderId: string, bookId: string) => void;
   onToggleBook: (bookId: string) => void;
   startInEditMode: boolean;
@@ -391,8 +327,6 @@ function FolderCard(props: {
     folder,
     bookById,
     recentBookId,
-    expanded,
-    onToggleExpanded,
     onOpenRecent,
     onToggleBook,
     startInEditMode,
@@ -444,15 +378,31 @@ function FolderCard(props: {
   const isMenuOpen = menuState === "menu";
   const isDeleting = menuState === "delete";
 
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition: sortableTransition,
+    isDragging,
+  } = useSortable({ id: folder.id });
+
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition: sortableTransition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
   return (
-    <Reorder.Item value={folder} className="w-full">
+    <div ref={setNodeRef} style={sortableStyle} {...attributes} {...listeners}>
       <motion.div
         ref={ref}
-        whileHover={{ y: -4, transition: { duration: 0.25, ease: "easeOut" } }}
+        whileHover={isDragging ? undefined : { y: -4, transition: { duration: 0.25, ease: "easeOut" } }}
         className={`group relative w-full h-full min-h-[300px] rounded-2xl border overflow-hidden
           bg-neutral-900 text-left shadow-lg shadow-black/50
           transition-all duration-300 flex flex-col ${
-            expanded ? theme.border : `${theme.border} ${theme.hoverBorder}`
+            `${theme.border} ${theme.hoverBorder}`
           }`}
       >
         <div className={`absolute inset-0 bg-gradient-to-br ${theme.gradient} pointer-events-none`} />
@@ -487,25 +437,15 @@ function FolderCard(props: {
                   transition={{ duration: 0.15 }}
                   className="absolute right-0 top-[calc(100%+6px)] z-20 w-36 rounded-xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-xl shadow-black/50 overflow-hidden"
                 >
-                  {bookCount > 0 ? (
+                  {bookCount > 0 && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setMenuState("closed");
-                        onToggleExpanded();
-                      }}
+                      onClick={() => setMenuState("books")}
                       className="w-full px-3 py-2 text-left text-xs text-neutral-200 hover:bg-white/5 transition-colors"
                     >
-                      {expanded ? "Hide books" : `Show all (${bookCount})`}
+                      Books
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => setMenuState("books")}
-                    className="w-full px-3 py-2 text-left text-xs text-neutral-200 hover:bg-white/5 transition-colors"
-                  >
-                    Books
-                  </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -724,6 +664,6 @@ function FolderCard(props: {
           ) : null}
         </AnimatePresence>
       </motion.div>
-    </Reorder.Item>
+    </div>
   );
 }
