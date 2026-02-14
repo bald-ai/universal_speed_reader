@@ -179,6 +179,10 @@ export default function SpeedReadingMode() {
   return (
     <motion.div
       className="relative flex h-screen flex-col bg-neutral-950 text-neutral-100 overflow-hidden"
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+      }}
       onClick={handleToggleControls}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -228,7 +232,8 @@ export default function SpeedReadingMode() {
       <AnimatePresence>
         {showControls && (
           <motion.header 
-            className="absolute top-0 left-0 right-0 z-30 px-6 pt-6 pb-4"
+            className="absolute top-0 left-0 right-0 z-30 px-6 pb-4"
+            style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -20, opacity: 0 }}
@@ -286,7 +291,8 @@ export default function SpeedReadingMode() {
       <AnimatePresence>
         {showControls && (
           <motion.footer 
-            className="absolute bottom-0 left-0 right-0 z-30 px-6 pb-8 pt-4"
+            className="absolute bottom-0 left-0 right-0 z-30 px-6 pt-4"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 20, opacity: 0 }}

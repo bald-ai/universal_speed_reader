@@ -46,7 +46,7 @@ const ParagraphRow = memo(function ParagraphRow({
             onClick={wordClicksDisabled ? undefined : () => onWordClick(paragraph.id, index)}
             className={`rounded-sm transition-colors duration-150 ${
               isHighlighted
-                ? "bg-amber-300/90 text-neutral-900 shadow-[0_0_0_2px_rgba(253,224,71,0.9)] z-10 relative"
+                ? "bg-white/18 text-neutral-100 shadow-[0_0_0_1px_rgba(255,255,255,0.22)] z-10 relative"
                 : wordClicksDisabled
                   ? "cursor-not-allowed"
                   : "cursor-pointer hover:bg-neutral-800/70"
@@ -378,7 +378,10 @@ export default function NormalReadingMode() {
   const virtualItems = rowVirtualizer.getVirtualItems();
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950">
+    <div
+      className="flex h-screen flex-col bg-neutral-950"
+      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+    >
       {/* Header with glassmorphism on scroll */}
       <header 
         className={`flex items-center gap-3 px-4 py-3 transition-all duration-300 z-20 ${
@@ -504,7 +507,10 @@ export default function NormalReadingMode() {
 
       {/* Speed Read FAB */}
       {highlightedWord && !isTtsBarOpen ? (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 pb-6 z-10">
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 z-10"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
+        >
           <div className="pointer-events-auto flex items-center gap-2">
             <motion.button
               type="button"
@@ -515,8 +521,8 @@ export default function NormalReadingMode() {
               animate={{ opacity: 0.9, y: 0 }}
               transition={{ delay: 0.3, duration: 0.25 }}
               className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                text-neutral-300 text-sm font-medium backdrop-blur-md
-                px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-neutral-200
+                text-orange-300 text-sm font-medium backdrop-blur-md
+                px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-orange-200
                 transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -525,7 +531,7 @@ export default function NormalReadingMode() {
               Speed Read
             </motion.button>
 
-            {tts.preparedState === "ready" && tts.serverAvailable ? (
+            {tts.isReady ? (
               <motion.button
                 type="button"
                 onClick={() => setIsTtsBarOpen((v) => !v)}
@@ -535,8 +541,8 @@ export default function NormalReadingMode() {
                 animate={{ opacity: 0.9, y: 0 }}
                 transition={{ delay: 0.35, duration: 0.25 }}
                 className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                  text-neutral-300 text-sm font-medium backdrop-blur-md
-                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-neutral-200
+                  text-orange-300 text-sm font-medium backdrop-blur-md
+                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-orange-200
                   transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20 ${
                     tts.isReady ? "" : "opacity-70"
                   }`}
@@ -552,7 +558,7 @@ export default function NormalReadingMode() {
         </div>
       ) : null}
 
-      {highlightedWord && tts.preparedState === "ready" && tts.serverAvailable ? (
+      {highlightedWord && tts.isReady ? (
         <TtsMiniBar
           isOpen={isTtsBarOpen}
           startFrom={highlightedWord}

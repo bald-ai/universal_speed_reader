@@ -19,7 +19,8 @@ export default function TtsMiniBar(props: Props) {
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-x-0 bottom-0 z-30 px-4 pb-6"
+          className="fixed inset-x-0 bottom-0 z-30 px-4"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
           initial={{ y: 12, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 12, opacity: 0 }}
@@ -30,7 +31,7 @@ export default function TtsMiniBar(props: Props) {
               <div className="text-xs uppercase tracking-[0.18em] text-neutral-500">TTS</div>
 
               {!tts.isReady ? (
-                <div className="text-sm text-neutral-400">Loading…</div>
+                <div className="text-sm text-neutral-400">TTS unavailable on this device</div>
               ) : (
                 <button
                   type="button"

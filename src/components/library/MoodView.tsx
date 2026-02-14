@@ -102,35 +102,59 @@ function FolderPicker(props: {
   if (!open) return null;
 
   return (
-    <div
-      ref={ref}
-      className="absolute right-0 top-[calc(100%+8px)] z-30 w-56 rounded-xl border border-neutral-800 bg-neutral-900 shadow-xl shadow-black/40 overflow-hidden"
-    >
-      <div className="px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800">
-        Add to folder
+    <>
+      <button
+        type="button"
+        aria-label="Close folder picker"
+        onClick={onClose}
+        className="fixed inset-0 z-40 bg-black/45 sm:hidden"
+      />
+
+      <div
+        ref={ref}
+        className="fixed inset-x-3 bottom-0 z-50 rounded-t-2xl border border-neutral-800 bg-neutral-900 shadow-xl shadow-black/50
+          overflow-hidden flex flex-col sm:absolute sm:inset-x-auto sm:right-0 sm:top-[calc(100%+8px)] sm:bottom-auto sm:z-30
+          sm:w-56 sm:rounded-xl"
+        style={{
+          maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - 12px)",
+          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
+        }}
+      >
+        <div className="px-3 py-2 border-b border-neutral-800 flex items-center justify-between">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+            Add to folder
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="sm:hidden text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto max-h-[min(58dvh,22rem)] sm:max-h-64">
+          {folders.map((f) => {
+            const checked = f.bookIds.includes(book.id);
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => onToggleInFolder(f.id, book.id)}
+                className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-neutral-800 transition-colors"
+              >
+                <div className={`h-7 w-7 rounded-lg ${gradientForFolder(f)} border border-neutral-700`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-neutral-100 truncate">{f.label}</div>
+                </div>
+                <div className="w-5 text-right text-neutral-300">
+                  {checked ? "✓" : ""}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div className="max-h-64 overflow-auto">
-        {folders.map((f) => {
-          const checked = f.bookIds.includes(book.id);
-          return (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => onToggleInFolder(f.id, book.id)}
-              className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-neutral-800 transition-colors"
-            >
-              <div className={`h-7 w-7 rounded-lg ${gradientForFolder(f)} border border-neutral-700`} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-neutral-100 truncate">{f.label}</div>
-              </div>
-              <div className="w-5 text-right text-neutral-300">
-                {checked ? "✓" : ""}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    </>
   );
 }
 

@@ -27,12 +27,8 @@ type BookCardProps = {
   readDisabled?: boolean;
   progress: number;
   onRead: () => void;
-  onPrepareTts: () => void;
   tts: {
     available: boolean;
-    state: "missing" | "preparing" | "ready" | "error";
-    progressPercent?: number;
-    progressLabel?: string;
   };
   index?: number;
 };
@@ -49,7 +45,6 @@ export default function BookCard(props: BookCardProps) {
     readDisabled,
     progress,
     onRead,
-    onPrepareTts,
     tts,
     index = 0,
   } = props;
@@ -185,49 +180,16 @@ export default function BookCard(props: BookCardProps) {
               {readLabel ?? "Read"}
             </button>
 
-            {tts.available ? (
-              <button
-                type="button"
-                onClick={onPrepareTts}
-                disabled={tts.state === "preparing" || !!readDisabled}
-                className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
-                  tts.state === "ready"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                    : tts.state === "preparing"
-                    ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                    : "border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:bg-neutral-900"
-                } ${tts.state === "preparing" || !!readDisabled ? "opacity-80 cursor-not-allowed" : ""}`}
-                title={tts.progressLabel}
-              >
-                {tts.state === "ready" ? "Rebuild TTS" : tts.state === "preparing" ? "Preparing…" : "Prepare TTS"}
-              </button>
-            ) : (
-              <div className="rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-2 text-sm text-neutral-500">
-                TTS Offline
-              </div>
-            )}
+            <div
+              className={`rounded-xl border px-4 py-2 text-sm ${
+                tts.available
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                  : "border-neutral-700 bg-neutral-900/40 text-neutral-500"
+              }`}
+            >
+              {tts.available ? "TTS Ready" : "TTS Unavailable"}
+            </div>
           </div>
-
-          {tts.available && tts.state === "preparing" ? (
-            <div className="mt-3">
-              <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-1.5">
-                <span>Preparing TTS</span>
-                <span className="text-neutral-400 font-medium">
-                  {typeof tts.progressPercent === "number" ? `${Math.round(tts.progressPercent)}%` : ""}
-                </span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-amber-300 to-amber-500"
-                  style={{ width: `${Math.max(0, Math.min(100, tts.progressPercent ?? 0))}%` }}
-                />
-              </div>
-            </div>
-          ) : tts.available && tts.state === "error" ? (
-            <div className="mt-3 text-[11px] text-red-300 bg-red-950/30 border border-red-500/20 rounded-xl px-3 py-2">
-              TTS error: {tts.progressLabel ?? "Unknown error"}
-            </div>
-          ) : null}
         </div>
       </div>
     </motion.div>
