@@ -2,11 +2,13 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { devStoreGet, devStoreSet } from "@/lib/devStore";
 
-export type Theme = "light" | "dark";
+type Theme = "light" | "dark";
 
 export type Settings = {
   wpm: number;
@@ -35,38 +37,30 @@ const DEFAULT_SETTINGS: Settings = {
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
 
-function getInitialSettings(): Settings {
-  if (typeof window === "undefined") return DEFAULT_SETTINGS;
-
-  try {
-    const raw = window.localStorage.getItem("speedreader:settings");
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<Settings>;
-      return { ...DEFAULT_SETTINGS, ...parsed };
-    }
-  } catch {
-    // ignore malformed settings
-  }
-
-  // Fallback to system preference for theme
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  if (prefersDark) {
-    return { ...DEFAULT_SETTINGS, theme: "dark" };
-  }
-
-  return DEFAULT_SETTINGS;
-}
-
 export function SettingsProvider(props: { children: ReactNode }) {
-  const [settings, setSettings] = useState<Settings>(getInitialSettings);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const loaded = useRef(false);
+
+  // Load settings from devStore on mount
+  useEffect(() => {
+    let cancelled = false;
+    devStoreGet<Partial<Settings>>("speedreader-settings").then((stored) => {
+      if (cancelled) return;
+      loaded.current = true;
+      if (stored) {
+        setSettings((prev) => ({ ...prev, ...stored }));
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Persist settings and apply theme class
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem("speedreader:settings", JSON.stringify(settings));
-    } catch {
-      // ignore quota errors for MVP
+
+    // Only persist after initial load from devStore to avoid overwriting with defaults
+    if (loaded.current) {
+      devStoreSet("speedreader-settings", settings);
     }
 
     const root = window.document.documentElement;

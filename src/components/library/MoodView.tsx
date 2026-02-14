@@ -142,8 +142,8 @@ export default function MoodView(props: MoodViewProps) {
   const [pickerFor, setPickerFor] = useState<string | null>(null); // bookId
 
   useEffect(() => {
-    setFolders(loadFolders());
-    setRecentMap(loadRecent());
+    loadFolders().then(setFolders);
+    loadRecent().then(setRecentMap);
   }, []);
 
   const bookById = useMemo(() => new Map(books.map((b) => [b.id, b])), [books]);
@@ -157,7 +157,7 @@ export default function MoodView(props: MoodViewProps) {
         const has = f.bookIds.includes(bookId);
         return { ...f, bookIds: has ? f.bookIds.filter((id) => id !== bookId) : [...f.bookIds, bookId] };
       });
-      saveFolders(next);
+      void saveFolders(next);
       return next;
     });
   };
@@ -167,7 +167,7 @@ export default function MoodView(props: MoodViewProps) {
     if (!nextLabel) return;
     setFolders((prev) => {
       const next = prev.map((f) => (f.id === folderId ? { ...f, label: nextLabel, icon, color: color ?? f.color } : f));
-      saveFolders(next);
+      void saveFolders(next);
       return next;
     });
   }, []);
@@ -175,7 +175,7 @@ export default function MoodView(props: MoodViewProps) {
   const deleteFolder = useCallback((folderId: string) => {
     setFolders((prev) => {
       const next = prev.filter((f) => f.id !== folderId);
-      saveFolders(next);
+      void saveFolders(next);
       return next;
     });
   }, []);
@@ -185,14 +185,14 @@ export default function MoodView(props: MoodViewProps) {
     const f: MoodFolder = { id, label: "New Folder", color: DEFAULT_FOLDER_COLOR, bookIds: [] };
     setFolders((prev) => {
       const next = [...prev, f];
-      saveFolders(next);
+      void saveFolders(next);
       return next;
     });
     setNewEditId(id);
   };
 
   const openMostRecent = (folderId: string, bookId: string) => {
-    setRecent(folderId, bookId);
+    void setRecent(folderId, bookId);
     setRecentMap((m) => ({ ...m, [folderId]: bookId }));
     onOpenBook(bookId);
   };

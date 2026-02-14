@@ -3,11 +3,11 @@ import { tokenizeParagraph } from "./wordExtraction";
 
 const bookTokenCaches = new Map<string, Map<number, string[]>>();
 
-export function getTokenCacheKey(bookId: string, paragraphCount: number): string {
+function getTokenCacheKey(bookId: string, paragraphCount: number): string {
   return `${bookId}:${paragraphCount}`;
 }
 
-export function getBookTokenCache(book: Book): Map<number, string[]> {
+function getBookTokenCache(book: Book): Map<number, string[]> {
   const key = getTokenCacheKey(book.id, book.paragraphs.length);
   const existing = bookTokenCaches.get(key);
   if (existing) return existing;
@@ -38,14 +38,4 @@ export function primeBookTokenCache(book: Book): void {
       cache.set(paragraph.id, tokenizeParagraph(paragraph.text));
     }
   }
-}
-
-export function clearTokenCacheForBook(bookId: string): void {
-  const keysToDelete: string[] = [];
-  bookTokenCaches.forEach((_, key) => {
-    if (key.startsWith(`${bookId}:`)) {
-      keysToDelete.push(key);
-    }
-  });
-  keysToDelete.forEach((key) => bookTokenCaches.delete(key));
 }

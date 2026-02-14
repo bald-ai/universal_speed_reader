@@ -39,31 +39,16 @@ export function BookProvider(props: ProviderProps) {
       try {
         let parsed: Book | null = null;
 
-        if (typeof window !== "undefined") {
-          const cached = window.localStorage.getItem(`speedreader:book:${bookId}`);
-          if (cached) {
-            try {
-              parsed = JSON.parse(cached) as Book;
-            } catch {
-              parsed = null;
-            }
-          }
+        // Always fetch fresh book data from JSON — never use localStorage cache.
+        // This prevents stale book content across browsers.
+        const res = await fetch(`/books/${bookId}.json`, {
+          cache: "no-cache",
+          headers: { "cache-control": "no-cache" },
+        });
+        if (!res.ok) {
+          throw new Error(`Failed to load book data (${res.status})`);
         }
-
-        if (!parsed) {
-          const res = await fetch(`/books/${bookId}.json`);
-          if (!res.ok) {
-            throw new Error(`Failed to load book data (${res.status})`);
-          }
-          parsed = (await res.json()) as Book;
-          if (typeof window !== "undefined") {
-            try {
-              window.localStorage.setItem(`speedreader:book:${bookId}`, JSON.stringify(parsed));
-            } catch {
-              // ignore quota errors for MVP
-            }
-          }
-        }
+        parsed = (await res.json()) as Book;
 
         if (!cancelled) {
           setBook(parsed);

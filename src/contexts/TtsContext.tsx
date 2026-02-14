@@ -17,11 +17,11 @@ import type { Position } from "@/types/reading";
 import { getTokensForParagraph } from "@/lib/utils/tokenCache";
 import { getTtsBookStatus, getTtsTimingsUrl, ttsHealth, type TtsBookStatus } from "@/lib/ttsClient";
 
-export type TtsPlayerStatus = "idle" | "playing" | "paused" | "error";
+type TtsPlayerStatus = "idle" | "playing" | "paused" | "error";
 
-export type TtsPreparedState = TtsBookStatus["state"];
+type TtsPreparedState = TtsBookStatus["state"];
 
-export type TtsProgress = { doneParas: number; totalParas: number } | null;
+type TtsProgress = { doneParas: number; totalParas: number } | null;
 
 type Timing = { startMs: number; endMs: number };
 

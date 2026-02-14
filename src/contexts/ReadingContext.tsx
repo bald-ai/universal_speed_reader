@@ -13,6 +13,7 @@ import {
 import type { Mode, Position } from "@/types/reading";
 import { useBook } from "./BookContext";
 import { calculatePercentComplete, findChapterForParagraph } from "@/lib/utils/bookHelpers";
+import { devStoreGet, devStoreSet } from "@/lib/devStore";
 
 type ReadingContextValue = {
   mode: Mode;
@@ -81,15 +82,13 @@ export function ReadingProvider(props: ProviderProps) {
 
   // Load last progress on mount
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(`speedreader:progress:${bookId}`);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        paragraphId?: number;
-        wordIndex?: number;
-        mode?: Mode;
-      };
+    let cancelled = false;
+    devStoreGet<{
+      paragraphId?: number;
+      wordIndex?: number;
+      mode?: Mode;
+    }>(`speedreader-progress-${bookId}`).then((parsed) => {
+      if (cancelled || !parsed) return;
 
       if (typeof parsed.paragraphId === "number") {
         setPositionState({
@@ -98,13 +97,13 @@ export function ReadingProvider(props: ProviderProps) {
         });
       }
       setModeState("normal");
-    } catch {
+    }).catch(() => {
       // ignore malformed progress
-    }
+    });
+    return () => { cancelled = true; };
   }, [bookId]);
 
   const saveProgress = useCallback((overrides?: { mode?: Mode; position?: Position }) => {
-    if (typeof window === "undefined") return;
     const currentBook = bookRef.current;
     if (!currentBook) return;
 
@@ -119,12 +118,8 @@ export function ReadingProvider(props: ProviderProps) {
       percentComplete: calculatePercentComplete(currentBook, currentPosition)
     };
 
-    const key = `speedreader:progress:${bookId}`;
-    try {
-      window.localStorage.setItem(key, JSON.stringify(payload));
-    } catch {
-      // ignore quota errors for MVP
-    }
+    // fire-and-forget
+    devStoreSet(`speedreader-progress-${bookId}`, payload);
   }, [bookId]);
 
   const saveProgressRef = useRef(saveProgress);

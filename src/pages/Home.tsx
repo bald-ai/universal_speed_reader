@@ -5,6 +5,7 @@ import MoodView from "@/components/library/MoodView";
 import { motion } from "framer-motion";
 import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
 import { getTtsBookStatus, prepareTtsBook, ttsHealth } from "@/lib/ttsClient";
+import { devStoreGet } from "@/lib/devStore";
 import type { LibraryBook } from "@/types/book";
 import { MOCK_LIBRARY_BOOKS } from "@/lib/mockLibraryBooks"; // MOCK DATA — remove when real upload is implemented.
 
@@ -35,16 +36,11 @@ export default function Home() {
   }>({ state: "missing" });
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(`speedreader:progress:${BOOK_ID}`);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { percentComplete?: number };
-      if (typeof parsed.percentComplete === "number") {
+    devStoreGet<{ percentComplete?: number }>(`speedreader-progress-${BOOK_ID}`).then((parsed) => {
+      if (parsed && typeof parsed.percentComplete === "number") {
         setProgress({ percentComplete: parsed.percentComplete });
       }
-    } catch {
-      // ignore malformed progress
-    }
+    });
   }, []);
 
   useEffect(() => {

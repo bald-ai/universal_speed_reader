@@ -38,5 +38,8 @@ test_screenshots/
 tools/tts-server/voices/
 tools/tts-server/.venv/
 
+# Dev store (shared key-value for dev server)
+.tmp_dev_store/
+
 # Personal
 thoughtnotebook.md
