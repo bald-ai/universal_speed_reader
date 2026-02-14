@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { TtsHighlightStyle } from "@/types/reading";
 
 type Theme = "light" | "dark";
 
@@ -13,6 +14,7 @@ export type Settings = {
   ttsPlaybackRate: number;
   ttsVoiceIndex: number;
   ttsLanguage: string;
+  ttsHighlightStyle: TtsHighlightStyle;
   fontSize: "small" | "medium" | "large" | "xl";
   fontFamily: "serif" | "sans-serif" | "monospace";
   theme: Theme;
@@ -30,6 +32,7 @@ const DEFAULT_SETTINGS: Settings = {
   ttsPlaybackRate: 1.0,
   ttsVoiceIndex: -1,
   ttsLanguage: "en-US",
+  ttsHighlightStyle: "word",
   fontSize: "medium",
   fontFamily: "serif",
   theme: "dark",

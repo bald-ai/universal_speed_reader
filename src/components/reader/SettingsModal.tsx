@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/contexts/SettingsContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { getNativeTtsVoices, type NativeTtsVoice } from "@/lib/nativeTts";
+import type { TtsHighlightStyle } from "@/types/reading";
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -22,6 +23,15 @@ const FONT_FAMILY_OPTIONS: { value: Settings["fontFamily"]; label: string }[] = 
   { value: "serif", label: "Serif" },
   { value: "sans-serif", label: "Sans-serif" },
   { value: "monospace", label: "Monospace" }
+];
+
+const TTS_HIGHLIGHT_STYLE_OPTIONS: { value: TtsHighlightStyle; label: string }[] = [
+  { value: "word", label: "Single word" },
+  { value: "sentence", label: "Full sentence" },
+  { value: "dim-rest", label: "Dim surroundings" },
+  { value: "underline", label: "Underline" },
+  { value: "karaoke", label: "Karaoke fill" },
+  { value: "phrase", label: "Phrase (3-5 words)" },
 ];
 
 function labelForVoice(voice: NativeTtsVoice): string {
@@ -427,19 +437,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     animate={{ scale: 1, color: "#fbbf24" }}
                     className="text-xs font-medium"
                   >
-                    {settings.ttsPlaybackRate.toFixed(2)}x
+                    {settings.ttsPlaybackRate.toFixed(1)}x
                   </motion.span>
                 </div>
                 <div className="relative">
                   <input
                     type="range"
-                    min={0.7}
-                    max={1.4}
-                    step={0.01}
+                    min={1}
+                    max={3}
+                    step={0.1}
                     value={settings.ttsPlaybackRate}
                     onChange={(event) => {
                       const value = Number(event.target.value);
-                      const clamped = Math.max(0.7, Math.min(1.4, value));
+                      const clamped = Math.max(1, Math.min(3, Math.round(value * 10) / 10));
                       updateSettings({ ttsPlaybackRate: clamped });
                     }}
                     className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
@@ -461,11 +471,35 @@ export default function SettingsModal(props: SettingsModalProps) {
                       [&::-moz-range-thumb]:shadow-amber-400/20"
                   />
                   <div className="flex justify-between text-xs text-neutral-500 mt-2">
-                    <span>0.70x</span>
-                    <span>1.00x</span>
-                    <span>1.40x</span>
+                    <span>1.0x</span>
+                    <span>2.0x</span>
+                    <span>3.0x</span>
                   </div>
                 </div>
+              </section>
+
+              {/* TTS Highlight Style */}
+              <section>
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="font-medium text-neutral-200">TTS highlight style</span>
+                  <span className="text-xs text-amber-400 font-medium">
+                    {TTS_HIGHLIGHT_STYLE_OPTIONS.find((o) => o.value === settings.ttsHighlightStyle)?.label ?? "Single word"}
+                  </span>
+                </div>
+                <select
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200"
+                  value={settings.ttsHighlightStyle}
+                  onChange={(event) => {
+                    updateSettings({ ttsHighlightStyle: event.target.value as TtsHighlightStyle });
+                  }}
+                >
+                  {TTS_HIGHLIGHT_STYLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-neutral-500 mt-2">How text is visually highlighted during TTS playback.</p>
               </section>
 
               {/* TTS Voice */}

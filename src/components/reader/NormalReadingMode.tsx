@@ -13,12 +13,35 @@ import TtsMiniBar from "@/components/reader/TtsMiniBar";
 
 import { getTokensForParagraph, getWordCountForParagraph } from "@/lib/utils/tokenCache";
 import type { Chapter, Paragraph } from "@/types/book";
-import type { Position } from "@/types/reading";
+import type { Position, TtsHighlightStyle } from "@/types/reading";
+
+// ── sentence boundary helper ──
+function getSentenceBounds(words: string[]): [number, number][] {
+  const bounds: [number, number][] = [];
+  let start = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (/[.!?][""\u201D\u2019)]*$/.test(words[i]) || i === words.length - 1) {
+      bounds.push([start, i]);
+      start = i + 1;
+    }
+  }
+  return bounds;
+}
+
+function findSentenceFor(bounds: [number, number][], idx: number): [number, number] | null {
+  for (const b of bounds) {
+    if (idx >= b[0] && idx <= b[1]) return b;
+  }
+  return null;
+}
+
+const PHRASE_SIZE = 4;
 
 type ParagraphRowProps = {
   paragraph: Paragraph;
   words: string[];
   highlightedWordIndex: number | null;
+  highlightStyle: TtsHighlightStyle;
   onWordClick: (paragraphId: number, wordIndex: number) => void;
   wordClicksDisabled: boolean;
   fontSizeClass: string;
@@ -29,28 +52,93 @@ const ParagraphRow = memo(function ParagraphRow({
   paragraph,
   words,
   highlightedWordIndex,
+  highlightStyle,
   onWordClick,
   wordClicksDisabled,
   fontSizeClass,
   fontFamilyClass,
 }: ParagraphRowProps) {
+  const sentenceBounds = useMemo(() => getSentenceBounds(words), [words]);
+  const activeSentence = highlightedWordIndex !== null
+    ? findSentenceFor(sentenceBounds, highlightedWordIndex)
+    : null;
+
+  const phraseStart = highlightedWordIndex !== null
+    ? Math.floor(highlightedWordIndex / PHRASE_SIZE) * PHRASE_SIZE
+    : -1;
+  const phraseEnd = phraseStart >= 0 ? Math.min(phraseStart + PHRASE_SIZE - 1, words.length - 1) : -1;
+
   return (
     <div className={`${fontFamilyClass} ${fontSizeClass} leading-relaxed text-neutral-300 text-left`}>
       {words.map((word, index) => {
-        const isHighlighted = highlightedWordIndex === index;
+        const isActiveWord = highlightedWordIndex === index;
+        const inActiveSentence = activeSentence !== null && index >= activeSentence[0] && index <= activeSentence[1];
+        const inActivePhrase = index >= phraseStart && index <= phraseEnd;
+        const beforeActiveWord = highlightedWordIndex !== null && index < highlightedWordIndex && inActiveSentence;
+
+        let cls = "rounded-sm transition-colors duration-150 ";
+
+        if (highlightedWordIndex === null) {
+          // no TTS active
+          cls += wordClicksDisabled ? "cursor-not-allowed" : "cursor-pointer hover:bg-neutral-800/70";
+        } else {
+          switch (highlightStyle) {
+            case "word":
+              cls += isActiveWord
+                ? "bg-white/18 text-neutral-100 shadow-[0_0_0_1px_rgba(255,255,255,0.22)] z-10 relative"
+                : wordClicksDisabled ? "cursor-not-allowed" : "cursor-pointer hover:bg-neutral-800/70";
+              break;
+
+            case "sentence":
+              cls += inActiveSentence
+                ? "bg-white/10 text-neutral-100"
+                : "text-neutral-500";
+              break;
+
+            case "dim-rest":
+              cls += inActiveSentence
+                ? "text-neutral-100"
+                : "text-neutral-600 transition-colors duration-300";
+              break;
+
+            case "underline":
+              cls += isActiveWord
+                ? "text-neutral-100 border-b-2 border-amber-400/80 pb-[1px]"
+                : wordClicksDisabled ? "cursor-not-allowed" : "cursor-pointer hover:bg-neutral-800/70";
+              break;
+
+            case "karaoke":
+              if (inActiveSentence) {
+                cls += beforeActiveWord
+                  ? "text-amber-300"
+                  : isActiveWord
+                    ? "text-amber-300"
+                    : "text-neutral-400";
+              } else {
+                cls += "text-neutral-500";
+              }
+              break;
+
+            case "phrase":
+              cls += inActivePhrase
+                ? "bg-white/12 text-neutral-100 rounded-sm"
+                : "text-neutral-500";
+              break;
+
+            default:
+              cls += isActiveWord
+                ? "bg-white/18 text-neutral-100"
+                : "";
+          }
+        }
+
         return (
           <span
             key={index}
             data-word-index={index}
             data-paragraph-id={paragraph.id}
             onClick={wordClicksDisabled ? undefined : () => onWordClick(paragraph.id, index)}
-            className={`rounded-sm transition-colors duration-150 ${
-              isHighlighted
-                ? "bg-white/18 text-neutral-100 shadow-[0_0_0_1px_rgba(255,255,255,0.22)] z-10 relative"
-                : wordClicksDisabled
-                  ? "cursor-not-allowed"
-                  : "cursor-pointer hover:bg-neutral-800/70"
-            }`}
+            className={cls}
           >
             {word}
             {index < words.length - 1 ? " " : ""}
@@ -278,12 +366,18 @@ export default function NormalReadingMode() {
       const wRect = wordEl.getBoundingClientRect();
       const relTop = wRect.top - cRect.top;
       const relBottom = wRect.bottom - cRect.top;
+      const relMid = (relTop + relBottom) / 2;
       const h = cRect.height || 1;
-      const bandTop = h * 0.25;
-      const bandBottom = h * 0.75;
+      const bandTop = h * 0.12;
+      const bandBottom = h * 0.5;
+      const targetMid = h * 0.32;
 
-      if (relTop < bandTop || relBottom > bandBottom) {
-        wordEl.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (relMid < bandTop || relMid > bandBottom) {
+        const delta = relMid - targetMid;
+        container.scrollTo({
+          top: container.scrollTop + delta,
+          behavior: "smooth",
+        });
       }
     }, 50);
     
@@ -494,6 +588,7 @@ export default function NormalReadingMode() {
                   paragraph={paragraph}
                   words={words}
                   highlightedWordIndex={highlightedWordIndex}
+                  highlightStyle={settings.ttsHighlightStyle}
                   onWordClick={handleWordClick}
                   wordClicksDisabled={tts.status === "playing"}
                   fontSizeClass={fontSizeClass}
@@ -521,8 +616,8 @@ export default function NormalReadingMode() {
               animate={{ opacity: 0.9, y: 0 }}
               transition={{ delay: 0.3, duration: 0.25 }}
               className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                text-orange-300 text-sm font-medium backdrop-blur-md
-                px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-orange-200
+                text-green-300 text-sm font-medium backdrop-blur-md
+                px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
                 transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -541,8 +636,8 @@ export default function NormalReadingMode() {
                 animate={{ opacity: 0.9, y: 0 }}
                 transition={{ delay: 0.35, duration: 0.25 }}
                 className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                  text-orange-300 text-sm font-medium backdrop-blur-md
-                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-orange-200
+                  text-green-300 text-sm font-medium backdrop-blur-md
+                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
                   transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20 ${
                     tts.isReady ? "" : "opacity-70"
                   }`}

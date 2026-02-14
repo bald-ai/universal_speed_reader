@@ -23,7 +23,7 @@ type PluginListenerHandle = {
 
 function clampRate(rate: number): number {
   if (!Number.isFinite(rate)) return 1;
-  return Math.max(0.1, Math.min(2, rate));
+  return Math.max(1, Math.min(3, rate));
 }
 
 export async function isNativeTtsAvailable(): Promise<boolean> {
