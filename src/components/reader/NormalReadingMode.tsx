@@ -341,7 +341,7 @@ export default function NormalReadingMode() {
     // Avoid double-scrolling on initial mount if possible, 
     // but ensures we catch updates or missed initial scrolls.
     const t = setTimeout(() => {
-      const isTtsActive = tts.status === "playing" || tts.status === "paused";
+      const isTtsActive = tts.status === "playing";
       if (!isTtsActive) {
         findAndScrollToWord(highlightedWord);
         return;
@@ -421,15 +421,6 @@ export default function NormalReadingMode() {
     // When TTS is playing, don't allow changing the current word via clicks.
     // User must pause/stop first, then pick a word, then play again.
     if (tts.status === "playing") {
-      return;
-    }
-
-    // When TTS is paused, clicks mean "jump" (set new resume point).
-    if (tts.status === "paused") {
-      const next = { paragraphId, wordIndex };
-      setHighlightedWord(next);
-      setPosition(next);
-      tts.jumpTo(next);
       return;
     }
     if (highlightedWord && highlightedWord.paragraphId === paragraphId && highlightedWord.wordIndex === wordIndex) {

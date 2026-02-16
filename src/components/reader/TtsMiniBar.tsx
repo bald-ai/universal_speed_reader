@@ -52,7 +52,7 @@ export default function TtsMiniBar(props: Props) {
                   </div>
                 ) : (
                   <div className="text-xs text-neutral-500">
-                    {tts.status === "playing" ? "Playing" : tts.status === "paused" ? "Paused" : "Idle"}
+                    {tts.status === "playing" ? "Playing" : "Idle"}
                   </div>
                 )}
                 <button

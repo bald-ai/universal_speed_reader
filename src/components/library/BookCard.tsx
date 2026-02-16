@@ -27,9 +27,6 @@ type BookCardProps = {
   readDisabled?: boolean;
   progress: number;
   onRead: () => void;
-  tts: {
-    available: boolean;
-  };
   index?: number;
 };
 
@@ -45,7 +42,6 @@ export default function BookCard(props: BookCardProps) {
     readDisabled,
     progress,
     onRead,
-    tts,
     index = 0,
   } = props;
   const clampedProgress = Math.max(0, Math.min(100, Math.round(progress)));
@@ -169,7 +165,7 @@ export default function BookCard(props: BookCardProps) {
             </div>
           </div>
 
-          <div className="mt-5 flex items-center gap-2">
+          <div className="mt-5">
             <button
               type="button"
               onClick={onRead}
@@ -179,16 +175,6 @@ export default function BookCard(props: BookCardProps) {
             >
               {readLabel ?? "Read"}
             </button>
-
-            <div
-              className={`rounded-xl border px-4 py-2 text-sm ${
-                tts.available
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                  : "border-neutral-700 bg-neutral-900/40 text-neutral-500"
-              }`}
-            >
-              {tts.available ? "TTS Ready" : "TTS Unavailable"}
-            </div>
           </div>
         </div>
       </div>

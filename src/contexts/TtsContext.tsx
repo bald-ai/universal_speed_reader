@@ -22,7 +22,7 @@ import {
   subscribeRangeStart,
 } from "@/lib/nativeTts";
 
-type TtsPlayerStatus = "idle" | "playing" | "paused" | "error";
+type TtsPlayerStatus = "idle" | "playing" | "error";
 
 type TtsContextValue = {
   status: TtsPlayerStatus;
@@ -30,14 +30,13 @@ type TtsContextValue = {
   isReady: boolean;
 
   playFrom: (pos: Position) => Promise<void>;
-  pause: () => void;
   stop: () => void;
   jumpTo: (pos: Position) => Promise<void>;
 };
 
 const TtsContext = createContext<TtsContextValue | undefined>(undefined);
 
-type Props = { bookId: string; children: ReactNode };
+type Props = { children: ReactNode };
 
 const MAX_UTTERANCE_CHARS = 1800;
 
@@ -265,10 +264,6 @@ export function TtsProvider(props: Props) {
     ]
   );
 
-  const pause = useCallback(() => {
-    stop();
-  }, [stop]);
-
   const jumpTo = useCallback(
     async (pos: Position) => {
       if (!isReady) return;
@@ -343,11 +338,10 @@ export function TtsProvider(props: Props) {
       error,
       isReady,
       playFrom,
-      pause,
       stop,
       jumpTo,
     }),
-    [status, error, isReady, playFrom, pause, stop, jumpTo]
+    [status, error, isReady, playFrom, stop, jumpTo]
   );
 
   return <TtsContext.Provider value={value}>{children}</TtsContext.Provider>;

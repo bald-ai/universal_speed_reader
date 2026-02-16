@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState, memo } from "react";
+import { useMemo, useState, memo } from "react";
 import { useLocation } from "wouter";
 import BookCard from "@/components/library/BookCard";
 import MoodView from "@/components/library/MoodView";
 import { motion } from "framer-motion";
-import { isNativeTtsAvailable } from "@/lib/nativeTts";
 import type { LibraryBook } from "@/types/book";
 import { MOCK_LIBRARY_BOOKS } from "@/lib/mockLibraryBooks"; // MOCK DATA — remove when real upload is implemented.
 
@@ -21,19 +20,6 @@ const BOOK_ID = "test";
 export default function Home() {
   const [, setLocation] = useLocation();
   const [view, setView] = useState<"mood" | "library">("mood");
-  const [ttsAvailable, setTtsAvailable] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const available = await isNativeTtsAvailable();
-      if (!cancelled) setTtsAvailable(available);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const realLibraryBook: LibraryBook = useMemo(
     () => ({
@@ -185,7 +171,6 @@ export default function Home() {
                     readDisabled={!isReal}
                     progress={0}
                     onRead={isReal ? () => setLocation(`/reader/${BOOK_ID}`) : () => {}}
-                    tts={{ available: isReal && ttsAvailable }}
                     index={index}
                   />
                 );

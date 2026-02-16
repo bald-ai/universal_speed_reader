@@ -15,7 +15,7 @@ export default function ReaderApp(props: ReaderAppProps) {
   return (
     <BookProvider bookId={bookId}>
       <ReadingProvider bookId={bookId}>
-        <TtsProvider bookId={bookId}>
+        <TtsProvider>
           <ReaderShell />
         </TtsProvider>
       </ReadingProvider>
