@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import type { TtsHighlightStyle } from "@/types/reading";
+import { TTS_RATE_DEFAULT, WPM_DEFAULT } from "@/lib/constants";
 
 type Theme = "light" | "dark";
 
@@ -28,8 +29,8 @@ type SettingsContextValue = {
 };
 
 const DEFAULT_SETTINGS: Settings = {
-  wpm: 250,
-  ttsPlaybackRate: 1.0,
+  wpm: WPM_DEFAULT,
+  ttsPlaybackRate: TTS_RATE_DEFAULT,
   ttsVoiceIndex: -1,
   ttsLanguage: "en-US",
   ttsHighlightStyle: "word",

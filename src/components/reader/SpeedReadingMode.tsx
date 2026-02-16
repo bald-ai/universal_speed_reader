@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import { clampWpm, normalizeWpm } from "@/lib/constants";
 import { findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import { getNextPosition, getWordAtPosition } from "@/lib/utils/bookHelpers";
 import type { Position } from "@/types/reading";
 
 function calculateDelayForWord(targetWpm: number, rampIndex: number, rampUpWords = 25): number {
-  const clampedWpm = Math.max(100, Math.min(600, targetWpm));
+  const clampedWpm = clampWpm(targetWpm);
   const startWpm = clampedWpm * 0.7;
 
   let currentWpm: number;
@@ -163,9 +164,7 @@ export default function SpeedReadingMode() {
     const current = settings.wpm;
     const factor = direction === "up" ? 1.1 : 0.9;
     const raw = current * factor;
-    const rounded = Math.round(raw / 5) * 5;
-    const clamped = Math.max(100, Math.min(600, rounded));
-    updateSettings({ wpm: clamped });
+    updateSettings({ wpm: normalizeWpm(raw) });
     setShowControls(true);
   };
 
@@ -287,10 +286,10 @@ export default function SpeedReadingMode() {
         )}
       </AnimatePresence>
 
-      {/* Controls Footer - positioned at bottom with backdrop blur */}
+      {/* Controls Footer - minimal matching pill */}
       <AnimatePresence>
         {showControls && (
-          <motion.footer 
+          <motion.footer
             className="absolute bottom-0 left-0 right-0 z-30 px-6 pt-4"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
             initial={{ y: 20, opacity: 0 }}
@@ -299,123 +298,88 @@ export default function SpeedReadingMode() {
             transition={{ duration: 0.2, delay: 0.05 }}
             onClick={(event) => event.stopPropagation()}
           >
-            {/* Glassmorphism background for footer only */}
             <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/95 to-neutral-950/70 backdrop-blur-xl" />
-            
-            <div className="relative">
+
+            <div className="relative flex justify-center">
               <AnimatePresence mode="wait">
                 {!isPaused ? (
                   <motion.div
                     key="playing"
-                    className="flex items-center justify-center gap-4"
+                    className="flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.15 }}
                   >
-                    {/* Speed Down */}
-                    <motion.button
+                    <button
                       type="button"
                       onClick={() => handleSpeedChange("down")}
-                      whileHover={{ scale: 1.05, y: -2 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="w-14 h-14 flex items-center justify-center rounded-2xl 
-                        border border-neutral-700/80 bg-neutral-900/80 backdrop-blur text-neutral-300 
-                        hover:bg-neutral-800 hover:border-neutral-600 hover:text-neutral-100 
-                        transition-colors duration-150 shadow-lg shadow-black/20"
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/6 text-sm font-medium text-neutral-400 transition-colors hover:border-amber-300/35 hover:bg-amber-300/15 hover:text-amber-200"
                     >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
                       </svg>
-                    </motion.button>
-
-                    {/* Pause Button */}
-                    <motion.button
-                      type="button"
-                      onClick={handlePause}
-                      whileHover={{ scale: 1.05, y: -2 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="relative w-16 h-16 flex items-center justify-center rounded-2xl 
-                        bg-gradient-to-br from-amber-400 to-orange-500 text-neutral-900 
-                        shadow-xl shadow-orange-500/30 hover:shadow-orange-500/50 
-                        transition-all duration-200"
+                    </button>
+                    <motion.span
+                      key={settings.wpm}
+                      initial={{ scale: 1.2, color: "#fcd34d" }}
+                      animate={{ scale: 1, color: "#e5e7eb" }}
+                      transition={{ duration: 0.24 }}
+                      className="min-w-[46px] text-center text-xs font-semibold tabular-nums"
                     >
-                      {/* Pulse ring when active */}
-                      <motion.div
-                        className="absolute inset-0 rounded-2xl bg-amber-400/30"
-                        animate={{
-                          scale: [1, 1.2, 1],
-                          opacity: [0.5, 0, 0.5],
-                        }}
-                        transition={{
-                          duration: 2,
-                          repeat: Infinity,
-                          ease: "easeInOut",
-                        }}
-                      />
-                      <svg className="w-7 h-7 relative z-10" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-                      </svg>
-                    </motion.button>
-
-                    {/* Speed Up */}
-                    <motion.button
+                      {settings.wpm}
+                    </motion.span>
+                    <button
                       type="button"
                       onClick={() => handleSpeedChange("up")}
-                      whileHover={{ scale: 1.05, y: -2 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="w-14 h-14 flex items-center justify-center rounded-2xl 
-                        border border-neutral-700/80 bg-neutral-900/80 backdrop-blur text-neutral-300 
-                        hover:bg-neutral-800 hover:border-neutral-600 hover:text-neutral-100 
-                        transition-colors duration-150 shadow-lg shadow-black/20"
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/6 text-sm font-medium text-neutral-400 transition-colors hover:border-amber-300/35 hover:bg-amber-300/15 hover:text-amber-200"
                     >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                       </svg>
-                    </motion.button>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePause}
+                      className="ml-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-500 text-neutral-950 shadow-[0_2px_12px_rgba(245,158,11,0.35)] transition-transform hover:scale-105 active:scale-95"
+                    >
+                      <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
+                        <rect x="6" y="5" width="4" height="14" rx="1" />
+                        <rect x="14" y="5" width="4" height="14" rx="1" />
+                      </svg>
+                    </button>
                   </motion.div>
                 ) : (
                   <motion.div
                     key="paused"
-                    className="flex items-center justify-center gap-4"
+                    className="flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.15 }}
                   >
-                    {/* Switch to Read Mode */}
-                    <motion.button
+                    <button
                       type="button"
                       onClick={handleSwitchToNormalMode}
-                      whileHover={{ scale: 1.03, y: -2 }}
-                      whileTap={{ scale: 0.98 }}
-                      className="flex items-center gap-2 rounded-xl border border-neutral-700/80 
-                        bg-neutral-900/80 backdrop-blur px-5 py-3.5 text-sm text-neutral-300 
-                        hover:bg-neutral-800 hover:text-neutral-100 transition-colors duration-150 
-                        shadow-lg shadow-black/20"
+                      className="flex h-9 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[11px] font-semibold uppercase tracking-[0.04em] text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-200"
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
                       </svg>
                       Read
-                    </motion.button>
-
-                    {/* Resume Button */}
-                    <motion.button
+                    </button>
+                    <span className="px-1.5 text-[11px] font-semibold lowercase tracking-[0.04em] text-amber-300 tabular-nums">
+                      {settings.wpm} wpm
+                    </span>
+                    <button
                       type="button"
                       onClick={handleResume}
-                      whileHover={{ scale: 1.03, y: -2 }}
-                      whileTap={{ scale: 0.98 }}
-                      className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 
-                        px-6 py-3.5 text-sm font-semibold text-neutral-900 
-                        shadow-xl shadow-emerald-500/30 hover:shadow-emerald-500/50 
-                        transition-all duration-200"
+                      className="ml-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-500 text-neutral-950 shadow-[0_2px_12px_rgba(245,158,11,0.35)] transition-transform hover:scale-105 active:scale-95"
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                      <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
+                        <path d="M8 5.14v13.72a1 1 0 001.5.86l11-6.86a1 1 0 000-1.72l-11-6.86A1 1 0 008 5.14z" />
                       </svg>
-                      Resume
-                    </motion.button>
+                    </button>
                   </motion.div>
                 )}
               </AnimatePresence>

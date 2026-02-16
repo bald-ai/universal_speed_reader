@@ -1,8 +1,13 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
+import { useSettings } from "@/contexts/SettingsContext";
 import type { Position } from "@/types/reading";
 import { useTts } from "@/contexts/TtsContext";
+import {
+  normalizeTtsPlaybackRate,
+  TTS_RATE_STEP,
+} from "@/lib/constants";
 
 type Props = {
   isOpen: boolean;
@@ -13,7 +18,20 @@ type Props = {
 export default function TtsMiniBar(props: Props) {
   const { isOpen, startFrom, onClose } = props;
   const tts = useTts();
+  const { settings, updateSettings } = useSettings();
   const isPlaying = tts.status === "playing";
+  const isError = Boolean(tts.error);
+
+  const handleSpeedChange = (direction: "up" | "down") => {
+    const delta = direction === "up" ? TTS_RATE_STEP : -TTS_RATE_STEP;
+    const nextRate = normalizeTtsPlaybackRate(settings.ttsPlaybackRate + delta);
+    updateSettings({ ttsPlaybackRate: nextRate });
+  };
+
+  const handleStop = () => {
+    tts.stop();
+    onClose();
+  };
 
   return (
     <AnimatePresence>
@@ -26,47 +44,116 @@ export default function TtsMiniBar(props: Props) {
           exit={{ y: 12, opacity: 0 }}
           transition={{ duration: 0.18 }}
         >
-          <div className="mx-auto w-full max-w-2xl rounded-2xl border border-neutral-800 bg-neutral-950/95 backdrop-blur-xl shadow-2xl shadow-black/40">
-            <div className="flex items-center gap-3 px-4 py-3">
-              <div className="text-xs uppercase tracking-[0.18em] text-neutral-500">TTS</div>
-
-              {!tts.isReady ? (
-                <div className="text-sm text-neutral-400">TTS unavailable on this device</div>
+          <div className="mx-auto w-fit max-w-full rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+            <AnimatePresence mode="wait" initial={false}>
+              {isError ? (
+                <motion.div
+                  key="error"
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.96 }}
+                  transition={{ duration: 0.16 }}
+                  className="flex items-center gap-2 rounded-full border border-red-400/25 bg-red-950/45 px-3 py-1"
+                >
+                  <span className="max-w-[70vw] truncate text-xs text-red-200">{tts.error}</span>
+                  <button
+                    type="button"
+                    onClick={tts.clearError}
+                    className="rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-semibold text-red-100 transition-colors hover:bg-white/15"
+                  >
+                    Dismiss
+                  </button>
+                </motion.div>
+              ) : isPlaying ? (
+                <motion.div
+                  key="playing"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.16 }}
+                  className="flex items-center gap-1"
+                >
+                  <button
+                    type="button"
+                    aria-label="Pause TTS"
+                    onClick={tts.pause}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-violet-300 to-violet-400 text-neutral-950 shadow-[0_2px_12px_rgba(167,139,250,0.4)] transition-transform hover:scale-105 active:scale-95"
+                  >
+                    <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
+                      <rect x="6" y="5" width="4" height="14" rx="1" />
+                      <rect x="14" y="5" width="4" height="14" rx="1" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Stop TTS"
+                    onClick={handleStop}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/6 text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-300"
+                  >
+                    <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  </button>
+                </motion.div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isPlaying) tts.stop();
-                    else tts.playFrom(startFrom);
-                  }}
-                  className="ml-2 rounded-xl bg-neutral-100 text-neutral-900 text-sm font-semibold px-5 py-2 hover:bg-white transition-colors duration-150"
+                <motion.div
+                  key="paused"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.16 }}
+                  className="flex items-center gap-1"
                 >
-                  {isPlaying ? "Stop" : "Play"}
-                </button>
+                  <div className="flex items-center gap-1 px-1.5">
+                    <button
+                      type="button"
+                      aria-label="Decrease TTS speed"
+                      onClick={() => handleSpeedChange("down")}
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/6 text-sm font-medium text-neutral-400 transition-colors hover:border-violet-300/30 hover:bg-violet-300/15 hover:text-violet-200"
+                    >
+                      -
+                    </button>
+                    <motion.span
+                      key={settings.ttsPlaybackRate}
+                      initial={{ scale: 1.2, color: "#c4b5fd" }}
+                      animate={{ scale: 1, color: "#e5e7eb" }}
+                      transition={{ duration: 0.24 }}
+                      className="min-w-[40px] text-center text-xs font-semibold tabular-nums"
+                    >
+                      {settings.ttsPlaybackRate.toFixed(1)}x
+                    </motion.span>
+                    <button
+                      type="button"
+                      aria-label="Increase TTS speed"
+                      onClick={() => handleSpeedChange("up")}
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/6 text-sm font-medium text-neutral-400 transition-colors hover:border-violet-300/30 hover:bg-violet-300/15 hover:text-violet-200"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Play TTS"
+                    onClick={() => void tts.playFrom(startFrom)}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-violet-300 to-violet-400 text-neutral-950 shadow-[0_2px_12px_rgba(167,139,250,0.4)] transition-transform hover:scale-105 active:scale-95"
+                  >
+                    <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
+                      <path d="M8 5.14v13.72a1 1 0 001.5.86l11-6.86a1 1 0 000-1.72l-11-6.86A1 1 0 008 5.14z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Stop TTS"
+                    onClick={handleStop}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/6 text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-300"
+                  >
+                    <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  </button>
+                </motion.div>
               )}
-
-              <div className="ml-auto flex items-center gap-2">
-                {tts.error ? (
-                  <div className="text-xs text-red-300 bg-red-950/40 border border-red-500/30 rounded-xl px-3 py-1.5">
-                    {tts.error}
-                  </div>
-                ) : (
-                  <div className="text-xs text-neutral-500">
-                    {tts.status === "playing" ? "Playing" : "Idle"}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    tts.stop();
-                    onClose();
-                  }}
-                  className="text-xs text-neutral-400 hover:text-neutral-200 px-2 py-1 rounded-lg hover:bg-neutral-800/60"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
+            </AnimatePresence>
           </div>
         </motion.div>
       )}

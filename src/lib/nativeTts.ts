@@ -1,5 +1,6 @@
 import { Capacitor } from "@capacitor/core";
 import { TextToSpeech } from "@capacitor-community/text-to-speech";
+import { clampTtsPlaybackRate, TTS_RATE_DEFAULT } from "@/lib/constants";
 
 type RangeStartInfo = {
   start: number;
@@ -22,8 +23,8 @@ type PluginListenerHandle = {
 };
 
 function clampRate(rate: number): number {
-  if (!Number.isFinite(rate)) return 1;
-  return Math.max(1, Math.min(3, rate));
+  if (!Number.isFinite(rate)) return TTS_RATE_DEFAULT;
+  return clampTtsPlaybackRate(rate);
 }
 
 export async function isNativeTtsAvailable(): Promise<boolean> {
@@ -46,7 +47,7 @@ export async function speakNativeText(options: {
   await TextToSpeech.speak({
     text: options.text,
     lang: options.lang ?? "en-US",
-    rate: clampRate(options.rate ?? 1),
+    rate: clampRate(options.rate ?? TTS_RATE_DEFAULT),
     pitch: 1,
     volume: 1,
     voice: typeof options.voice === "number" ? options.voice : -1,

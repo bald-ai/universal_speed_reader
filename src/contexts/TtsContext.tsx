@@ -22,7 +22,7 @@ import {
   subscribeRangeStart,
 } from "@/lib/nativeTts";
 
-type TtsPlayerStatus = "idle" | "playing" | "error";
+type TtsPlayerStatus = "idle" | "playing" | "paused" | "error";
 
 type TtsContextValue = {
   status: TtsPlayerStatus;
@@ -30,7 +30,9 @@ type TtsContextValue = {
   isReady: boolean;
 
   playFrom: (pos: Position) => Promise<void>;
+  pause: () => void;
   stop: () => void;
+  clearError: () => void;
   jumpTo: (pos: Position) => Promise<void>;
 };
 
@@ -105,6 +107,12 @@ export function TtsProvider(props: Props) {
   const speakSessionRef = useRef(0);
   const isPlayingRef = useRef(false);
   const spokenRangesRef = useRef<SpokenRange[]>([]);
+
+  const cancelPlayback = useCallback(() => {
+    speakSessionRef.current += 1;
+    isPlayingRef.current = false;
+    void stopNativeTts();
+  }, []);
 
   const buildChunkedSpeechFromPosition = useCallback(
     (start: Position): { chunks: SpokenChunk[]; startPosition: Position } | null => {
@@ -187,12 +195,20 @@ export function TtsProvider(props: Props) {
   );
 
   const stop = useCallback(() => {
-    speakSessionRef.current += 1;
-    isPlayingRef.current = false;
-    void stopNativeTts();
+    cancelPlayback();
     setStatus("idle");
     saveProgress();
-  }, [saveProgress]);
+  }, [cancelPlayback, saveProgress]);
+
+  const pause = useCallback(() => {
+    cancelPlayback();
+    setStatus("paused");
+  }, [cancelPlayback]);
+
+  const clearError = useCallback(() => {
+    setError(null);
+    setStatus("idle");
+  }, []);
 
   const playFrom = useCallback(
     async (pos: Position) => {
@@ -216,7 +232,7 @@ export function TtsProvider(props: Props) {
         return;
       }
 
-      stop();
+      cancelPlayback();
 
       const sessionId = speakSessionRef.current;
       isPlayingRef.current = true;
@@ -260,7 +276,7 @@ export function TtsProvider(props: Props) {
       settings.ttsLanguage,
       settings.ttsPlaybackRate,
       settings.ttsVoiceIndex,
-      stop,
+      cancelPlayback,
     ]
   );
 
@@ -338,10 +354,12 @@ export function TtsProvider(props: Props) {
       error,
       isReady,
       playFrom,
+      pause,
       stop,
+      clearError,
       jumpTo,
     }),
-    [status, error, isReady, playFrom, stop, jumpTo]
+    [status, error, isReady, playFrom, pause, stop, clearError, jumpTo]
   );
 
   return <TtsContext.Provider value={value}>{children}</TtsContext.Provider>;

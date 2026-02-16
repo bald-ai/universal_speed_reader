@@ -4,6 +4,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/contexts/SettingsContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import {
+  clampWpm,
+  normalizeTtsPlaybackRate,
+  TTS_RATE_MAX,
+  TTS_RATE_MIN,
+  TTS_RATE_STEP,
+  WPM_MAX,
+  WPM_MIN,
+  WPM_STEP,
+} from "@/lib/constants";
 import { getNativeTtsVoices, type NativeTtsVoice } from "@/lib/nativeTts";
 import type { TtsHighlightStyle } from "@/types/reading";
 
@@ -320,14 +330,13 @@ export default function SettingsModal(props: SettingsModalProps) {
                 <div className="relative">
                   <input
                     type="range"
-                    min={100}
-                    max={600}
-                    step={5}
+                    min={WPM_MIN}
+                    max={WPM_MAX}
+                    step={WPM_STEP}
                     value={settings.wpm}
                     onChange={(event) => {
                       const value = Number(event.target.value);
-                      const clamped = Math.max(100, Math.min(600, value));
-                      updateSettings({ wpm: clamped });
+                      updateSettings({ wpm: clampWpm(value) });
                     }}
                     className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
                       [&::-webkit-slider-thumb]:appearance-none
@@ -348,9 +357,9 @@ export default function SettingsModal(props: SettingsModalProps) {
                       [&::-moz-range-thumb]:shadow-violet-500/30"
                   />
                   <div className="flex justify-between text-xs text-neutral-500 mt-2">
-                    <span>100</span>
-                    <span>350</span>
-                    <span>600</span>
+                    <span>{WPM_MIN}</span>
+                    <span>{Math.round((WPM_MIN + WPM_MAX) / 2)}</span>
+                    <span>{WPM_MAX}</span>
                   </div>
                 </div>
               </section>
@@ -443,14 +452,13 @@ export default function SettingsModal(props: SettingsModalProps) {
                 <div className="relative">
                   <input
                     type="range"
-                    min={1}
-                    max={3}
-                    step={0.1}
+                    min={TTS_RATE_MIN}
+                    max={TTS_RATE_MAX}
+                    step={TTS_RATE_STEP}
                     value={settings.ttsPlaybackRate}
                     onChange={(event) => {
                       const value = Number(event.target.value);
-                      const clamped = Math.max(1, Math.min(3, Math.round(value * 10) / 10));
-                      updateSettings({ ttsPlaybackRate: clamped });
+                      updateSettings({ ttsPlaybackRate: normalizeTtsPlaybackRate(value) });
                     }}
                     className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
                       [&::-webkit-slider-thumb]:appearance-none
@@ -471,9 +479,9 @@ export default function SettingsModal(props: SettingsModalProps) {
                       [&::-moz-range-thumb]:shadow-amber-400/20"
                   />
                   <div className="flex justify-between text-xs text-neutral-500 mt-2">
-                    <span>1.0x</span>
-                    <span>2.0x</span>
-                    <span>3.0x</span>
+                    <span>{TTS_RATE_MIN.toFixed(1)}x</span>
+                    <span>{((TTS_RATE_MIN + TTS_RATE_MAX) / 2).toFixed(1)}x</span>
+                    <span>{TTS_RATE_MAX.toFixed(1)}x</span>
                   </div>
                 </div>
               </section>
