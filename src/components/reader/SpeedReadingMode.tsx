@@ -90,6 +90,7 @@ export default function SpeedReadingMode() {
 
         if (!nextPosition) {
           setHighlightedWord(currentPosition);
+          saveProgress({ mode: "normal", position: currentPosition });
           setMode("normal");
           return;
         }
@@ -103,7 +104,7 @@ export default function SpeedReadingMode() {
     return () => {
       cancelAnimationFrame(frameId);
     };
-  }, [book, isPaused, settings.wpm, setMode, setPosition, setHighlightedWord]);
+  }, [book, isPaused, saveProgress, settings.wpm, setMode, setPosition, setHighlightedWord]);
 
   useEffect(() => {
     if (!showControls || isPaused) {
@@ -136,6 +137,7 @@ export default function SpeedReadingMode() {
   };
 
   const handleBackToNormal = () => {
+    saveProgress({ mode: "normal", position });
     if (position) {
       setHighlightedWord(position);
     }
@@ -153,6 +155,7 @@ export default function SpeedReadingMode() {
   };
 
   const handleSwitchToNormalMode = () => {
+    saveProgress({ mode: "normal", position });
     // Use position state (current displayed word) instead of positionRef (next position)
     if (position) {
       setHighlightedWord(position);

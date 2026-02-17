@@ -39,3 +39,12 @@ export function primeBookTokenCache(book: Book): void {
     }
   }
 }
+
+export function clearBookTokenCache(bookId: string): void {
+  const prefix = `${bookId}:`;
+  for (const key of bookTokenCaches.keys()) {
+    if (key.startsWith(prefix)) {
+      bookTokenCaches.delete(key);
+    }
+  }
+}

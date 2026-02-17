@@ -1,5 +1,4 @@
 import type { LibraryBook, MoodFolder } from "@/types/book";
-import { MOCK_MOOD_FOLDERS } from "@/lib/mockMoodFolders";
 
 type RecentMap = Record<string, string>;
 
@@ -12,7 +11,7 @@ function cloneFolders(folders: MoodFolder[]): MoodFolder[] {
 
 export async function loadFolders(): Promise<MoodFolder[]> {
   if (!foldersState) {
-    foldersState = cloneFolders(MOCK_MOOD_FOLDERS);
+    foldersState = [];
   }
   return cloneFolders(foldersState);
 }
@@ -39,4 +38,26 @@ export async function saveRecent(recent: RecentMap): Promise<void> {
 
 export async function setRecent(folderId: string, bookId: string): Promise<void> {
   recentState = { ...recentState, [folderId]: bookId };
+}
+
+export async function removeBookReferences(bookId: string): Promise<void> {
+  const folders = await loadFolders();
+  const cleanedFolders = folders.map((folder) => ({
+    ...folder,
+    bookIds: folder.bookIds.filter((id) => id !== bookId),
+  }));
+  await saveFolders(cleanedFolders);
+
+  const recent = await loadRecent();
+  let changed = false;
+  for (const folderId of Object.keys(recent)) {
+    if (recent[folderId] === bookId) {
+      delete recent[folderId];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await saveRecent(recent);
+  }
 }

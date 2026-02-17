@@ -4,11 +4,14 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode
 } from "react";
 import type { Book } from "@/types/book";
 import { primeBookTokenCache } from "@/lib/utils/tokenCache";
+import { getBookRepository } from "@/lib/storage/appRepository";
+import type { ProcessingStatus } from "@/types/storage";
 
 type BookContextValue = {
   book: Book | null;
@@ -31,24 +34,47 @@ export function BookProvider(props: ProviderProps) {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimeoutId: number | null = null;
+
+    const isProcessingStatus = (status: ProcessingStatus) =>
+      status === "queued" ||
+      status === "validating" ||
+      status === "extracting_metadata" ||
+      status === "extracting_text" ||
+      status === "building_chapters";
 
     async function loadBook() {
       setIsLoading(true);
       setError(null);
+      let shouldSetLoaded = true;
 
       try {
-        let parsed: Book | null = null;
+        const repo = await getBookRepository();
+        const readable = await repo.getReadableBook(bookId);
 
-        // Always fetch fresh book data from JSON — never use localStorage cache.
-        // This prevents stale book content across browsers.
-        const res = await fetch(`/books/${bookId}.json`, {
-          cache: "no-cache",
-          headers: { "cache-control": "no-cache" },
-        });
-        if (!res.ok) {
-          throw new Error(`Failed to load book data (${res.status})`);
+        if (!readable) {
+          const metadata = await repo.getBook(bookId);
+          if (!metadata) {
+            throw new Error("Book not found");
+          }
+          if (isProcessingStatus(metadata.processing_status)) {
+            if (!cancelled) {
+              setBook(null);
+              setIsLoading(true);
+              shouldSetLoaded = false;
+              retryTimeoutId = window.setTimeout(() => {
+                void loadBook();
+              }, 450);
+            }
+            return;
+          }
+          if (metadata.processing_status === "failed") {
+            throw new Error(metadata.processing_error ?? "Import failed");
+          }
+          throw new Error("Book content is unavailable");
         }
-        parsed = (await res.json()) as Book;
+
+        const parsed: Book = readable.book;
 
         if (!cancelled) {
           setBook(parsed);
@@ -67,7 +93,7 @@ export function BookProvider(props: ProviderProps) {
           setBook(null);
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && shouldSetLoaded) {
           setIsLoading(false);
         }
       }
@@ -77,17 +103,23 @@ export function BookProvider(props: ProviderProps) {
 
     return () => {
       cancelled = true;
+      if (retryTimeoutId !== null) {
+        window.clearTimeout(retryTimeoutId);
+      }
     };
   }, [bookId]);
 
+  const value = useMemo(
+    () => ({
+      book,
+      isLoading,
+      error,
+    }),
+    [book, isLoading, error]
+  );
+
   return (
-    <BookContext.Provider
-      value={{
-        book,
-        isLoading,
-        error
-      }}
-    >
+    <BookContext.Provider value={value}>
       {children}
     </BookContext.Provider>
   );

@@ -4,6 +4,7 @@ import {
   getUnassignedBooks,
   loadFolders,
   loadRecent,
+  removeBookReferences,
   saveFolders,
   saveRecent,
   setRecent,
@@ -92,6 +93,27 @@ describe("moodStore", () => {
     expect(await loadRecent()).toEqual({
       "f-1": "b-1",
       "f-2": "b-2",
+    });
+  });
+
+  it("removeBookReferences clears book ids from folders and recent map", async () => {
+    await saveFolders([
+      { id: "f-1", label: "Focus", bookIds: ["b-1", "b-2"] },
+      { id: "f-2", label: "Chill", bookIds: ["b-1"] },
+    ]);
+    await saveRecent({
+      "f-1": "b-1",
+      "f-2": "b-3",
+    });
+
+    await removeBookReferences("b-1");
+
+    expect(await loadFolders()).toEqual([
+      { id: "f-1", label: "Focus", bookIds: ["b-2"] },
+      { id: "f-2", label: "Chill", bookIds: [] },
+    ]);
+    expect(await loadRecent()).toEqual({
+      "f-2": "b-3",
     });
   });
 });

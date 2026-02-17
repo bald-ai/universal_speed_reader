@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Book } from "../../types/book";
 import {
+  clearBookTokenCache,
   getTokensForParagraph,
   getWordCountForParagraph,
   primeBookTokenCache,
@@ -76,5 +77,28 @@ describe("token cache", () => {
     expect(getTokensForParagraph(book, book.paragraphs[1])).toEqual([]);
     expect(getWordCountForParagraph(book, book.paragraphs[0])).toBe(2);
     expect(getWordCountForParagraph(book, book.paragraphs[1])).toBe(0);
+  });
+
+  it("clears all cached entries for a deleted book id", () => {
+    const book = makeBook({
+      id: "delete-me",
+      paragraphs: [
+        { id: 1, text: "first version" },
+      ],
+      totalWords: 2,
+    });
+    const cached = getTokensForParagraph(book, book.paragraphs[0]);
+    expect(cached).toEqual(["first", "version"]);
+
+    clearBookTokenCache("delete-me");
+
+    const updated = makeBook({
+      id: "delete-me",
+      paragraphs: [
+        { id: 1, text: "new value" },
+      ],
+      totalWords: 2,
+    });
+    expect(getTokensForParagraph(updated, updated.paragraphs[0])).toEqual(["new", "value"]);
   });
 });

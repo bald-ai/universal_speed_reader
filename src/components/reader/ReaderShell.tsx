@@ -9,7 +9,7 @@ export default function ReaderShell() {
   const { book, isLoading, error } = useBook();
   const { mode } = useReading();
 
-  if (isLoading || !book) {
+  if (isLoading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-50">
         <div className="text-sm text-slate-400">Loading book…</div>
@@ -24,6 +24,14 @@ export default function ReaderShell() {
           <p className="font-semibold text-red-100 mb-1">Could not load the book</p>
           <p className="text-red-200/80">{error}</p>
         </div>
+      </main>
+    );
+  }
+
+  if (!book) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-50">
+        <div className="text-sm text-slate-400">Book unavailable</div>
       </main>
     );
   }

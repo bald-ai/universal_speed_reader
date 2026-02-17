@@ -69,5 +69,11 @@ act accordingly.
 - Build (includes EPUB preprocess): `bun run build`
 - Android sync: `bun run android:sync`
 
+## On-Device Control and Validation
+- The agent can control the Android app on a connected phone via USB using `adb` (install/update app, launch app, send input events, inspect UI hierarchy, and read logs).
+- If the user instructs on-device validation, the agent must validate changes using this control path before handoff.
+- On-device validation should include: install the latest APK, execute the requested flow, capture evidence (for example `logcat` and UI dump state), and report pass/fail.
+- If device control is blocked (for example no authorized device), report the blocker and what is needed to proceed.
+
 ## UI Closed-Loop Testing
 Not set up in this repo.

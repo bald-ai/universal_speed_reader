@@ -5,15 +5,18 @@
   "scripts": {
     "dev:vite": "vite",
     "dev": "bun run dev:vite",
-    "prebuild": "bun scripts/process-epub.ts",
-    "build": "bun run prebuild && tsc && vite build",
+    "build": "tsc && vite build",
+    "build:sample-book": "bun scripts/process-epub.ts",
     "preview": "vite preview",
+    "test": "bun test",
+    "test:epub-fixtures": "bun scripts/test-epub-fixtures.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "android:sync": "bunx cap sync android",
     "android:buildsync": "bun run build && bunx cap sync android",
     "android:open": "bunx cap open android"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "^8.0.0",
     "@capacitor-community/text-to-speech": "^8.0.0",
     "@capacitor/android": "^8.1.0",
     "@capacitor/core": "^8.1.0",
@@ -33,6 +36,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.1.0",
     "@tailwindcss/postcss": "^4.0.0",
+    "@types/bun": "^1.3.9",
     "@types/node": "^20.11.17",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",

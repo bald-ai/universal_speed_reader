@@ -1,0 +1,75 @@
+import { getBookRepository } from "@/lib/storage/appRepository";
+import type { LibraryBook } from "@/types/book";
+import type { BookRow, ProcessingStatus } from "@/types/storage";
+
+export type LibraryEntry = {
+  id: string;
+  title: string;
+  author: string;
+  coverUrl?: string;
+  processingStatus: ProcessingStatus;
+  processingStatusLabel: "Queued" | "Processing" | "Completed" | "Failed";
+  processingError: string | null;
+  totalWords: number;
+  totalParagraphs: number;
+  progressPercent: number;
+  libraryBook: LibraryBook;
+};
+
+function statusLabel(status: ProcessingStatus): LibraryEntry["processingStatusLabel"] {
+  if (status === "queued") return "Queued";
+  if (status === "failed") return "Failed";
+  if (status === "completed") return "Completed";
+  return "Processing";
+}
+
+function buildDescription(book: BookRow): string {
+  if (book.processing_status === "failed") {
+    return book.processing_error ?? "Import failed";
+  }
+  if (book.processing_status !== "completed") {
+    return "Import in progress";
+  }
+  return `${book.total_words.toLocaleString()} words · ${book.total_paragraphs.toLocaleString()} paragraphs`;
+}
+
+function estimateProgressPercent(totalParagraphs: number, paragraphId: number): number {
+  if (totalParagraphs <= 0) return 0;
+  const clamped = Math.max(1, Math.min(totalParagraphs, paragraphId));
+  const percent = Math.round(((clamped - 1) / totalParagraphs) * 100);
+  return Math.max(0, Math.min(100, percent));
+}
+
+export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
+  const repository = await getBookRepository();
+  const books = await repository.listBooks();
+  const progressRows = await Promise.all(
+    books.map(async (book) => ({
+      book,
+      progress: await repository.getReadingProgress(book.id),
+    }))
+  );
+
+  return progressRows.map(({ book, progress }) => ({
+    id: book.id,
+    title: book.title,
+    author: book.author ?? "Unknown author",
+    coverUrl: book.cover_path ?? undefined,
+    processingStatus: book.processing_status,
+    processingStatusLabel: statusLabel(book.processing_status),
+    processingError: book.processing_error,
+    totalWords: book.total_words,
+    totalParagraphs: book.total_paragraphs,
+    progressPercent: progress
+      ? estimateProgressPercent(book.total_paragraphs, progress.paragraph_id)
+      : 0,
+    libraryBook: {
+      id: book.id,
+      title: book.title,
+      author: book.author ?? "Unknown author",
+      coverUrl: book.cover_path ?? undefined,
+      genre: "EPUB",
+      description: buildDescription(book),
+    },
+  }));
+}

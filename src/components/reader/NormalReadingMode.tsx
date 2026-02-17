@@ -11,7 +11,8 @@ import ChapterMenu from "@/components/reader/ChapterMenu";
 import ProgressBar from "@/components/shared/ProgressBar";
 import TtsMiniBar from "@/components/reader/TtsMiniBar";
 
-import { getTokensForParagraph, getWordCountForParagraph } from "@/lib/utils/tokenCache";
+import { getTokensForParagraph } from "@/lib/utils/tokenCache";
+import { calculatePercentComplete, findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import type { Chapter, Paragraph } from "@/types/book";
 import type { Position, TtsHighlightStyle } from "@/types/reading";
 
@@ -205,68 +206,17 @@ export default function NormalReadingMode() {
     return map;
   }, [book]);
 
-  const chapterIndexByParagraphId = useMemo(() => {
-    if (!book) return [];
-    const mapping = new Array<number>(book.paragraphs.length).fill(0);
-    for (let i = 0; i < book.chapters.length; i += 1) {
-      const chapter = book.chapters[i];
-      const nextStart =
-        i + 1 < book.chapters.length
-          ? book.chapters[i + 1].startParagraphId
-          : book.paragraphs.length;
-      const start = Math.max(0, chapter.startParagraphId);
-      const end = Math.min(nextStart, book.paragraphs.length);
-      for (let p = start; p < end; p += 1) {
-        mapping[p] = chapter.index;
-      }
-    }
-    return mapping;
-  }, [book]);
-
-  const currentChapterIndex = useMemo(() => {
-    if (!book || chapterIndexByParagraphId.length === 0) {
-      return null;
-    }
-    return chapterIndexByParagraphId[position.paragraphId] ?? null;
-  }, [book, chapterIndexByParagraphId, position.paragraphId]);
-
   const currentChapter: Chapter | null = useMemo(() => {
-    if (!book || currentChapterIndex === null) return null;
-    return book.chapters[currentChapterIndex] ?? null;
-  }, [book, currentChapterIndex]);
-
-  const cumulativeWordCounts = useMemo(() => {
-    if (!book) return [];
-    const totals: number[] = new Array(book.paragraphs.length);
-    let runningTotal = 0;
-    for (let i = 0; i < book.paragraphs.length; i += 1) {
-      const paragraph = book.paragraphs[i];
-      runningTotal += getWordCountForParagraph(book, paragraph);
-      totals[i] = runningTotal;
-    }
-    return totals;
-  }, [book]);
+    if (!book) return null;
+    return findChapterForParagraph(book, position.paragraphId);
+  }, [book, position.paragraphId]);
 
   const progressPercent = useMemo(() => {
-    if (!book || cumulativeWordCounts.length === 0 || !book.totalWords) {
+    if (!book) {
       return 0;
     }
-
-    const paragraphIndex = position.paragraphId;
-    if (paragraphIndex < 0 || paragraphIndex >= cumulativeWordCounts.length) {
-      return 0;
-    }
-
-    const wordsBefore = paragraphIndex > 0 ? cumulativeWordCounts[paragraphIndex - 1] : 0;
-    const wordsInParagraph = cumulativeWordCounts[paragraphIndex] - wordsBefore;
-    const clampedIndex = Math.max(0, Math.min(wordsInParagraph, position.wordIndex));
-    const percent = Math.max(
-      0,
-      Math.min(100, Math.round(((wordsBefore + clampedIndex) / book.totalWords) * 100))
-    );
-
-    return percent;
-  }, [book, cumulativeWordCounts, position.paragraphId, position.wordIndex]);
+    return calculatePercentComplete(book, position);
+  }, [book, position]);
 
   const rowVirtualizer = useVirtualizer({
     count: book?.paragraphs.length ?? 0,

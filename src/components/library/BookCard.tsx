@@ -23,10 +23,14 @@ type BookCardProps = {
   description?: string;
   coverUrl?: string;
   isMock?: boolean;
+  statusBadge?: string;
   readLabel?: string;
   readDisabled?: boolean;
+  deleteLabel?: string;
+  deleteDisabled?: boolean;
   progress: number;
   onRead: () => void;
+  onDelete?: () => void;
   index?: number;
 };
 
@@ -38,10 +42,14 @@ export default function BookCard(props: BookCardProps) {
     description,
     coverUrl,
     isMock,
+    statusBadge,
     readLabel,
     readDisabled,
+    deleteLabel,
+    deleteDisabled,
     progress,
     onRead,
+    onDelete,
     index = 0,
   } = props;
   const clampedProgress = Math.max(0, Math.min(100, Math.round(progress)));
@@ -131,6 +139,11 @@ export default function BookCard(props: BookCardProps) {
                 MOCK
               </span>
             ) : null}
+            {statusBadge ? (
+              <span className="shrink-0 rounded-full border border-neutral-700 bg-neutral-900/60 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-neutral-300">
+                {statusBadge}
+              </span>
+            ) : null}
           </div>
 
           <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -165,7 +178,7 @@ export default function BookCard(props: BookCardProps) {
             </div>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-5 flex items-center gap-2">
             <button
               type="button"
               onClick={onRead}
@@ -175,6 +188,17 @@ export default function BookCard(props: BookCardProps) {
             >
               {readLabel ?? "Read"}
             </button>
+            {onDelete ? (
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={!!deleteDisabled}
+                className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-200
+                  hover:bg-red-500/20 transition-colors duration-150 disabled:border-neutral-700 disabled:bg-neutral-800 disabled:text-neutral-400 disabled:hover:bg-neutral-800 disabled:cursor-not-allowed"
+              >
+                {deleteLabel ?? "Delete"}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

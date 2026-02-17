@@ -1,10 +1,21 @@
-import { useMemo, useState, memo } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  memo,
+  useEffect,
+  useCallback,
+  type ChangeEvent,
+} from "react";
 import { useLocation } from "wouter";
 import BookCard from "@/components/library/BookCard";
 import MoodView from "@/components/library/MoodView";
 import { motion } from "framer-motion";
 import type { LibraryBook } from "@/types/book";
-import { MOCK_LIBRARY_BOOKS } from "@/lib/mockLibraryBooks"; // MOCK DATA — remove when real upload is implemented.
+import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
+import { getBookImportService } from "@/lib/import/bookImportService";
+import { removeBookReferences } from "@/lib/moodStore";
+import { clearBookTokenCache } from "@/lib/utils/tokenCache";
 
 const BackgroundDecoration = memo(function BackgroundDecoration() {
   return (
@@ -15,31 +26,130 @@ const BackgroundDecoration = memo(function BackgroundDecoration() {
   );
 });
 
-const BOOK_ID = "test";
-
 export default function Home() {
   const [, setLocation] = useLocation();
   const [view, setView] = useState<"mood" | "library">("mood");
+  const [entries, setEntries] = useState<LibraryEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [deletingBookId, setDeletingBookId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const importService = useMemo(() => getBookImportService(), []);
 
-  const realLibraryBook: LibraryBook = useMemo(
-    () => ({
-      id: BOOK_ID,
-      title: "Pride and Prejudice (Ch 1-2)",
-      author: "Jane Austen",
-      genre: "Romance",
-      description: "Real bundled sample book. Native Android TTS is used directly from reading position.",
-    }),
-    []
+  const refreshLibrary = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const loaded = await loadLibraryEntries();
+      setEntries(loaded);
+      setImportError(null);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Failed to load library");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshLibrary();
+    const unsubscribe = importService.subscribe(() => {
+      void refreshLibrary();
+    });
+    return unsubscribe;
+  }, [importService, refreshLibrary]);
+
+  const entryById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
+  const libraryBooks: LibraryBook[] = useMemo(
+    () => entries.map((entry) => entry.libraryBook),
+    [entries]
   );
 
-  const libraryBooks: LibraryBook[] = useMemo(
-    () => [realLibraryBook, ...MOCK_LIBRARY_BOOKS],
-    [realLibraryBook]
+  const triggerImportPicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = event.target.files;
+    if (!selectedFiles || selectedFiles.length === 0) return;
+    const files = Array.from(selectedFiles);
+    const failures: string[] = [];
+
+    for (const file of files) {
+      try {
+        await importService.importFromFile(file);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Import failed";
+        failures.push(`${file.name}: ${message}`);
+      }
+    }
+
+    event.target.value = "";
+    await refreshLibrary();
+
+    if (failures.length === 0) {
+      setImportError(null);
+      return;
+    }
+
+    if (failures.length === 1) {
+      setImportError(failures[0]);
+      return;
+    }
+
+    setImportError(`${failures.length} of ${files.length} imports failed. First error: ${failures[0]}`);
+  };
+
+  const handleOpenOrRetry = useCallback(
+    async (entry: LibraryEntry) => {
+      if (entry.processingStatus === "completed") {
+        setLocation(`/reader/${entry.id}`);
+        return;
+      }
+      if (entry.processingStatus === "failed") {
+        await importService.retryImport(entry.id);
+        await refreshLibrary();
+      }
+    },
+    [importService, refreshLibrary, setLocation]
+  );
+
+  const handleDelete = useCallback(
+    async (entry: LibraryEntry) => {
+      const confirmed =
+        typeof window === "undefined"
+          ? true
+          : window.confirm(
+              `Delete "${entry.title}" from your library?\n\nThis removes the uploaded file, reading progress, and import history.`
+            );
+      if (!confirmed) return;
+
+      setDeletingBookId(entry.id);
+      try {
+        await importService.deleteBook(entry.id);
+        clearBookTokenCache(entry.id);
+        await removeBookReferences(entry.id);
+        await refreshLibrary();
+      } catch (error) {
+        setImportError(error instanceof Error ? error.message : "Failed to delete book");
+      } finally {
+        setDeletingBookId((current) => (current === entry.id ? null : current));
+      }
+    },
+    [importService, refreshLibrary]
   );
 
   return (
     <main className="min-h-screen flex flex-col items-center px-4 py-8 bg-neutral-950 text-neutral-100 relative overflow-hidden">
       <BackgroundDecoration />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".epub,application/epub+zip"
+        className="hidden"
+        multiple
+        onChange={(event) => {
+          void handleImportFiles(event);
+        }}
+      />
 
       <div className="w-full max-w-md space-y-8 relative z-10">
         {/* Header */}
@@ -83,6 +193,21 @@ export default function Home() {
           >
             Practice rapid serial visual presentation (RSVP) and switch to normal reading whenever you need more context.
           </motion.p>
+
+          <motion.div
+            className="mt-5"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, delay: 0.35 }}
+          >
+            <button
+              type="button"
+              onClick={triggerImportPicker}
+              className="rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors"
+            >
+              Import EPUB
+            </button>
+          </motion.div>
         </motion.header>
 
         {/* View Toggle */}
@@ -155,36 +280,78 @@ export default function Home() {
             </motion.h2>
 
             <div className="space-y-4">
-              {libraryBooks.map((book, index) => {
-                const isReal = book.id === BOOK_ID;
-                const isMock = !!book.isMock;
-                return (
-                  <BookCard
-                    key={book.id}
-                    title={book.title}
-                    author={book.author ?? "Unknown author"}
-                    genre={book.genre}
-                    description={book.description}
-                    coverUrl={book.coverUrl}
-                    isMock={isMock}
-                    readLabel={isReal ? "Read" : "Coming soon"}
-                    readDisabled={!isReal}
-                    progress={0}
-                    onRead={isReal ? () => setLocation(`/reader/${BOOK_ID}`) : () => {}}
-                    index={index}
-                  />
-                );
-              })}
+              {isLoading ? (
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 text-sm text-neutral-400">
+                  Loading library…
+                </div>
+              ) : entries.length === 0 ? (
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-4 text-sm text-neutral-400">
+                  No books yet. Import an EPUB to start reading.
+                </div>
+              ) : (
+                entries.map((entry, index) => {
+                  const canDelete =
+                    entry.processingStatus === "completed" || entry.processingStatus === "failed";
+                  const isDeleting = deletingBookId === entry.id;
+                  return (
+                    <BookCard
+                      key={entry.id}
+                      title={entry.title}
+                      author={entry.author}
+                      genre={entry.libraryBook.genre}
+                      description={entry.libraryBook.description}
+                      coverUrl={entry.coverUrl}
+                      readLabel={
+                        entry.processingStatus === "completed"
+                          ? entry.progressPercent > 0
+                            ? "Resume"
+                            : "Read"
+                          : entry.processingStatus === "failed"
+                          ? "Retry import"
+                          : entry.processingStatusLabel
+                      }
+                      readDisabled={
+                        (entry.processingStatus !== "completed" && entry.processingStatus !== "failed") ||
+                        isDeleting
+                      }
+                      deleteLabel={isDeleting ? "Deleting..." : "Delete"}
+                      deleteDisabled={isDeleting}
+                      onDelete={
+                        canDelete
+                          ? () => {
+                              void handleDelete(entry);
+                            }
+                          : undefined
+                      }
+                      statusBadge={entry.processingStatusLabel}
+                      progress={entry.progressPercent}
+                      onRead={() => {
+                        void handleOpenOrRetry(entry);
+                      }}
+                      index={index}
+                    />
+                  );
+                })
+              )}
             </div>
           </motion.section>
         ) : (
           <MoodView
             books={libraryBooks}
             onOpenBook={(bookId) => {
-              if (bookId === BOOK_ID) setLocation(`/reader/${BOOK_ID}`);
+              const entry = entryById.get(bookId);
+              if (!entry) return;
+              if (entry.processingStatus !== "completed") return;
+              setLocation(`/reader/${bookId}`);
             }}
           />
         )}
+
+        {importError ? (
+          <div className="rounded-xl border border-red-500/40 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+            {importError}
+          </div>
+        ) : null}
 
         {/* Footer */}
         <motion.footer
@@ -194,7 +361,7 @@ export default function Home() {
           transition={{ duration: 0.5, delay: 0.6 }}
         >
           <p className="text-xs text-neutral-600">
-            Prototype mode: progress resets when app restarts
+            Offline-first mode: imports, settings, and progress are stored locally
           </p>
         </motion.footer>
       </div>

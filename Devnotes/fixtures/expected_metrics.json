@@ -1,0 +1,43 @@
+{
+  "fixtures": [
+    {
+      "file": "Devnotes/fixtures/plath-bell-jar.epub",
+      "expectedTitle": "The Bell Jar",
+      "expectedParagraphs": 2397,
+      "expectedChapters": 21,
+      "expectedTotalWords": 69757,
+      "chapterSamples": ["Chapter One", "Chapter Five", "Chapter Ten"],
+      "paragraphSnippets": [
+        { "paragraph_id": 1, "includes": "Sylvia Plath" },
+        { "paragraph_id": 50, "includes": "black shantung sheath" },
+        { "paragraph_id": 200, "includes": "planning to go to the fur show" }
+      ]
+    },
+    {
+      "file": "Devnotes/fixtures/fitzgerald-great-gatsby.epub",
+      "expectedTitle": "The Great Gatsby",
+      "expectedParagraphs": 1621,
+      "expectedChapters": 11,
+      "expectedTotalWords": 48176,
+      "chapterSamples": ["1. Chapter 1", "5. Chapter 5", "9. Chapter 9"],
+      "paragraphSnippets": [
+        { "paragraph_id": 1, "includes": "Scott F. Fitzgerald" },
+        { "paragraph_id": 50, "includes": "Tom Buchanan" },
+        { "paragraph_id": 200, "includes": "I think it's cute" }
+      ]
+    },
+    {
+      "file": "Devnotes/fixtures/shelley-frankenstein.epub",
+      "expectedTitle": "Frankenstein",
+      "expectedParagraphs": 691,
+      "expectedChapters": 29,
+      "expectedTotalWords": 74821,
+      "chapterSamples": ["Letter 1", "Chapter 1", "Chapter 10"],
+      "paragraphSnippets": [
+        { "paragraph_id": 1, "includes": "Mary Wollstonecraft Shelley" },
+        { "paragraph_id": 50, "includes": "Such is my journal" },
+        { "paragraph_id": 200, "includes": "This was a strange tale" }
+      ]
+    }
+  ]
+}
