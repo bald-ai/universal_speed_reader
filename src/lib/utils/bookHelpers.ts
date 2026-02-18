@@ -2,6 +2,21 @@ import type { Book } from "@/types/book";
 import type { Position } from "@/types/reading";
 import { getTokensForParagraph, getWordCountForParagraph } from "./tokenCache";
 
+type ChapterProgressBounds = {
+  startParagraphIndex: number;
+  endParagraphExclusive: number;
+  startWordOffset: number;
+  totalWords: number;
+};
+
+type ChapterProgressCache = {
+  paragraphIndexById: Map<number, number>;
+  paragraphWordPrefix: number[];
+  chapterBounds: ChapterProgressBounds[];
+};
+
+const chapterProgressCache = new WeakMap<Book, ChapterProgressCache | null>();
+
 function getParagraphById(book: Book, id: number) {
   // Optimization for 1-based sequential IDs (standard for this app)
   if (id > 0 && id <= book.paragraphs.length) {
@@ -18,6 +33,64 @@ function getParagraphIndexById(book: Book, id: number) {
     if (p && p.id === id) return id - 1;
   }
   return book.paragraphs.findIndex((p) => p.id === id);
+}
+
+function buildChapterProgressCache(book: Book): ChapterProgressCache | null {
+  if (!book.chapters || book.chapters.length === 0) return null;
+
+  const paragraphIndexById = new Map<number, number>();
+  for (let i = 0; i < book.paragraphs.length; i += 1) {
+    paragraphIndexById.set(book.paragraphs[i].id, i);
+  }
+
+  const paragraphWordPrefix: number[] = new Array(book.paragraphs.length + 1);
+  paragraphWordPrefix[0] = 0;
+  for (let i = 0; i < book.paragraphs.length; i += 1) {
+    const paragraphWordCount = getWordCountForParagraph(book, book.paragraphs[i]);
+    paragraphWordPrefix[i + 1] = paragraphWordPrefix[i] + paragraphWordCount;
+  }
+
+  const sortedChapters = [...book.chapters].sort((a, b) => a.startParagraphId - b.startParagraphId);
+  const chapterBounds: ChapterProgressBounds[] = [];
+
+  for (let i = 0; i < sortedChapters.length; i += 1) {
+    const chapter = sortedChapters[i];
+    const nextChapter = sortedChapters[i + 1];
+    const startParagraphIndex = paragraphIndexById.get(chapter.startParagraphId);
+    const endParagraphExclusive = nextChapter
+      ? paragraphIndexById.get(nextChapter.startParagraphId)
+      : book.paragraphs.length;
+
+    if (startParagraphIndex === undefined || endParagraphExclusive === undefined) {
+      return null;
+    }
+
+    if (endParagraphExclusive <= startParagraphIndex) {
+      return null;
+    }
+
+    chapterBounds.push({
+      startParagraphIndex,
+      endParagraphExclusive,
+      startWordOffset: paragraphWordPrefix[startParagraphIndex],
+      totalWords: paragraphWordPrefix[endParagraphExclusive] - paragraphWordPrefix[startParagraphIndex],
+    });
+  }
+
+  return {
+    paragraphIndexById,
+    paragraphWordPrefix,
+    chapterBounds,
+  };
+}
+
+function getChapterProgressCache(book: Book): ChapterProgressCache | null {
+  if (chapterProgressCache.has(book)) {
+    return chapterProgressCache.get(book) ?? null;
+  }
+  const cache = buildChapterProgressCache(book);
+  chapterProgressCache.set(book, cache);
+  return cache;
 }
 
 export function findChapterForParagraph(book: Book, paragraphId: number) {
@@ -62,6 +135,41 @@ export function calculatePercentComplete(book: Book, position: Position): number
   }
 
   const percent = (wordsBefore / book.totalWords) * 100;
+  return Math.max(0, Math.min(100, Math.round(percent)));
+}
+
+export function calculateChapterPercentComplete(book: Book, position: Position): number {
+  if (!book.paragraphs.length || !book.totalWords) return 0;
+  const cache = getChapterProgressCache(book);
+  if (!cache) {
+    return calculatePercentComplete(book, position);
+  }
+
+  const currentParagraphIndex = cache.paragraphIndexById.get(position.paragraphId);
+  if (currentParagraphIndex === undefined) {
+    return calculatePercentComplete(book, position);
+  }
+
+  const currentBounds = cache.chapterBounds.find(
+    (bounds) =>
+      currentParagraphIndex >= bounds.startParagraphIndex &&
+      currentParagraphIndex < bounds.endParagraphExclusive
+  );
+
+  if (!currentBounds) {
+    return calculatePercentComplete(book, position);
+  }
+
+  if (currentBounds.totalWords <= 0) {
+    return 0;
+  }
+
+  const currentParagraphWords = getWordCountForParagraph(book, book.paragraphs[currentParagraphIndex]);
+  const clampedWordIndex = Math.max(0, Math.min(currentParagraphWords, position.wordIndex));
+  const wordsBeforeInBook = cache.paragraphWordPrefix[currentParagraphIndex] + clampedWordIndex;
+  const wordsBeforeInChapter = wordsBeforeInBook - currentBounds.startWordOffset;
+
+  const percent = (wordsBeforeInChapter / currentBounds.totalWords) * 100;
   return Math.max(0, Math.min(100, Math.round(percent)));
 }
 

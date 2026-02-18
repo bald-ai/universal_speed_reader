@@ -13,6 +13,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Romance",
     description:
       "A city architect and a small-town baker clash over a renovation that could change everything. They discover the plan they are fighting about might be exactly what brings them together.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -22,6 +23,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Romance",
     description:
       "A love story told across time, with memories that refuse to fade. It is about devotion, choices, and what lasts when everything else changes.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -31,6 +33,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Romance",
     description:
       "A modern woman is pulled into a dangerous past and meets a love she never expected. It mixes adventure, history, and a relationship tested by time itself.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -40,6 +43,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Romance",
     description:
       "An unlikely friendship grows into something deeper between two people with very different lives. It is about care, dignity, and learning to live boldly.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -49,6 +53,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Romance",
     description:
       "A couple tries to build a life together while time keeps pulling them apart. It is a love story with a sci-fi twist and a lot of heart.",
+    progressPercent: 0,
     isMock: true,
   },
 
@@ -61,6 +66,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Science",
     description:
       "Big ideas about the universe, from black holes to the nature of time. It is a guided tour of modern physics for curious readers.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -70,6 +76,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Science",
     description:
       "A wide, wonder-filled look at space, life, and how humans learn about the universe. It connects science to culture and the story of discovery.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -79,6 +86,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Science",
     description:
       "An explanation of evolution that focuses on genes as the key players. It reshapes how you think about behavior, survival, and cooperation.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -88,6 +96,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Science",
     description:
       "A fast-moving history of humans, from early hunters to modern societies. It asks why we believe shared stories and how that shaped the world.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -97,6 +106,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Science",
     description:
       "A story of genetics: the people, the breakthroughs, and the hard questions that came with them. It blends history with clear science explanations.",
+    progressPercent: 0,
     isMock: true,
   },
 
@@ -109,6 +119,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Fantasy",
     description:
       "A quiet hobbit gets pulled into a quest full of trolls, dragons, and treasure. It is an adventure about courage growing one step at a time.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -118,6 +129,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Fantasy",
     description:
       "Noble houses fight for power while darker threats gather beyond the map. It is political, brutal, and packed with characters making risky moves.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -127,6 +139,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Fantasy",
     description:
       "A legendary musician and magician tells the true story behind his fame. It is about talent, obsession, and the cost of chasing answers.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -136,6 +149,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Fantasy",
     description:
       "In a world of ash and tyranny, a crew plans an impossible rebellion. It features clever magic rules and a heist that turns into something bigger.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -145,6 +159,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Fantasy",
     description:
       "A huge epic with war, storms, and people trying to become better than their past. It is slow-burn worldbuilding with massive payoffs.",
+    progressPercent: 0,
     isMock: true,
   },
 
@@ -157,6 +172,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Casual Nonfiction",
     description:
       "A practical guide to building good habits and breaking bad ones using tiny changes. It focuses on systems, not motivation.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -166,6 +182,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Casual Nonfiction",
     description:
       "A collection of surprising questions answered with economic thinking. It is about incentives, data, and the hidden side of everyday life.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -175,6 +192,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Casual Nonfiction",
     description:
       "A deep look at how the mind makes quick guesses and slow, careful decisions. It shows why we make predictable mistakes and how to notice them.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -184,6 +202,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Casual Nonfiction",
     description:
       "Stories about how small actions can trigger big social changes. It is about how ideas spread and why some trends explode.",
+    progressPercent: 0,
     isMock: true,
   },
   {
@@ -193,6 +212,7 @@ export const MOCK_LIBRARY_BOOKS: LibraryBook[] = [
     genre: "Casual Nonfiction",
     description:
       "A defense of introversion and the strengths of quieter people. It explores how environment, culture, and temperament shape success.",
+    progressPercent: 0,
     isMock: true,
   },
 ];

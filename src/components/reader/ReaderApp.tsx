@@ -3,6 +3,7 @@
 import { BookProvider } from "@/contexts/BookContext";
 import { ReadingProvider } from "@/contexts/ReadingContext";
 import { TtsProvider } from "@/contexts/TtsContext";
+import { TtsRegexProvider } from "@/contexts/TtsRegexContext";
 import ReaderShell from "@/components/reader/ReaderShell";
 
 type ReaderAppProps = {
@@ -15,9 +16,11 @@ export default function ReaderApp(props: ReaderAppProps) {
   return (
     <BookProvider bookId={bookId}>
       <ReadingProvider bookId={bookId}>
-        <TtsProvider>
-          <ReaderShell />
-        </TtsProvider>
+        <TtsRegexProvider>
+          <TtsProvider>
+            <ReaderShell />
+          </TtsProvider>
+        </TtsRegexProvider>
       </ReadingProvider>
     </BookProvider>
   );

@@ -92,11 +92,6 @@ export default function ChapterMenu(props: ChapterMenuProps) {
                               : "border-transparent text-neutral-200 hover:bg-neutral-900/50"
                           }`}
                         >
-                          <div className={`text-[10px] uppercase tracking-[0.2em] mb-1 ${
-                            isActive ? "text-violet-400" : "text-neutral-500"
-                          }`}>
-                            Chapter {chapter.index + 1}
-                          </div>
                           <div className={`text-sm font-medium ${
                             isActive ? "text-violet-100" : "text-neutral-200"
                           }`}>

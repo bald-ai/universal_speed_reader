@@ -25,6 +25,7 @@ export type Book = {
 export type LibraryBook = Pick<Book, "id" | "title" | "author" | "coverUrl"> & {
   genre: string;
   description: string;
+  progressPercent: number;
   isMock?: boolean;
 };
 

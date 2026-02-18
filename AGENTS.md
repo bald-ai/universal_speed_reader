@@ -68,12 +68,50 @@ act accordingly.
 - Lint: `bun run lint`
 - Build (includes EPUB preprocess): `bun run build`
 - Android sync: `bun run android:sync`
+- Android upload newest to phone (standard for agents):
+  - If `adb` is on PATH: `bun run android:upload-newest`
+  - If `adb` is not on PATH: `ADB=/Users/michalkrsik/Library/Android/sdk/platform-tools/adb bun run android:upload-newest`
+  - Optional install-only flow (skip build): `bun run android:upload-newest -- --skip-build`
+  - Optional specific device: `bun run android:upload-newest -- --serial <device_id>`
 
 ## On-Device Control and Validation
-- The agent can control the Android app on a connected phone via USB using `adb` (install/update app, launch app, send input events, inspect UI hierarchy, and read logs).
+- The agent can control the Android app on a connected phone via USB or Wi-Fi using `adb` (install/update app, launch app, send input events, inspect UI hierarchy, and read logs).
 - If the user instructs on-device validation, the agent must validate changes using this control path before handoff.
+- After implementation is done, the agent should test its work on-device over Wi-Fi when available and report the validation result before handoff.
 - On-device validation should include: install the latest APK, execute the requested flow, capture evidence (for example `logcat` and UI dump state), and report pass/fail.
 - If device control is blocked (for example no authorized device), report the blocker and what is needed to proceed.
+
+### Android unlock flow (Nothing A001 test setup)
+- Use this exact flow when the device stays on `NotificationShade`/lockscreen and plain swipe does not open PIN entry.
+- Test PIN for this setup is: `123456`
+
+1. Set adb binary and verify device:
+   - `ADB="/Users/michalkrsik/Library/Android/sdk/platform-tools/adb"`
+   - `"$ADB" devices -l`
+2. Wake screen and force PIN bouncer:
+   - `"$ADB" shell input keyevent KEYCODE_WAKEUP`
+   - `"$ADB" shell input keyevent KEYCODE_MENU`
+3. Confirm PIN bouncer is visible before typing PIN:
+   - `"$ADB" shell uiautomator dump /sdcard/lock_menu.xml >/dev/null`
+   - `"$ADB" pull /sdcard/lock_menu.xml /tmp/lock_menu.xml >/dev/null`
+   - `rg -n "keyguard_pin_view" /tmp/lock_menu.xml`
+4. Enter PIN and submit:
+   - `"$ADB" shell input text 123456`
+   - `"$ADB" shell input keyevent KEYCODE_ENTER`
+5. Verify unlocked state:
+   - `"$ADB" shell dumpsys window | rg -n "mDreamingLockscreen|mCurrentFocus"`
+   - unlocked expected: `mDreamingLockscreen=false` and launcher focus.
+
+Fallback (if `input text` fails on bouncer):
+- Enter digits via keyevents:
+  - `for d in 1 2 3 4 5 6; do "$ADB" shell input keyevent "KEYCODE_${d}"; sleep 0.08; done`
+  - `"$ADB" shell input keyevent KEYCODE_ENTER`
+
+### Screenshot storage (Nothing A001)
+- Primary screenshot folder on this device: `/storage/emulated/0/Pictures/EssentialSpace/`
+- Legacy/older screenshots may still exist in: `/storage/emulated/0/Pictures/Screenshots/`
+- If screenshot location is unclear, query Android media index:
+  - `"$ADB" shell "content query --uri content://media/external/images/media --projection _id:_display_name:_data:relative_path:date_added --sort 'date_added DESC' | head -n 40"`
 
 ## UI Closed-Loop Testing
 Not set up in this repo.

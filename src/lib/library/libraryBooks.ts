@@ -50,26 +50,31 @@ export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
     }))
   );
 
-  return progressRows.map(({ book, progress }) => ({
-    id: book.id,
-    title: book.title,
-    author: book.author ?? "Unknown author",
-    coverUrl: book.cover_path ?? undefined,
-    processingStatus: book.processing_status,
-    processingStatusLabel: statusLabel(book.processing_status),
-    processingError: book.processing_error,
-    totalWords: book.total_words,
-    totalParagraphs: book.total_paragraphs,
-    progressPercent: progress
+  return progressRows.map(({ book, progress }) => {
+    const progressPercent = progress
       ? estimateProgressPercent(book.total_paragraphs, progress.paragraph_id)
-      : 0,
-    libraryBook: {
+      : 0;
+
+    return {
       id: book.id,
       title: book.title,
       author: book.author ?? "Unknown author",
       coverUrl: book.cover_path ?? undefined,
-      genre: "EPUB",
-      description: buildDescription(book),
-    },
-  }));
+      processingStatus: book.processing_status,
+      processingStatusLabel: statusLabel(book.processing_status),
+      processingError: book.processing_error,
+      totalWords: book.total_words,
+      totalParagraphs: book.total_paragraphs,
+      progressPercent,
+      libraryBook: {
+        id: book.id,
+        title: book.title,
+        author: book.author ?? "Unknown author",
+        coverUrl: book.cover_path ?? undefined,
+        genre: "EPUB",
+        description: buildDescription(book),
+        progressPercent,
+      },
+    };
+  });
 }

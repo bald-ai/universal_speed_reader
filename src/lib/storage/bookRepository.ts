@@ -36,6 +36,7 @@ export interface BookRepository {
 
   saveReadingProgress(progress: ReadingProgressRow): Promise<void>;
   getReadingProgress(bookId: string): Promise<ReadingProgressRow | null>;
+  deleteReadingProgress(bookId: string): Promise<void>;
 
   putAppSetting(key: string, value: unknown): Promise<void>;
   getAppSetting<T>(key: string): Promise<T | null>;

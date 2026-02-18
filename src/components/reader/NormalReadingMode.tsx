@@ -12,7 +12,7 @@ import ProgressBar from "@/components/shared/ProgressBar";
 import TtsMiniBar from "@/components/reader/TtsMiniBar";
 
 import { getTokensForParagraph } from "@/lib/utils/tokenCache";
-import { calculatePercentComplete, findChapterForParagraph } from "@/lib/utils/bookHelpers";
+import { calculateChapterPercentComplete, findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import type { Chapter, Paragraph } from "@/types/book";
 import type { Position, TtsHighlightStyle } from "@/types/reading";
 
@@ -153,7 +153,7 @@ const ParagraphRow = memo(function ParagraphRow({
 export default function NormalReadingMode() {
   const [, setLocation] = useLocation();
   const { book } = useBook();
-  const { position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress } = useReading();
+  const { position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress, progressLoaded } = useReading();
   const { settings } = useSettings();
   const tts = useTts();
 
@@ -211,11 +211,28 @@ export default function NormalReadingMode() {
     return findChapterForParagraph(book, position.paragraphId);
   }, [book, position.paragraphId]);
 
+  const chapterSeparatorStarts = useMemo(() => {
+    if (!book || book.chapters.length <= 1) return new Set<number>();
+
+    const sorted = [...book.chapters].sort((a, b) => a.startParagraphId - b.startParagraphId);
+    const firstStart = sorted[0]?.startParagraphId;
+    if (typeof firstStart !== "number") return new Set<number>();
+
+    const starts = new Set<number>();
+    for (const chapter of sorted) {
+      if (chapter.startParagraphId !== firstStart) {
+        starts.add(chapter.startParagraphId);
+      }
+    }
+
+    return starts;
+  }, [book]);
+
   const progressPercent = useMemo(() => {
     if (!book) {
       return 0;
     }
-    return calculatePercentComplete(book, position);
+    return calculateChapterPercentComplete(book, position);
   }, [book, position]);
 
   const rowVirtualizer = useVirtualizer({
@@ -339,6 +356,8 @@ export default function NormalReadingMode() {
     
     const scrollTop = scrollContainerRef.current.scrollTop;
     setIsScrolled(scrollTop > 10);
+
+    if (!progressLoaded || !hasScrolledToInitialPosition.current) return;
     
     const now = Date.now();
     if (now - lastScrollUpdateRef.current < 150) return;
@@ -482,10 +501,10 @@ export default function NormalReadingMode() {
             {currentChapter ? `Chapter ${currentChapter.index + 1}` : "Progress"}
           </span>
           <span className="font-medium text-neutral-400">
-            {progressPercent}%
+            {progressLoaded ? `${progressPercent}%` : ""}
           </span>
         </div>
-        <ProgressBar value={progressPercent} />
+        {progressLoaded && <ProgressBar value={progressPercent} />}
       </div>
 
       {/* Reading Content */}
@@ -506,6 +525,7 @@ export default function NormalReadingMode() {
             if (!paragraph) return null;
 
             const words = getTokensForParagraph(book, paragraph);
+            const showChapterSeparator = chapterSeparatorStarts.has(paragraph.id);
             const highlightedWordIndex =
               highlightedWord?.paragraphId === paragraph.id
                 ? highlightedWord.wordIndex
@@ -525,6 +545,22 @@ export default function NormalReadingMode() {
                 }}
                 className="pb-4 max-w-2xl mx-auto px-6"
               >
+                {showChapterSeparator ? (
+                  <div
+                    aria-hidden="true"
+                    data-testid="chapter-separator"
+                    className="relative flex items-center justify-center py-16"
+                  >
+                    <div
+                      className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(26,26,42,0.10)_30%,rgba(26,26,42,0.18)_50%,rgba(26,26,42,0.10)_70%,transparent_100%)]"
+                    />
+                    <div className="relative flex flex-col items-center gap-3">
+                      <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                      <div className="h-2 w-2 rotate-45 bg-neutral-500/80" />
+                      <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                    </div>
+                  </div>
+                ) : null}
                 <ParagraphRow
                   paragraph={paragraph}
                   words={words}
@@ -602,7 +638,11 @@ export default function NormalReadingMode() {
         />
       ) : null}
 
-      <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        book={book}
+      />
       <ChapterMenu
         isOpen={showChapterMenu}
         chapters={book.chapters}

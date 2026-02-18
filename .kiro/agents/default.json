@@ -1,0 +1,27 @@
+{
+  "name": "default",
+  "description": "Default agent with full tool access (no confirmation prompts)",
+  "tools": ["*"],
+  "allowedTools": [
+    "code",
+    "glob",
+    "grep",
+    "introspect",
+    "report",
+    "subagent",
+    "web_fetch",
+    "web_search"
+  ],
+  "toolsSettings": {
+    "shell": {
+      "allowedCommands": [".*"],
+      "autoAllowReadonly": true
+    },
+    "write": {
+      "allowedPaths": ["~/**", "./**"]
+    },
+    "read": {
+      "allowedPaths": ["~/**", "./**"]
+    }
+  }
+}

@@ -13,6 +13,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "android:sync": "bunx cap sync android",
     "android:buildsync": "bun run build && bunx cap sync android",
+    "android:upload-newest": "bash scripts/android-upload-newest.sh",
     "android:open": "bunx cap open android"
   },
   "dependencies": {

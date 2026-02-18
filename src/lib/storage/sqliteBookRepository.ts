@@ -554,6 +554,13 @@ export class SqliteBookRepository implements BookRepository {
     });
   }
 
+  async deleteReadingProgress(bookId: string): Promise<void> {
+    await this.withLock(async () => {
+      const db = await this.getDb();
+      await db.run("DELETE FROM reading_progress WHERE book_id = ?", [bookId]);
+    });
+  }
+
   async putAppSetting(key: string, value: unknown): Promise<void> {
     await this.withLock(async () => {
       const db = await this.getDb();

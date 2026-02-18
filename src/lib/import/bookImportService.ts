@@ -17,6 +17,8 @@ import type {
 
 const MAX_IMPORT_SIZE_BYTES = 150 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 180_000;
+const MAX_TITLE_LENGTH = 160;
+const MAX_AUTHOR_LENGTH = 160;
 
 export type ImportPayload = {
   fileName: string;
@@ -28,6 +30,13 @@ export type ImportSnapshotRow = {
   bookId: string;
   status: ProcessingStatus;
   error: string | null;
+};
+
+export type UpdateBookMetadataInput = {
+  bookId: string;
+  title: string;
+  author: string | null;
+  coverDataUrl?: string | null;
 };
 
 class ImportFailure extends Error {
@@ -101,6 +110,7 @@ type ImportTask = {
   bookId: string;
   attempt: number;
   source: RawEpubRecord;
+  clearProgressOnSuccess: boolean;
 };
 
 type RawStoreAdapter = {
@@ -223,6 +233,7 @@ export class BookImportService {
       bookId,
       attempt,
       source,
+      clearProgressOnSuccess: false,
     });
     this.emit();
     void this.runQueue();
@@ -280,9 +291,123 @@ export class BookImportService {
         bookId,
         attempt,
         source,
+        clearProgressOnSuccess: false,
       });
       this.emit();
       void this.runQueue();
+    });
+  }
+
+  async updateBookMetadata(input: UpdateBookMetadataInput): Promise<void> {
+    await this.withEnqueueLock(async () => {
+      const repository = await this.repositoryPromise;
+      const book = await repository.getBook(input.bookId);
+      if (!book) {
+        throw new Error(`Cannot update unknown book ${input.bookId}`);
+      }
+      if (this.hasPendingOrActiveTask(input.bookId)) {
+        throw new Error("Book is currently processing and cannot be edited");
+      }
+      const canEdit =
+        book.processing_status === "failed" || book.processing_status === "completed";
+      if (!canEdit) {
+        throw new Error("Book is currently processing and cannot be edited");
+      }
+
+      const title = input.title.trim();
+      if (!title) {
+        throw new Error("Title is required");
+      }
+      if (title.length > MAX_TITLE_LENGTH) {
+        throw new Error(`Title must be ${MAX_TITLE_LENGTH} characters or fewer`);
+      }
+
+      const author = input.author?.trim() ?? "";
+      if (author.length > MAX_AUTHOR_LENGTH) {
+        throw new Error(`Author must be ${MAX_AUTHOR_LENGTH} characters or fewer`);
+      }
+
+      const patch: Partial<BookRow> = {
+        title,
+        author: author.length > 0 ? author : null,
+        updated_at: Date.now(),
+      };
+
+      if (Object.prototype.hasOwnProperty.call(input, "coverDataUrl")) {
+        const coverDataUrl = input.coverDataUrl?.trim() ?? null;
+        if (coverDataUrl && !coverDataUrl.startsWith("data:image/")) {
+          throw new Error("Replacement cover must be a valid data URL");
+        }
+        patch.cover_path = coverDataUrl;
+      }
+
+      await repository.patchBook(input.bookId, patch);
+      this.emit();
+    });
+  }
+
+  async restoreOriginalBook(bookId: string): Promise<void> {
+    await this.withEnqueueLock(async () => {
+      const repository = await this.repositoryPromise;
+      const book = await repository.getBook(bookId);
+      if (!book) {
+        throw new Error(`Cannot restore unknown book ${bookId}`);
+      }
+      if (this.hasPendingOrActiveTask(bookId)) {
+        throw new Error("Book is currently processing and cannot be restored");
+      }
+      const canRestore =
+        book.processing_status === "failed" || book.processing_status === "completed";
+      if (!canRestore) {
+        throw new Error("Book is currently processing and cannot be restored");
+      }
+
+      const now = Date.now();
+      const attempt = await repository.nextImportAttempt(bookId);
+      const job: ImportJobRow = {
+        book_id: bookId,
+        attempt,
+        status: "queued",
+        error: null,
+        started_at: now,
+        finished_at: null,
+      };
+      await repository.insertImportJob(job);
+      await repository.setBookStatus(bookId, "queued", {
+        processing_error: null,
+        updated_at: now,
+      });
+      this.emit();
+
+      const source = await this.rawStore.load(bookId);
+      if (!source) {
+        await this.failImport(
+          repository,
+          bookId,
+          attempt,
+          new ImportFailure(
+            "Corrupted/Unreadable EPUB",
+            "Corrupted/Unreadable EPUB: no stored source file available for restore"
+          )
+        );
+        return;
+      }
+
+      this.queue.push({
+        bookId,
+        attempt,
+        source,
+        clearProgressOnSuccess: true,
+      });
+      this.emit();
+      void this.runQueue();
+
+      const terminalStatus = await this.waitForAttemptTerminalStatus(bookId, attempt);
+      if (terminalStatus === "failed") {
+        const latest = await repository.getBook(bookId);
+        const details = latest?.processing_error ?? "Restore failed";
+        throw new Error(details);
+      }
     });
   }
 
@@ -341,7 +466,7 @@ export class BookImportService {
   }
 
   private async executeTask(repository: BookRepository, task: ImportTask): Promise<void> {
-    const { bookId, attempt, source } = task;
+    const { bookId, attempt, source, clearProgressOnSuccess } = task;
     const markStatus = async (
       status: ProcessingStatus,
       patch?: {
@@ -417,6 +542,9 @@ export class BookImportService {
         total_paragraphs: parsed.paragraphs.length,
         total_words: totalWords,
       });
+      if (clearProgressOnSuccess) {
+        await repository.deleteReadingProgress(bookId);
+      }
 
       await markStatus("completed", { finishedAt: Date.now(), error: null });
     } catch (unknownError) {
@@ -453,6 +581,23 @@ export class BookImportService {
   private hasPendingOrActiveTask(bookId: string): boolean {
     if (this.activeBookId === bookId) return true;
     return this.queue.some((task) => task.bookId === bookId);
+  }
+
+  private async waitForAttemptTerminalStatus(
+    bookId: string,
+    attempt: number,
+    timeoutMs = IMPORT_TIMEOUT_MS + 120_000
+  ): Promise<ProcessingStatus> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const repository = await this.repositoryPromise;
+      const job = (await repository.listImportJobs(bookId)).find((entry) => entry.attempt === attempt);
+      if (job?.status === "completed" || job?.status === "failed") {
+        return job.status;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    throw new Error("Restore timed out");
   }
 
   private withEnqueueLock<T>(work: () => Promise<T>): Promise<T> {

@@ -16,10 +16,13 @@ import {
 } from "@/lib/constants";
 import { getNativeTtsVoices, type NativeTtsVoice } from "@/lib/nativeTts";
 import type { TtsHighlightStyle } from "@/types/reading";
+import type { Book } from "@/types/book";
+import TtsRegexRulesModal from "@/components/reader/TtsRegexRulesModal";
 
 type SettingsModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  book: Book | null;
 };
 
 const FONT_SIZE_OPTIONS: { value: Settings["fontSize"]; label: string }[] = [
@@ -127,12 +130,13 @@ function pickUpToTwo(entries: VoiceEntry[]): VoiceEntry[] {
 }
 
 export default function SettingsModal(props: SettingsModalProps) {
-  const { isOpen, onClose } = props;
+  const { isOpen, onClose, book } = props;
   const { settings, updateSettings } = useSettings();
 
   const [voices, setVoices] = useState<NativeTtsVoice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
   const [phoneLanguage, setPhoneLanguage] = useState("en-US");
+  const [showRegexRules, setShowRegexRules] = useState(false);
 
   const fontSizeIndex = FONT_SIZE_OPTIONS.findIndex((opt) => opt.value === settings.fontSize);
 
@@ -550,8 +554,31 @@ export default function SettingsModal(props: SettingsModalProps) {
                   </p>
                 </div>
               </section>
+
+              {/* TTS Pronunciation Rules */}
+              <section>
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="font-medium text-neutral-200">Pronunciation rules</span>
+                </div>
+                <p className="text-xs text-neutral-500 mb-2.5">
+                  Regex-powered replacements applied live during TTS playback.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowRegexRules(true)}
+                  className="rounded-lg border border-amber-400/35 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/15 transition-colors"
+                >
+                  Open Rule Manager
+                </button>
+              </section>
             </div>
           </motion.div>
+
+          <TtsRegexRulesModal
+            isOpen={showRegexRules}
+            onClose={() => setShowRegexRules(false)}
+            book={book}
+          />
         </motion.div>
       )}
     </AnimatePresence>

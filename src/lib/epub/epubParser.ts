@@ -509,7 +509,8 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
 
     if (fileChapters.length === 0 && firstParagraphIdInFile !== null) {
       let chapterTitle = tocFileMap.get(normalizedEntryFile) ?? tocFileMap.get(entryFilename) ?? null;
-      if (!chapterTitle) {
+      // When TOC exists, keep chapter labels TOC-driven and avoid heading-based guesses.
+      if (!chapterTitle && tocEntries.length === 0) {
         chapterTitle = extractHeadingFromChapter(loadHtml(chapterHtml)) ?? null;
       }
       if (chapterTitle) {

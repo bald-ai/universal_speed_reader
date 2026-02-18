@@ -18,6 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { LibraryBook, MoodFolder } from "@/types/book";
 import { getUnassignedBooks, loadFolders, loadRecent, saveFolders, setRecent } from "@/lib/moodStore";
 import { MOOD_ICONS, getIconEmoji } from "@/lib/moodIcons";
+import { getBookCoverPlaceholder } from "@/lib/library/coverPlaceholders";
 
 type MoodViewProps = {
   books: LibraryBook[];
@@ -77,6 +78,37 @@ const genreChipTheme = (genre: string | undefined) => {
   if (g === "casual nonfiction") return "border-lime-500/30 bg-lime-500/10 text-lime-200";
   return "border-violet-500/30 bg-violet-500/10 text-violet-200";
 };
+
+function MoodBookCover(props: { coverUrl?: string; progressPercent: number; title: string }) {
+  const { coverUrl, progressPercent, title } = props;
+  const [coverLoadFailed, setCoverLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setCoverLoadFailed(false);
+  }, [coverUrl]);
+
+  const resolvedCoverUrl = useMemo(() => {
+    if (coverUrl && !coverLoadFailed) {
+      return coverUrl;
+    }
+    return getBookCoverPlaceholder(progressPercent);
+  }, [coverLoadFailed, coverUrl, progressPercent]);
+
+  const isUsingPlaceholder = !coverUrl || coverLoadFailed;
+
+  return (
+    <div className="mb-2 flex-1 overflow-hidden rounded-lg">
+      <img
+        src={resolvedCoverUrl}
+        alt={title}
+        className={`h-full w-full ${isUsingPlaceholder ? "object-contain p-3" : "object-cover"}`}
+        loading="lazy"
+        decoding="async"
+        onError={coverUrl && !coverLoadFailed ? () => setCoverLoadFailed(true) : undefined}
+      />
+    </div>
+  );
+}
 
 function FolderPicker(props: {
   folders: MoodFolder[];
@@ -245,7 +277,7 @@ export default function MoodView(props: MoodViewProps) {
      initial={{ opacity: 0, y: 14 }}
      animate={{ opacity: 1, y: 0 }}
      transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
-     className="space-y-6"
+     className="space-y-6 mt-2"
    >
      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
        <SortableContext items={folderIds} strategy={rectSortingStrategy}>
@@ -390,12 +422,43 @@ function FolderCard(props: {
 
   const allBooksInFolder = folder.bookIds.map((id) => bookById.get(id)).filter(Boolean) as LibraryBook[];
   const bookCount = allBooksInFolder.length;
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
 
-  const resolvedRecentId = (() => {
-    if (recentBookId && folder.bookIds.includes(recentBookId)) return recentBookId;
-    return folder.bookIds[0];
-  })();
-  const recentBook = resolvedRecentId ? bookById.get(resolvedRecentId) : undefined;
+  const recentBookIndex = useMemo(() => {
+    if (bookCount === 0) return 0;
+    if (!recentBookId) return 0;
+    const index = folder.bookIds.indexOf(recentBookId);
+    return index >= 0 ? index : 0;
+  }, [bookCount, folder.bookIds, recentBookId]);
+
+  const syncActiveSlideFromScroll = useCallback(() => {
+    const carousel = carouselRef.current;
+    if (!carousel || bookCount === 0) {
+      setActiveSlideIndex(0);
+      return;
+    }
+    const slideWidth = carousel.clientWidth || 1;
+    const rawIndex = Math.round(carousel.scrollLeft / slideWidth);
+    const nextIndex = Math.max(0, Math.min(bookCount - 1, rawIndex));
+    setActiveSlideIndex((current) => (current === nextIndex ? current : nextIndex));
+  }, [bookCount]);
+
+  useEffect(() => {
+    if (bookCount === 0) {
+      setActiveSlideIndex(0);
+      return;
+    }
+    setActiveSlideIndex((current) => Math.min(current, bookCount - 1));
+  }, [bookCount]);
+
+  useEffect(() => {
+    const carousel = carouselRef.current;
+    if (!carousel || bookCount === 0) return;
+    const targetIndex = Math.max(0, Math.min(bookCount - 1, recentBookIndex));
+    carousel.scrollLeft = targetIndex * carousel.clientWidth;
+    setActiveSlideIndex(targetIndex);
+  }, [bookCount, recentBookIndex]);
 
   const isEditing = menuState === "edit";
   const isManagingBooks = menuState === "books";
@@ -432,7 +495,7 @@ function FolderCard(props: {
         <div className={`absolute inset-0 bg-gradient-to-br ${theme.gradient} pointer-events-none`} />
         <div className={`absolute -top-10 -right-10 w-28 h-28 ${theme.glow} rounded-full blur-3xl pointer-events-none opacity-40 group-hover:opacity-70 transition-opacity duration-500`} />
 
-        <div className="relative px-3 pt-3 pb-1 flex items-center justify-between">
+        <div className="relative px-2.5 pt-2 pb-0 flex items-center justify-between">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-base leading-none select-none shrink-0">{theme.emoji}</span>
             <div className="text-xs font-bold text-neutral-50 tracking-tight truncate">{folder.label}</div>
@@ -495,27 +558,91 @@ function FolderCard(props: {
           </div>
         </div>
 
-        <div className="relative px-3 pb-3 pt-1 flex-1 flex flex-col">
-          {recentBook ? (
-            <button
-              type="button"
-              onClick={() => onOpenRecent(folder.id, recentBook.id)}
-              disabled={!!recentBook.isMock}
-              className="w-full flex-1 rounded-xl bg-black/20 border border-white/5
-                hover:bg-black/30 hover:border-white/10 active:scale-[0.98]
-                transition-all duration-150 px-4 py-4 text-left flex flex-col
-                disabled:hover:bg-black/20 disabled:hover:border-white/5 disabled:active:scale-100 disabled:cursor-not-allowed"
-            >
-              <div className="flex-1 flex items-center justify-center opacity-[0.12] pointer-events-none">
-                <svg className="w-16 h-16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                </svg>
+        <div className="relative px-2 pb-1.5 pt-0.5 flex-1 flex flex-col">
+          {bookCount > 0 ? (
+            <div className="flex-1 flex flex-col">
+              <div className="relative flex-1">
+                <div
+                  className={`pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 z-[1] flex h-10 w-5 items-center justify-center transition-opacity duration-200 ${
+                    activeSlideIndex === 0 ? "opacity-0" : "opacity-[0.15]"
+                  }`}
+                  aria-hidden="true"
+                >
+                  <svg className="h-4 w-2 text-neutral-100" viewBox="0 0 8 16" fill="none">
+                    <polyline
+                      points="6,2 2,8 6,14"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+
+                <div
+                  className={`pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 z-[1] flex h-10 w-5 items-center justify-center transition-opacity duration-200 ${
+                    activeSlideIndex === bookCount - 1 ? "opacity-0" : "opacity-[0.15]"
+                  }`}
+                  aria-hidden="true"
+                >
+                  <svg className="h-4 w-2 text-neutral-100" viewBox="0 0 8 16" fill="none">
+                    <polyline
+                      points="2,2 6,8 2,14"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+
+                <div
+                  ref={carouselRef}
+                  onScroll={syncActiveSlideFromScroll}
+                  className="flex h-full overflow-x-auto snap-x snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                >
+                  {allBooksInFolder.map((book) => {
+                    const progressPercent = Math.max(0, Math.min(100, Math.round(book.progressPercent)));
+                    return (
+                      <div key={book.id} className="w-full shrink-0 snap-start px-1">
+                        <button
+                          type="button"
+                          onClick={() => onOpenRecent(folder.id, book.id)}
+                          disabled={!!book.isMock}
+                          className="w-full h-full rounded-xl bg-black/20 border border-white/5
+                            hover:bg-black/30 hover:border-white/10 active:scale-[0.98]
+                            transition-all duration-150 px-3 py-3 text-left flex flex-col
+                            disabled:hover:bg-black/20 disabled:hover:border-white/5 disabled:active:scale-100 disabled:cursor-not-allowed"
+                        >
+                          <MoodBookCover
+                            coverUrl={book.coverUrl}
+                            progressPercent={progressPercent}
+                            title={book.title}
+                          />
+                          <div className="mt-auto">
+                            <div className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2">{book.title}</div>
+                            <div className="text-[11px] text-neutral-400 truncate mt-1">{book.author ?? "Unknown author"}</div>
+                            <div className="mt-2 flex items-center gap-2">
+                              <div className="h-1 flex-1 rounded-full bg-white/10 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-violet-400 transition-[width] duration-300"
+                                  style={{ width: `${progressPercent}%` }}
+                                />
+                              </div>
+                              <span className="text-[11px] text-neutral-100 font-semibold tabular-nums">
+                                {progressPercent}%
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="mt-auto">
-                <div className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2">{recentBook.title}</div>
-                <div className="text-[11px] text-neutral-400 truncate mt-1">{recentBook.author ?? "Unknown author"}</div>
-              </div>
-            </button>
+
+
+            </div>
           ) : (
             <div className="flex-1 rounded-xl bg-black/10 border border-white/[0.03] flex flex-col items-center justify-center gap-2 px-4">
               <svg className="w-10 h-10 text-neutral-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>

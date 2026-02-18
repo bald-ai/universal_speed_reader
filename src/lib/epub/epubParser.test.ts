@@ -273,6 +273,61 @@ describe("parseEpubBytes TOC preference", () => {
     expect(parsed.title).toBe("Parser Fixture");
   });
 
+  it("does not use heading fallback when TOC exists", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const ch1Path = "OEBPS/Text/ch1.xhtml";
+    const ch2Path = "OEBPS/Text/ch2.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Parser Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch2" href="Text/ch2.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/ch2.xhtml#p2">Only TOC Chapter</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const ch1 = `<html><body><h1>Book Title Page</h1><p id="p1">Front matter text.</p></body></html>`;
+    const ch2 = `<html><body><p id="p2">Main chapter text.</p></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: ch1Path, data: ch1 },
+      { name: ch2Path, data: ch2 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([{ title: "Only TOC Chapter", start_paragraph_id: 3 }]);
+  });
+
   it("uses heading fallback when TOC metadata is missing", async () => {
     const bytes = createTestEpub({ includeNav: false, includeNcx: false, includeHeadings: true });
     const parsed = await parseEpubBytes(bytes);

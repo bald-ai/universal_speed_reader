@@ -192,4 +192,32 @@ describe("book repository integration", () => {
     expect(jobs[1]?.error).toContain("Processing timeout");
     expect((await repository.getBook(bookId))?.processing_status).toBe("failed");
   });
+
+  it("deletes reading progress for a specific book", async () => {
+    const firstBook = "book-progress-one";
+    const secondBook = "book-progress-two";
+    await repository.upsertBook(makeBook(firstBook, "completed"));
+    await repository.upsertBook(makeBook(secondBook, "completed"));
+
+    await repository.saveReadingProgress({
+      book_id: firstBook,
+      paragraph_id: 5,
+      word_index: 2,
+      mode: "normal",
+      updated_at: 10,
+    });
+    await repository.saveReadingProgress({
+      book_id: secondBook,
+      paragraph_id: 7,
+      word_index: 1,
+      mode: "speed",
+      updated_at: 11,
+    });
+
+    await repository.deleteReadingProgress(firstBook);
+
+    expect(await repository.getReadingProgress(firstBook)).toBeNull();
+    const second = await repository.getReadingProgress(secondBook);
+    expect(second?.paragraph_id).toBe(7);
+  });
 });

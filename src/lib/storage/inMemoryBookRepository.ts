@@ -347,6 +347,15 @@ export class InMemoryBookRepository implements BookRepository {
     });
   }
 
+  async deleteReadingProgress(bookId: string): Promise<void> {
+    await this.withLock(async () => {
+      this.state.reading_progress = this.state.reading_progress.filter(
+        (entry) => entry.book_id !== bookId
+      );
+      await this.persist();
+    });
+  }
+
   async putAppSetting(key: string, value: unknown): Promise<void> {
     await this.withLock(async () => {
       const index = this.state.app_settings.findIndex((entry) => entry.key === key);

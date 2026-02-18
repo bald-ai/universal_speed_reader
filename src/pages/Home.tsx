@@ -9,12 +9,14 @@ import {
 } from "react";
 import { useLocation } from "wouter";
 import BookCard from "@/components/library/BookCard";
+import EditBookModal, { type EditBookModalSavePayload } from "@/components/library/EditBookModal";
 import MoodView from "@/components/library/MoodView";
 import { motion } from "framer-motion";
 import type { LibraryBook } from "@/types/book";
 import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
 import { getBookImportService } from "@/lib/import/bookImportService";
-import { removeBookReferences } from "@/lib/moodStore";
+import { removeBookReferences, loadFolders, getFolderColorForBook } from "@/lib/moodStore";
+import type { MoodFolder } from "@/types/book";
 import { clearBookTokenCache } from "@/lib/utils/tokenCache";
 
 const BackgroundDecoration = memo(function BackgroundDecoration() {
@@ -33,14 +35,20 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [importError, setImportError] = useState<string | null>(null);
   const [deletingBookId, setDeletingBookId] = useState<string | null>(null);
+  const [editingBookId, setEditingBookId] = useState<string | null>(null);
+  const [savingBookId, setSavingBookId] = useState<string | null>(null);
+  const [restoringBookId, setRestoringBookId] = useState<string | null>(null);
+  const [editActionError, setEditActionError] = useState<string | null>(null);
+  const [moodFolders, setMoodFolders] = useState<MoodFolder[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importService = useMemo(() => getBookImportService(), []);
 
   const refreshLibrary = useCallback(async () => {
     setIsLoading(true);
     try {
-      const loaded = await loadLibraryEntries();
+      const [loaded, folders] = await Promise.all([loadLibraryEntries(), loadFolders()]);
       setEntries(loaded);
+      setMoodFolders(folders);
       setImportError(null);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Failed to load library");
@@ -58,10 +66,25 @@ export default function Home() {
   }, [importService, refreshLibrary]);
 
   const entryById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
+  const editingEntry = useMemo(
+    () => (editingBookId ? entryById.get(editingBookId) ?? null : null),
+    [editingBookId, entryById]
+  );
   const libraryBooks: LibraryBook[] = useMemo(
-    () => entries.map((entry) => entry.libraryBook),
+    () =>
+      entries.map((entry) => ({
+        ...entry.libraryBook,
+        progressPercent: entry.progressPercent,
+      })),
     [entries]
   );
+
+  useEffect(() => {
+    if (!editingBookId) return;
+    if (entryById.has(editingBookId)) return;
+    setEditingBookId(null);
+    setEditActionError(null);
+  }, [editingBookId, entryById]);
 
   const triggerImportPicker = () => {
     fileInputRef.current?.click();
@@ -136,6 +159,54 @@ export default function Home() {
     },
     [importService, refreshLibrary]
   );
+
+  const handleOpenEdit = useCallback((entry: LibraryEntry) => {
+    const canEdit =
+      entry.processingStatus === "completed" || entry.processingStatus === "failed";
+    if (!canEdit) return;
+    setEditActionError(null);
+    setEditingBookId(entry.id);
+  }, []);
+
+  const handleSaveEdit = useCallback(
+    async (payload: EditBookModalSavePayload) => {
+      if (!editingBookId) return;
+      const targetBookId = editingBookId;
+      setSavingBookId(targetBookId);
+      setEditActionError(null);
+      try {
+        await importService.updateBookMetadata({
+          bookId: targetBookId,
+          title: payload.title,
+          author: payload.author,
+          coverDataUrl: payload.coverDataUrl,
+        });
+        await refreshLibrary();
+        setEditingBookId((current) => (current === targetBookId ? null : current));
+      } catch (error) {
+        setEditActionError(error instanceof Error ? error.message : "Failed to update book");
+      } finally {
+        setSavingBookId((current) => (current === targetBookId ? null : current));
+      }
+    },
+    [editingBookId, importService, refreshLibrary]
+  );
+
+  const handleRestoreOriginal = useCallback(async () => {
+    if (!editingBookId) return;
+    const targetBookId = editingBookId;
+    setRestoringBookId(targetBookId);
+    setEditActionError(null);
+    try {
+      await importService.restoreOriginalBook(targetBookId);
+      await refreshLibrary();
+      setEditingBookId((current) => (current === targetBookId ? null : current));
+    } catch (error) {
+      setEditActionError(error instanceof Error ? error.message : "Failed to restore original book");
+    } finally {
+      setRestoringBookId((current) => (current === targetBookId ? null : current));
+    }
+  }, [editingBookId, importService, refreshLibrary]);
 
   return (
     <main className="min-h-screen flex flex-col items-center px-4 py-8 bg-neutral-950 text-neutral-100 relative overflow-hidden">
@@ -292,7 +363,11 @@ export default function Home() {
                 entries.map((entry, index) => {
                   const canDelete =
                     entry.processingStatus === "completed" || entry.processingStatus === "failed";
+                  const canEdit =
+                    entry.processingStatus === "completed" || entry.processingStatus === "failed";
                   const isDeleting = deletingBookId === entry.id;
+                  const isEditingBusy =
+                    savingBookId === entry.id || restoringBookId === entry.id;
                   return (
                     <BookCard
                       key={entry.id}
@@ -312,10 +387,20 @@ export default function Home() {
                       }
                       readDisabled={
                         (entry.processingStatus !== "completed" && entry.processingStatus !== "failed") ||
-                        isDeleting
+                        isDeleting ||
+                        isEditingBusy
+                      }
+                      editLabel={isEditingBusy ? "Working..." : "Edit"}
+                      editDisabled={isDeleting || isEditingBusy}
+                      onEdit={
+                        canEdit
+                          ? () => {
+                              handleOpenEdit(entry);
+                            }
+                          : undefined
                       }
                       deleteLabel={isDeleting ? "Deleting..." : "Delete"}
-                      deleteDisabled={isDeleting}
+                      deleteDisabled={isDeleting || isEditingBusy}
                       onDelete={
                         canDelete
                           ? () => {
@@ -323,8 +408,9 @@ export default function Home() {
                             }
                           : undefined
                       }
-                      statusBadge={entry.processingStatusLabel}
+                      statusBadge={entry.processingStatus !== "completed" ? entry.processingStatusLabel : undefined}
                       progress={entry.progressPercent}
+                      folderColor={getFolderColorForBook(moodFolders, entry.id)}
                       onRead={() => {
                         void handleOpenOrRetry(entry);
                       }}
@@ -365,6 +451,19 @@ export default function Home() {
           </p>
         </motion.footer>
       </div>
+      <EditBookModal
+        entry={editingEntry}
+        isSaving={!!editingEntry && savingBookId === editingEntry.id}
+        isRestoring={!!editingEntry && restoringBookId === editingEntry.id}
+        error={editActionError}
+        onClose={() => {
+          if (savingBookId || restoringBookId) return;
+          setEditingBookId(null);
+          setEditActionError(null);
+        }}
+        onSave={handleSaveEdit}
+        onRestore={handleRestoreOriginal}
+      />
     </main>
   );
 }

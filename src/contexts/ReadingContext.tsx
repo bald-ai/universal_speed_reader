@@ -19,6 +19,7 @@ type ReadingContextValue = {
   mode: Mode;
   position: Position;
   highlightedWord: Position | null;
+  progressLoaded: boolean;
   setMode: (mode: Mode) => void;
   setPosition: (position: Position) => void;
   setHighlightedWord: (position: Position | null) => void;
@@ -243,12 +244,13 @@ export function ReadingProvider(props: ProviderProps) {
       mode,
       position,
       highlightedWord,
+      progressLoaded,
       setMode,
       setPosition,
       setHighlightedWord,
       saveProgress,
     }),
-    [mode, position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress]
+    [mode, position, highlightedWord, progressLoaded, setMode, setPosition, setHighlightedWord, saveProgress]
   );
 
   return <ReadingContext.Provider value={contextValue}>{children}</ReadingContext.Provider>;

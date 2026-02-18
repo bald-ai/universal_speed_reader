@@ -4,6 +4,7 @@ import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { clampWpm, normalizeWpm } from "@/lib/constants";
+import { startSpeedModeKeepAwake } from "@/lib/screenAwake";
 import { findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import { getNextPosition, getWordAtPosition } from "@/lib/utils/bookHelpers";
 import type { Position } from "@/types/reading";
@@ -54,6 +55,13 @@ export default function SpeedReadingMode() {
       positionRef.current = position;
     }
   }, [position, isPaused]);
+
+  useEffect(() => {
+    const stopKeepingScreenAwake = startSpeedModeKeepAwake();
+    return () => {
+      stopKeepingScreenAwake();
+    };
+  }, []);
 
   useEffect(() => {
     if (!book || isPaused) return;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Book } from "../../types/book";
 import {
+  calculateChapterPercentComplete,
   calculatePercentComplete,
   findChapterForParagraph,
   getNextPosition,
@@ -65,6 +66,37 @@ describe("calculatePercentComplete", () => {
       totalWords: 4,
     });
     expect(calculatePercentComplete(book, { paragraphId: 30, wordIndex: 1 })).toBe(75);
+  });
+});
+
+describe("calculateChapterPercentComplete", () => {
+  it("returns chapter-local progress based on current chapter word count", () => {
+    const book = makeBook();
+
+    expect(calculateChapterPercentComplete(book, { paragraphId: 1, wordIndex: 0 })).toBe(0);
+    expect(calculateChapterPercentComplete(book, { paragraphId: 1, wordIndex: 1 })).toBe(33);
+    expect(calculateChapterPercentComplete(book, { paragraphId: 1, wordIndex: 3 })).toBe(100);
+
+    expect(calculateChapterPercentComplete(book, { paragraphId: 3, wordIndex: 0 })).toBe(0);
+    expect(calculateChapterPercentComplete(book, { paragraphId: 3, wordIndex: 1 })).toBe(50);
+    expect(calculateChapterPercentComplete(book, { paragraphId: 3, wordIndex: 2 })).toBe(100);
+  });
+
+  it("falls back to book-level progress when chapters are missing", () => {
+    const book = makeBook({ chapters: [] });
+    expect(calculateChapterPercentComplete(book, { paragraphId: 3, wordIndex: 1 })).toBe(
+      calculatePercentComplete(book, { paragraphId: 3, wordIndex: 1 })
+    );
+  });
+
+  it("falls back to book-level progress when chapter metadata is unusable", () => {
+    const book = makeBook({
+      chapters: [{ index: 0, title: "Broken", startParagraphId: 99 }],
+    });
+
+    expect(calculateChapterPercentComplete(book, { paragraphId: 3, wordIndex: 1 })).toBe(
+      calculatePercentComplete(book, { paragraphId: 3, wordIndex: 1 })
+    );
   });
 });
 

@@ -21,6 +21,7 @@ export default function TtsMiniBar(props: Props) {
   const { settings, updateSettings } = useSettings();
   const isPlaying = tts.status === "playing";
   const isError = Boolean(tts.error);
+  const isWarning = Boolean(tts.warning);
 
   const handleSpeedChange = (direction: "up" | "down") => {
     const delta = direction === "up" ? TTS_RATE_STEP : -TTS_RATE_STEP;
@@ -45,6 +46,18 @@ export default function TtsMiniBar(props: Props) {
           transition={{ duration: 0.18 }}
         >
           <div className="mx-auto w-fit max-w-full rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+            {isWarning ? (
+              <div className="mb-1 flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-950/40 px-3 py-1">
+                <span className="max-w-[70vw] truncate text-[11px] text-amber-100">{tts.warning}</span>
+                <button
+                  type="button"
+                  onClick={tts.clearWarning}
+                  className="rounded-full bg-white/8 px-2 py-1 text-[10px] font-semibold text-amber-100 transition-colors hover:bg-white/15"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
             <AnimatePresence mode="wait" initial={false}>
               {isError ? (
                 <motion.div

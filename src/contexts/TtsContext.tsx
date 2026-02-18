@@ -13,8 +13,17 @@ import {
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
+import { useTtsRegex } from "@/contexts/TtsRegexContext";
 import type { Position } from "@/types/reading";
 import { getTokensForParagraph } from "@/lib/utils/tokenCache";
+import type { TtsRegexMatchMode } from "@/types/ttsRegex";
+import {
+  applyRulesChunkMode,
+  applyRulesTokenMode,
+  compileRule,
+  getActiveRules,
+  type CompiledTtsRegexRule,
+} from "@/lib/ttsRegex/engine";
 import {
   isNativeTtsAvailable,
   speakNativeText,
@@ -27,12 +36,14 @@ type TtsPlayerStatus = "idle" | "playing" | "paused" | "error";
 type TtsContextValue = {
   status: TtsPlayerStatus;
   error: string | null;
+  warning: string | null;
   isReady: boolean;
 
   playFrom: (pos: Position) => Promise<void>;
   pause: () => void;
   stop: () => void;
   clearError: () => void;
+  clearWarning: () => void;
   jumpTo: (pos: Position) => Promise<void>;
 };
 
@@ -41,6 +52,7 @@ const TtsContext = createContext<TtsContextValue | undefined>(undefined);
 type Props = { children: ReactNode };
 
 const MAX_UTTERANCE_CHARS = 1800;
+const MAX_TRANSFORMED_CHUNK_CHARS = 5000;
 
 type SpokenRange = {
   start: number;
@@ -52,6 +64,19 @@ type SpokenChunk = {
   text: string;
   ranges: SpokenRange[];
   startPosition: Position;
+};
+
+type TransformSpokenChunkResult = {
+  text: string;
+  ranges: SpokenRange[];
+  warning: string | null;
+};
+
+type TransformSpokenChunkInput = {
+  chunk: SpokenChunk;
+  mode: TtsRegexMatchMode;
+  compiledRules: CompiledTtsRegexRule[];
+  maxChars: number;
 };
 
 function findPositionByCharIndex(ranges: SpokenRange[], index: number): Position | null {
@@ -94,19 +119,148 @@ function mapSpeakError(message: string): string {
   return "Could not start speech";
 }
 
+function rebuildChunkFromTokens(chunk: SpokenChunk, tokens: string[]): { text: string; ranges: SpokenRange[] } {
+  if (tokens.length === 0 || chunk.ranges.length === 0) {
+    return {
+      text: chunk.text,
+      ranges: chunk.ranges,
+    };
+  }
+
+  const parts: string[] = [];
+  const ranges: SpokenRange[] = [];
+  let cursor = 0;
+
+  for (let i = 0; i < chunk.ranges.length; i += 1) {
+    const token = tokens[i] ?? "";
+    const current = chunk.ranges[i];
+    if (!current) continue;
+    const prev = chunk.ranges[i - 1];
+
+    let separator = "";
+    if (prev) {
+      separator = prev.position.paragraphId === current.position.paragraphId ? " " : "\n";
+    }
+
+    if (separator) {
+      parts.push(separator);
+      cursor += separator.length;
+    }
+
+    const start = cursor;
+    parts.push(token);
+    cursor += token.length;
+    ranges.push({
+      start,
+      end: cursor,
+      position: current.position,
+    });
+  }
+
+  return {
+    text: parts.join(""),
+    ranges,
+  };
+}
+
+export function transformSpokenChunk(input: TransformSpokenChunkInput): TransformSpokenChunkResult {
+  const { chunk, mode, compiledRules, maxChars } = input;
+
+  if (compiledRules.length === 0) {
+    return {
+      text: chunk.text,
+      ranges: chunk.ranges,
+      warning: null,
+    };
+  }
+
+  if (mode === "token") {
+    const tokens = chunk.ranges.map((range) => chunk.text.slice(range.start, range.end));
+    const { spokenTokens, stats } = applyRulesTokenMode(tokens, compiledRules);
+
+    if (stats.totalMatches <= 0) {
+      return {
+        text: chunk.text,
+        ranges: chunk.ranges,
+        warning: null,
+      };
+    }
+
+    const rebuilt = rebuildChunkFromTokens(chunk, spokenTokens);
+    if (rebuilt.text.length > maxChars) {
+      return {
+        text: chunk.text,
+        ranges: chunk.ranges,
+        warning: `Spoken text was too long after replacements (${rebuilt.text.length} chars). Original text was used for this chunk.`,
+      };
+    }
+
+    return {
+      text: rebuilt.text,
+      ranges: rebuilt.ranges,
+      warning: null,
+    };
+  }
+
+  const { spokenText, stats } = applyRulesChunkMode(chunk.text, compiledRules);
+  if (stats.totalMatches <= 0) {
+    return {
+      text: chunk.text,
+      ranges: chunk.ranges,
+      warning: null,
+    };
+  }
+
+  if (spokenText.length > maxChars) {
+    return {
+      text: chunk.text,
+      ranges: [],
+      warning: `Spoken text was too long after replacements (${spokenText.length} chars). Original text was used for this chunk.`,
+    };
+  }
+
+  return {
+    text: spokenText,
+    ranges: [],
+    warning: null,
+  };
+}
+
 export function TtsProvider(props: Props) {
   const { children } = props;
   const { book } = useBook();
   const { setHighlightedWord, setPosition, saveProgress } = useReading();
   const { settings } = useSettings();
+  const { store: ttsRegexStore } = useTtsRegex();
 
   const [isReady, setIsReady] = useState(false);
   const [status, setStatus] = useState<TtsPlayerStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
   const speakSessionRef = useRef(0);
   const isPlayingRef = useRef(false);
   const spokenRangesRef = useRef<SpokenRange[]>([]);
+  const matchModeRef = useRef<TtsRegexMatchMode>("token");
+
+  const compiledRules = useMemo<CompiledTtsRegexRule[]>(() => {
+    if (!book) return [];
+    const active = getActiveRules(ttsRegexStore, book.id);
+    const compiled: CompiledTtsRegexRule[] = [];
+
+    for (const rule of active) {
+      const result = compileRule(rule);
+      if (result.ok) {
+        compiled.push(result.compiled);
+      }
+    }
+
+    return compiled;
+  }, [book, ttsRegexStore]);
+
+  useEffect(() => {
+    matchModeRef.current = ttsRegexStore.matchMode;
+  }, [ttsRegexStore.matchMode]);
 
   const cancelPlayback = useCallback(() => {
     speakSessionRef.current += 1;
@@ -210,9 +364,14 @@ export function TtsProvider(props: Props) {
     setStatus("idle");
   }, []);
 
+  const clearWarning = useCallback(() => {
+    setWarning(null);
+  }, []);
+
   const playFrom = useCallback(
     async (pos: Position) => {
       setError(null);
+      setWarning(null);
 
       let ready = isReady;
       if (!ready) {
@@ -241,13 +400,30 @@ export function TtsProvider(props: Props) {
       setStatus("playing");
 
       try {
+        let hasShownReplacementWarning = false;
         for (const chunk of payload.chunks) {
           if (speakSessionRef.current !== sessionId) return;
 
-          spokenRangesRef.current = chunk.ranges;
+          const transformed = transformSpokenChunk({
+            chunk,
+            mode: ttsRegexStore.matchMode,
+            compiledRules,
+            maxChars: MAX_TRANSFORMED_CHUNK_CHARS,
+          });
+
+          if (!hasShownReplacementWarning && transformed.warning) {
+            hasShownReplacementWarning = true;
+            setWarning(transformed.warning);
+          }
+
+          spokenRangesRef.current = transformed.ranges;
+          if (ttsRegexStore.matchMode === "chunk") {
+            setHighlightedWord(chunk.startPosition);
+            setPosition(chunk.startPosition);
+          }
 
           await speakNativeText({
-            text: chunk.text,
+            text: transformed.text,
             rate: settings.ttsPlaybackRate,
             lang: settings.ttsLanguage || "en-US",
             voice: settings.ttsVoiceIndex,
@@ -273,10 +449,12 @@ export function TtsProvider(props: Props) {
       saveProgress,
       setHighlightedWord,
       setPosition,
+      compiledRules,
       settings.ttsLanguage,
       settings.ttsPlaybackRate,
       settings.ttsVoiceIndex,
       cancelPlayback,
+      ttsRegexStore.matchMode,
     ]
   );
 
@@ -314,6 +492,7 @@ export function TtsProvider(props: Props) {
     (async () => {
       unsubscribe = await subscribeRangeStart((info) => {
         if (closed || !isPlayingRef.current) return;
+        if (matchModeRef.current === "chunk") return;
 
         const position = findPositionByCharIndex(spokenRangesRef.current, info.start);
         if (!position) return;
@@ -352,14 +531,16 @@ export function TtsProvider(props: Props) {
     () => ({
       status,
       error,
+      warning,
       isReady,
       playFrom,
       pause,
       stop,
       clearError,
+      clearWarning,
       jumpTo,
     }),
-    [status, error, isReady, playFrom, pause, stop, clearError, jumpTo]
+    [status, error, warning, isReady, playFrom, pause, stop, clearError, clearWarning, jumpTo]
   );
 
   return <TtsContext.Provider value={value}>{children}</TtsContext.Provider>;

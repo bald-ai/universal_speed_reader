@@ -160,4 +160,90 @@ describe("book import service state machine", () => {
     expect(await repo.listImportJobs(bookId)).toEqual([]);
     expect(await loadRawEpub(bookId)).toBeNull();
   });
+
+  it("updates title, author, and replacement cover metadata", async () => {
+    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/fitzgerald-great-gatsby.epub"));
+    const bookId = await service.importFromBytes({
+      fileName: "fitzgerald-great-gatsby.epub",
+      mimeType: "application/epub+zip",
+      bytes,
+    });
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+
+    await service.updateBookMetadata({
+      bookId,
+      title: "  Updated Title  ",
+      author: "  Updated Author  ",
+      coverDataUrl: "data:image/png;base64,AAAA",
+    });
+
+    const updated = await repo.getBook(bookId);
+    expect(updated?.title).toBe("Updated Title");
+    expect(updated?.author).toBe("Updated Author");
+    expect(updated?.cover_path).toBe("data:image/png;base64,AAAA");
+  });
+
+  it("restoreOriginalBook resets reading progress after successful restore", async () => {
+    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bookId = await service.importFromBytes({
+      fileName: "shelley-frankenstein.epub",
+      mimeType: "application/epub+zip",
+      bytes,
+    });
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+
+    await repo.saveReadingProgress({
+      book_id: bookId,
+      paragraph_id: 5,
+      word_index: 1,
+      mode: "normal",
+      updated_at: Date.now(),
+    });
+    expect(await repo.getReadingProgress(bookId)).not.toBeNull();
+
+    await service.restoreOriginalBook(bookId);
+
+    const book = await repo.getBook(bookId);
+    expect(book?.processing_status).toBe("completed");
+    expect(await repo.getReadingProgress(bookId)).toBeNull();
+  });
+
+  it("retryImport does not clear reading progress", async () => {
+    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bookId = await service.importFromBytes({
+      fileName: "shelley-frankenstein.epub",
+      mimeType: "application/epub+zip",
+      bytes,
+    });
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+
+    await repo.saveReadingProgress({
+      book_id: bookId,
+      paragraph_id: 5,
+      word_index: 1,
+      mode: "normal",
+      updated_at: Date.now(),
+    });
+
+    await service.retryImport(bookId);
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+
+    const progress = await repo.getReadingProgress(bookId);
+    expect(progress?.paragraph_id).toBe(5);
+    expect(progress?.word_index).toBe(1);
+  });
+
+  it("blocks restoreOriginalBook while the same book is processing", async () => {
+    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bookId = await service.importFromBytes({
+      fileName: "shelley-frankenstein.epub",
+      mimeType: "application/epub+zip",
+      bytes,
+    });
+
+    await expect(service.restoreOriginalBook(bookId)).rejects.toThrow(
+      "Book is currently processing and cannot be restored"
+    );
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+  });
 });

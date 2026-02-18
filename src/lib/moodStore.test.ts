@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import type { LibraryBook, MoodFolder } from "../types/book";
 import {
+  __resetMoodStoreForTests,
   getUnassignedBooks,
   loadFolders,
   loadRecent,
+  MOOD_STORE_STORAGE_KEY,
   removeBookReferences,
   saveFolders,
   saveRecent,
@@ -22,6 +24,7 @@ const ALL_BOOKS: LibraryBook[] = [
     author: "A",
     genre: "Science",
     description: "D1",
+    progressPercent: 0,
   },
   {
     id: "b-2",
@@ -29,6 +32,7 @@ const ALL_BOOKS: LibraryBook[] = [
     author: "B",
     genre: "Romance",
     description: "D2",
+    progressPercent: 0,
   },
   {
     id: "b-3",
@@ -36,10 +40,61 @@ const ALL_BOOKS: LibraryBook[] = [
     author: "C",
     genre: "Fantasy",
     description: "D3",
+    progressPercent: 0,
   },
 ];
 
+type LocalStorageMock = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  clear: () => void;
+};
+
+function installLocalStorageMock(initial: Record<string, string> = {}): {
+  restore: () => void;
+  storage: LocalStorageMock;
+  data: Record<string, string>;
+} {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const data: Record<string, string> = { ...initial };
+  const storage: LocalStorageMock = {
+    getItem: (key) => (Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null),
+    setItem: (key, value) => {
+      data[key] = value;
+    },
+    removeItem: (key) => {
+      delete data[key];
+    },
+    clear: () => {
+      for (const key of Object.keys(data)) {
+        delete data[key];
+      }
+    },
+  };
+
+  Object.defineProperty(globalThis, "localStorage", {
+    value: storage,
+    configurable: true,
+    writable: true,
+  });
+
+  const restore = () => {
+    if (previousDescriptor) {
+      Object.defineProperty(globalThis, "localStorage", previousDescriptor);
+      return;
+    }
+    delete (globalThis as { localStorage?: LocalStorageMock }).localStorage;
+  };
+
+  return { restore, storage, data };
+}
+
 describe("moodStore", () => {
+  beforeEach(() => {
+    __resetMoodStoreForTests();
+  });
+
   beforeEach(async () => {
     await saveFolders(BASE_FOLDERS);
     await saveRecent({});
@@ -115,5 +170,73 @@ describe("moodStore", () => {
     expect(await loadRecent()).toEqual({
       "f-2": "b-3",
     });
+  });
+
+  it("hydrates folders and recents from localStorage once", async () => {
+    const persisted = {
+      version: 1,
+      folders: [{ id: "persisted-folder", label: "Persisted", icon: "sparkles", color: "amber", bookIds: ["b-2"] }],
+      recent: { "persisted-folder": "b-2" },
+    };
+    const { restore } = installLocalStorageMock({
+      [MOOD_STORE_STORAGE_KEY]: JSON.stringify(persisted),
+    });
+
+    __resetMoodStoreForTests();
+    expect(await loadFolders()).toEqual(persisted.folders);
+    expect(await loadRecent()).toEqual(persisted.recent);
+    restore();
+  });
+
+  it("falls back to empty state when persisted JSON is malformed", async () => {
+    const { restore } = installLocalStorageMock({
+      [MOOD_STORE_STORAGE_KEY]: "{invalid-json",
+    });
+
+    __resetMoodStoreForTests();
+    expect(await loadFolders()).toEqual([]);
+    expect(await loadRecent()).toEqual({});
+    restore();
+  });
+
+  it("persists updates to localStorage on folder/recent changes", async () => {
+    const { data, restore } = installLocalStorageMock();
+    __resetMoodStoreForTests();
+
+    await saveFolders([{ id: "f-persist", label: "Persist Me", bookIds: ["b-3"] }]);
+    await setRecent("f-persist", "b-3");
+
+    const raw = data[MOOD_STORE_STORAGE_KEY];
+    expect(typeof raw).toBe("string");
+    const parsed = JSON.parse(raw);
+    expect(parsed.folders).toEqual([{ id: "f-persist", label: "Persist Me", bookIds: ["b-3"] }]);
+    expect(parsed.recent).toEqual({ "f-persist": "b-3" });
+    restore();
+  });
+
+  it("removeBookReferences also updates persisted localStorage state", async () => {
+    const { data, restore } = installLocalStorageMock();
+    __resetMoodStoreForTests();
+
+    await saveFolders([
+      { id: "f-1", label: "Focus", bookIds: ["b-1", "b-2"] },
+      { id: "f-2", label: "Chill", bookIds: ["b-1"] },
+    ]);
+    await saveRecent({
+      "f-1": "b-1",
+      "f-2": "b-3",
+    });
+
+    await removeBookReferences("b-1");
+
+    const raw = data[MOOD_STORE_STORAGE_KEY];
+    expect(typeof raw).toBe("string");
+    const parsed = JSON.parse(raw);
+    expect(parsed.folders).toEqual([
+      { id: "f-1", label: "Focus", bookIds: ["b-2"] },
+      { id: "f-2", label: "Chill", bookIds: [] },
+    ]);
+    expect(parsed.recent).toEqual({ "f-2": "b-3" });
+    restore();
   });
 });
