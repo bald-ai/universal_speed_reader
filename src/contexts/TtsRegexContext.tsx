@@ -17,10 +17,12 @@ import {
   TTS_REGEX_MAX_REPLACEMENT_LENGTH,
   TTS_REGEX_MAX_RULES_PER_SCOPE,
 } from "@/lib/ttsRegex/engine";
+import { createSimpleWordPattern } from "@/lib/ttsRegex/simpleRule";
 import type {
   TtsRegexMatchMode,
   TtsRegexPreviewStats,
   TtsRegexRule,
+  TtsRegexRuleSource,
   TtsRegexScope,
   TtsRegexStoreV1,
 } from "@/types/ttsRegex";
@@ -31,6 +33,7 @@ const TTS_REGEX_SETTINGS_KEY = "tts.regex.v1";
 type RuleInput = {
   pattern: string;
   replacement: string;
+  source?: TtsRegexRuleSource;
   caseInsensitive: boolean;
   enabled?: boolean;
 };
@@ -91,23 +94,51 @@ function isMatchMode(value: unknown): value is TtsRegexMatchMode {
   return value === "token" || value === "chunk";
 }
 
+function isRuleSource(value: unknown): value is TtsRegexRuleSource {
+  return value === "simple" || value === "regex";
+}
+
+function migrateSimplePattern(pattern: string): string {
+  const trimmed = pattern.trim();
+  const legacyBoundaryMatch = trimmed.match(/^\\b(.+)\\b$/);
+  if (legacyBoundaryMatch?.[1]) {
+    const legacyWord = legacyBoundaryMatch[1].replace(/\\(.)/g, "$1");
+    const migrated = createSimpleWordPattern(legacyWord);
+    return migrated || trimmed;
+  }
+
+  // Previously we stored simple rules as [^\w]*word[^\w]*.
+  // Migrate those to boundary-safe form to avoid chunk-mode text mangling.
+  const punctuationSafeMatch = trimmed.match(/^\[\^\\w\]\*(.+)\[\^\\w\]\*$/);
+  if (punctuationSafeMatch?.[1]) {
+    const legacyWord = punctuationSafeMatch[1].replace(/\\(.)/g, "$1");
+    const migrated = createSimpleWordPattern(legacyWord);
+    return migrated || trimmed;
+  }
+
+  return trimmed;
+}
+
 function sanitizeRule(raw: unknown): TtsRegexRule | null {
   if (!isObject(raw)) return null;
   if (typeof raw.id !== "string" || raw.id.trim().length === 0) return null;
-  if (typeof raw.pattern !== "string") return null;
-  if (raw.pattern.length > TTS_REGEX_MAX_PATTERN_LENGTH) return null;
   if (typeof raw.replacement !== "string") return null;
   if (raw.replacement.length > TTS_REGEX_MAX_REPLACEMENT_LENGTH) return null;
   if (typeof raw.enabled !== "boolean") return null;
   if (typeof raw.caseInsensitive !== "boolean") return null;
+  const source: TtsRegexRuleSource = isRuleSource(raw.source) ? raw.source : "regex";
+  if (typeof raw.pattern !== "string") return null;
+  const pattern = source === "simple" ? migrateSimplePattern(raw.pattern) : raw.pattern;
+  if (pattern.length > TTS_REGEX_MAX_PATTERN_LENGTH) return null;
 
   const createdAt = typeof raw.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now();
   const updatedAt = typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : createdAt;
 
   return {
     id: raw.id,
-    pattern: raw.pattern,
+    pattern,
     replacement: raw.replacement,
+    source,
     enabled: raw.enabled,
     caseInsensitive: raw.caseInsensitive,
     createdAt,
@@ -204,10 +235,16 @@ function assertRuleValid(rule: TtsRegexRule): void {
 
 export function createRuleInStore(store: TtsRegexStoreV1, args: CreateRuleArgs): [TtsRegexStoreV1, TtsRegexRule] {
   const now = Date.now();
+  const source = args.input.source ?? "regex";
+  const normalizedPattern =
+    source === "simple"
+      ? migrateSimplePattern(args.input.pattern)
+      : args.input.pattern.trim();
   const nextRule: TtsRegexRule = {
     id: createRuleId(),
-    pattern: args.input.pattern.trim(),
+    pattern: normalizedPattern,
     replacement: args.input.replacement,
+    source,
     caseInsensitive: args.input.caseInsensitive,
     enabled: args.input.enabled ?? true,
     createdAt: now,
@@ -235,10 +272,18 @@ export function updateRuleInStore(store: TtsRegexStoreV1, args: UpdateRuleArgs):
   if (!current) {
     throw new Error("Rule not found");
   }
+  const nextSource = args.patch.source ?? current.source;
+  const patchedPatternRaw =
+    args.patch.pattern !== undefined ? args.patch.pattern.trim() : current.pattern;
+  const nextPattern =
+    nextSource === "simple"
+      ? migrateSimplePattern(patchedPatternRaw)
+      : patchedPatternRaw;
   const nextRule: TtsRegexRule = {
     ...current,
-    pattern: args.patch.pattern !== undefined ? args.patch.pattern.trim() : current.pattern,
+    pattern: nextPattern,
     replacement: args.patch.replacement ?? current.replacement,
+    source: nextSource,
     caseInsensitive: args.patch.caseInsensitive ?? current.caseInsensitive,
     enabled: args.patch.enabled ?? current.enabled,
     updatedAt: Date.now(),

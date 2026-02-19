@@ -36,15 +36,3 @@ export async function getBookRepository(): Promise<BookRepository> {
   }
   return repositoryPromise;
 }
-
-export async function closeBookRepository(): Promise<void> {
-  if (!repositoryPromise) return;
-  const repo = await repositoryPromise;
-  await repo.close();
-  repositoryPromise = null;
-}
-
-export function setBookRepositoryForTests(repo: BookRepository | null): void {
-  testOverride = repo;
-  repositoryPromise = repo ? Promise.resolve(repo) : null;
-}

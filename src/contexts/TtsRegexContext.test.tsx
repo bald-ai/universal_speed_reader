@@ -45,6 +45,7 @@ describe("TtsRegexContext internals", () => {
     });
 
     expect(withSecond.globalRules.map((rule) => rule.id)).toEqual([firstRule.id, secondRule.id]);
+    expect(firstRule.source).toBe("regex");
 
     const [updatedStore, updatedRule] = __ttsRegexContextInternals.updateRuleInStore(withSecond, {
       scope: "global",
@@ -131,5 +132,75 @@ describe("TtsRegexContext internals", () => {
         },
       })
     ).toThrow();
+  });
+
+  it("defaults missing persisted source to regex during sanitize", () => {
+    const now = Date.now();
+    const out = __ttsRegexContextInternals.sanitizeTtsRegexStore({
+      version: 1,
+      matchMode: "token",
+      globalRules: [
+        {
+          id: "g-1",
+          pattern: "xarqon",
+          replacement: "zar-kon",
+          enabled: true,
+          caseInsensitive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      bookRulesById: {},
+    });
+
+    expect(out.globalRules[0]?.source).toBe("regex");
+  });
+
+  it("migrates legacy simple word-boundary pattern to boundary-safe pattern", () => {
+    const now = Date.now();
+    const out = __ttsRegexContextInternals.sanitizeTtsRegexStore({
+      version: 1,
+      matchMode: "token",
+      globalRules: [
+        {
+          id: "g-legacy-simple",
+          pattern: "\\bReserved\\b",
+          replacement: "Reee",
+          source: "simple",
+          enabled: true,
+          caseInsensitive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      bookRulesById: {},
+    });
+
+    expect(out.globalRules[0]?.pattern).toBe("\\bReserved\\b");
+    expect(out.globalRules[0]?.source).toBe("simple");
+  });
+
+  it("migrates punctuation-eating simple pattern to boundary-safe pattern", () => {
+    const now = Date.now();
+    const out = __ttsRegexContextInternals.sanitizeTtsRegexStore({
+      version: 1,
+      matchMode: "token",
+      globalRules: [
+        {
+          id: "g-legacy-simple-v2",
+          pattern: "[^\\w]*Reserved[^\\w]*",
+          replacement: "Reee",
+          source: "simple",
+          enabled: true,
+          caseInsensitive: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      bookRulesById: {},
+    });
+
+    expect(out.globalRules[0]?.pattern).toBe("\\bReserved\\b");
+    expect(out.globalRules[0]?.source).toBe("simple");
   });
 });

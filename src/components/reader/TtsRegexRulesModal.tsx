@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Book } from "@/types/book";
 import type {
@@ -19,6 +19,8 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   book: Book | null;
+  initialPattern?: string;
+  initialReplacement?: string;
 };
 
 type RuleFormState = {
@@ -49,7 +51,7 @@ function trimForPreview(value: string, max = 100): string {
 }
 
 export default function TtsRegexRulesModal(props: Props) {
-  const { isOpen, onClose, book } = props;
+  const { isOpen, onClose, book, initialPattern, initialReplacement } = props;
   const {
     matchMode,
     setMatchMode,
@@ -68,6 +70,20 @@ export default function TtsRegexRulesModal(props: Props) {
   const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
 
   const bookId = book?.id;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!initialPattern && !initialReplacement) return;
+
+    setEditingRuleId(null);
+    setPendingSave(null);
+    setFormError(null);
+    setForm({
+      ...EMPTY_FORM,
+      pattern: initialPattern ?? "",
+      replacement: initialReplacement ?? "",
+    });
+  }, [initialPattern, initialReplacement, isOpen]);
 
   const activeRules = useMemo(() => {
     if (scope === "book") {
@@ -126,6 +142,7 @@ export default function TtsRegexRulesModal(props: Props) {
       id: editingRule?.id ?? `preview-${now}`,
       pattern: form.pattern.trim(),
       replacement: form.replacement,
+      source: editingRule?.source ?? "regex",
       caseInsensitive: form.caseInsensitive,
       enabled: form.enabled,
       createdAt: editingRule?.createdAt ?? now,
@@ -168,12 +185,13 @@ export default function TtsRegexRulesModal(props: Props) {
           scope: pendingSave.scope,
           bookId: pendingSave.bookId,
           ruleId: pendingSave.candidate.id,
-          patch: {
-            pattern: pendingSave.candidate.pattern,
-            replacement: pendingSave.candidate.replacement,
-            caseInsensitive: pendingSave.candidate.caseInsensitive,
-            enabled: pendingSave.candidate.enabled,
-          },
+            patch: {
+              pattern: pendingSave.candidate.pattern,
+              replacement: pendingSave.candidate.replacement,
+              source: pendingSave.candidate.source,
+              caseInsensitive: pendingSave.candidate.caseInsensitive,
+              enabled: pendingSave.candidate.enabled,
+            },
         });
       } else {
         createRule({
@@ -182,6 +200,7 @@ export default function TtsRegexRulesModal(props: Props) {
           input: {
             pattern: pendingSave.candidate.pattern,
             replacement: pendingSave.candidate.replacement,
+            source: pendingSave.candidate.source,
             caseInsensitive: pendingSave.candidate.caseInsensitive,
             enabled: pendingSave.candidate.enabled,
           },

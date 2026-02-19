@@ -7,6 +7,7 @@ function makeCompiledRule(pattern: string, replacement: string) {
     id: "rule-1",
     pattern,
     replacement,
+    source: "regex",
     enabled: true,
     caseInsensitive: true,
     createdAt: Date.now(),

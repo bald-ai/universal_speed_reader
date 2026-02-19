@@ -53,6 +53,15 @@ type Props = { children: ReactNode };
 
 const MAX_UTTERANCE_CHARS = 1800;
 const MAX_TRANSFORMED_CHUNK_CHARS = 5000;
+const TTS_DEBUG_PREFIX = "[TTS DEBUG]";
+
+function formatTtsDebugPayload(payload: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return "{\"error\":\"Failed to stringify TTS debug payload\"}";
+  }
+}
 
 type SpokenRange = {
   start: number;
@@ -78,6 +87,35 @@ type TransformSpokenChunkInput = {
   compiledRules: CompiledTtsRegexRule[];
   maxChars: number;
 };
+
+function isSamePosition(a: Position, b: Position): boolean {
+  return a.paragraphId === b.paragraphId && a.wordIndex === b.wordIndex;
+}
+
+function getTokenByPosition(ranges: SpokenRange[], text: string, position: Position): string | null {
+  const range = ranges.find((item) => isSamePosition(item.position, position));
+  if (!range) return null;
+  return text.slice(range.start, range.end);
+}
+
+function getFirstToken(text: string): string {
+  const [first = ""] = text.split(/\s+/);
+  return first;
+}
+
+function getMatchingCompiledRuleForToken(
+  token: string | null,
+  rules: CompiledTtsRegexRule[]
+): CompiledTtsRegexRule | null {
+  if (!token) return null;
+  for (const rule of rules) {
+    rule.tokenRegex.lastIndex = 0;
+    if (rule.tokenRegex.test(token)) {
+      return rule;
+    }
+  }
+  return null;
+}
 
 function findPositionByCharIndex(ranges: SpokenRange[], index: number): Position | null {
   if (ranges.length === 0) return null;
@@ -243,12 +281,24 @@ export function TtsProvider(props: Props) {
   const spokenRangesRef = useRef<SpokenRange[]>([]);
   const matchModeRef = useRef<TtsRegexMatchMode>("token");
 
+  const activeRules = useMemo(() => {
+    if (!book) return [];
+    return getActiveRules(ttsRegexStore, book.id);
+  }, [book, ttsRegexStore]);
+
+  const activeRuleById = useMemo(() => {
+    const byId = new Map<string, (typeof activeRules)[number]>();
+    for (const rule of activeRules) {
+      byId.set(rule.id, rule);
+    }
+    return byId;
+  }, [activeRules]);
+
   const compiledRules = useMemo<CompiledTtsRegexRule[]>(() => {
     if (!book) return [];
-    const active = getActiveRules(ttsRegexStore, book.id);
     const compiled: CompiledTtsRegexRule[] = [];
 
-    for (const rule of active) {
+    for (const rule of activeRules) {
       const result = compileRule(rule);
       if (result.ok) {
         compiled.push(result.compiled);
@@ -256,7 +306,7 @@ export function TtsProvider(props: Props) {
     }
 
     return compiled;
-  }, [book, ttsRegexStore]);
+  }, [activeRules, book]);
 
   useEffect(() => {
     matchModeRef.current = ttsRegexStore.matchMode;
@@ -422,6 +472,39 @@ export function TtsProvider(props: Props) {
             setPosition(chunk.startPosition);
           }
 
+          const originalStartToken = getTokenByPosition(chunk.ranges, chunk.text, chunk.startPosition);
+          const spokenStartToken =
+            getTokenByPosition(transformed.ranges, transformed.text, chunk.startPosition) ||
+            getFirstToken(transformed.text);
+          const matchingCompiledRule =
+            ttsRegexStore.matchMode === "token"
+              ? getMatchingCompiledRuleForToken(originalStartToken, compiledRules)
+              : null;
+          const matchingRule = matchingCompiledRule
+            ? activeRuleById.get(matchingCompiledRule.id) ?? null
+            : null;
+
+          const aboutToSpeakPayload = {
+            mode: ttsRegexStore.matchMode,
+            sessionId,
+            startPosition: chunk.startPosition,
+            sourceWordAtStart: originalStartToken,
+            spokenWordAtStart: spokenStartToken,
+            matchingRule: matchingRule
+              ? {
+                  id: matchingRule.id,
+                  source: matchingRule.source,
+                  pattern: matchingRule.pattern,
+                  replacement: matchingRule.replacement,
+                  caseInsensitive: matchingRule.caseInsensitive,
+                }
+              : null,
+            exactTextSentToNative: transformed.text,
+          };
+          console.warn(
+            `${TTS_DEBUG_PREFIX} about to speak ${formatTtsDebugPayload(aboutToSpeakPayload)}`
+          );
+
           await speakNativeText({
             text: transformed.text,
             rate: settings.ttsPlaybackRate,
@@ -455,6 +538,7 @@ export function TtsProvider(props: Props) {
       settings.ttsVoiceIndex,
       cancelPlayback,
       ttsRegexStore.matchMode,
+      activeRuleById,
     ]
   );
 
@@ -496,6 +580,16 @@ export function TtsProvider(props: Props) {
 
         const position = findPositionByCharIndex(spokenRangesRef.current, info.start);
         if (!position) return;
+
+        const nativeRangePayload = {
+          start: info.start,
+          end: info.end,
+          spokenWord: info.spokenWord,
+          mappedPosition: position,
+        };
+        console.warn(
+          `${TTS_DEBUG_PREFIX} native range start ${formatTtsDebugPayload(nativeRangePayload)}`
+        );
 
         setHighlightedWord(position);
         setPosition(position);

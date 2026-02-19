@@ -19,6 +19,7 @@ function makeRule(partial: Partial<TtsRegexRule> = {}): TtsRegexRule {
     id: partial.id ?? "rule-1",
     pattern: partial.pattern ?? "xarqon",
     replacement: partial.replacement ?? "zar-kon",
+    source: partial.source ?? "regex",
     enabled: partial.enabled ?? true,
     caseInsensitive: partial.caseInsensitive ?? true,
     createdAt: partial.createdAt ?? now,
@@ -165,12 +166,40 @@ describe("tts regex engine", () => {
     expect(out.stats.totalMatches).toBe(2);
   });
 
+  it("keeps punctuation for simple rules in token mode", () => {
+    const compiled = compileAll([
+      makeRule({
+        source: "simple",
+        pattern: "\\bReserved\\b",
+        replacement: "Rereeere",
+      }),
+    ]);
+    const out = applyRulesTokenMode(["Reserved,", "\"Reserved.\""], compiled);
+
+    expect(out.spokenTokens).toEqual(["Rereeere,", "\"Rereeere.\""]);
+    expect(out.stats.totalMatches).toBe(2);
+  });
+
   it("handles zero-length chunk matches without hanging", () => {
     const compiled = compileAll([makeRule({ pattern: "a*", replacement: "X" })]);
     const out = applyRulesChunkMode("bbb", compiled);
 
     expect(out.stats.totalMatches).toBeGreaterThan(0);
     expect(out.spokenText.length).toBeGreaterThan(0);
+  });
+
+  it("simple rules in chunk mode do not consume surrounding punctuation", () => {
+    const compiled = compileAll([
+      makeRule({
+        source: "simple",
+        pattern: "\\bReserved\\b",
+        replacement: "Rereeere",
+      }),
+    ]);
+    const out = applyRulesChunkMode("All Reserved, noble guests.", compiled);
+
+    expect(out.spokenText).toBe("All Rereeere, noble guests.");
+    expect(out.stats.totalMatches).toBe(1);
   });
 
   it("isolates book-scope rules by book id", () => {

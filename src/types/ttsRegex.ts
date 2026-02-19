@@ -1,7 +1,10 @@
+export type TtsRegexRuleSource = "simple" | "regex";
+
 export type TtsRegexRule = {
   id: string;
   pattern: string;
   replacement: string;
+  source: TtsRegexRuleSource;
   enabled: boolean;
   caseInsensitive: boolean;
   createdAt: number;

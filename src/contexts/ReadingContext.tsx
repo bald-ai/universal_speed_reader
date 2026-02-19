@@ -162,54 +162,90 @@ export function ReadingProvider(props: ProviderProps) {
     }, 220);
   }, [flushProgress]);
 
-  const saveProgress = useCallback((overrides?: { mode?: Mode; position?: Position }) => {
-    if (!progressLoaded) return;
-    if (!book || book.paragraphs.length === 0) return;
+  const buildProgressRow = useCallback((nextMode: Mode, nextPosition: Position): ReadingProgressRow | null => {
+    if (!book || book.paragraphs.length === 0) return null;
 
-    const nextMode = overrides?.mode ?? modeRef.current;
-    const nextPosition = overrides?.position ?? positionRef.current;
     const paragraphExists = book.paragraphs.some((paragraph) => paragraph.id === nextPosition.paragraphId);
-
     const fallbackParagraphId = book.paragraphs[0].id;
-    const paragraphId = paragraphExists ? nextPosition.paragraphId : fallbackParagraphId;
 
-    scheduleProgressSave({
+    return {
       book_id: bookId,
-      paragraph_id: paragraphId,
+      paragraph_id: paragraphExists ? nextPosition.paragraphId : fallbackParagraphId,
       word_index: Math.max(0, nextPosition.wordIndex),
       mode: nextMode,
       updated_at: Date.now(),
-    });
-  }, [book, bookId, progressLoaded, scheduleProgressSave]);
+    };
+  }, [book, bookId]);
+
+  const saveProgress = useCallback((overrides?: { mode?: Mode; position?: Position }) => {
+    if (!progressLoaded) return;
+
+    const nextMode = overrides?.mode ?? modeRef.current;
+    const nextPosition = overrides?.position ?? positionRef.current;
+    const row = buildProgressRow(nextMode, nextPosition);
+    if (!row) return;
+    scheduleProgressSave(row);
+  }, [buildProgressRow, progressLoaded, scheduleProgressSave]);
 
   const queueCurrentProgressForFlush = useCallback(() => {
     if (!progressLoaded) return;
-    if (!book || book.paragraphs.length === 0) return;
 
     const currentPosition = positionRef.current;
     const currentMode = modeRef.current;
-    const paragraphExists = book.paragraphs.some((paragraph) => paragraph.id === currentPosition.paragraphId);
-    const fallbackParagraphId = book.paragraphs[0].id;
+    const row = buildProgressRow(currentMode, currentPosition);
+    if (!row) return;
 
-    pendingProgressRef.current = {
-      book_id: bookId,
-      paragraph_id: paragraphExists ? currentPosition.paragraphId : fallbackParagraphId,
-      word_index: Math.max(0, currentPosition.wordIndex),
-      mode: currentMode,
-      updated_at: Date.now(),
+    pendingProgressRef.current = row;
+  }, [buildProgressRow, progressLoaded]);
+
+  const flushProgressNow = useCallback(() => {
+    queueCurrentProgressForFlush();
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    void flushProgress();
+  }, [flushProgress, queueCurrentProgressForFlush]);
+
+  // Persist as the user reads so an app kill still restores near-latest progress.
+  useEffect(() => {
+    if (!progressLoaded) return;
+    const row = buildProgressRow(mode, position);
+    if (!row) return;
+    scheduleProgressSave(row);
+  }, [
+    buildProgressRow,
+    mode,
+    position.paragraphId,
+    position.wordIndex,
+    progressLoaded,
+    scheduleProgressSave,
+  ]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        flushProgressNow();
+      }
     };
-  }, [book, bookId, progressLoaded]);
+    const onPageHide = () => {
+      flushProgressNow();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [flushProgressNow]);
 
   useEffect(() => {
     return () => {
-      queueCurrentProgressForFlush();
-      if (saveTimerRef.current !== null) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-      void flushProgress();
+      flushProgressNow();
     };
-  }, [flushProgress, queueCurrentProgressForFlush]);
+  }, [flushProgressNow]);
 
   // Keep position valid when paragraphs are replaced (for example after a manual retry import).
   useEffect(() => {

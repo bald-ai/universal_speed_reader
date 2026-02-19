@@ -6,11 +6,17 @@ import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useTts } from "@/contexts/TtsContext";
+import { useTtsRegex } from "@/contexts/TtsRegexContext";
 import SettingsModal from "@/components/reader/SettingsModal";
 import ChapterMenu from "@/components/reader/ChapterMenu";
 import ProgressBar from "@/components/shared/ProgressBar";
 import TtsMiniBar from "@/components/reader/TtsMiniBar";
+import TtsRegexRulesModal from "@/components/reader/TtsRegexRulesModal";
+import ReaderToolsMenu, { PRONUNCIATION_ICON } from "@/components/reader/ReaderToolsMenu";
+import WordReplacementSheet from "@/components/reader/WordReplacementSheet";
 
+import { speakNativeText, isNativeTtsAvailable } from "@/lib/nativeTts";
+import { createSimpleWordPattern } from "@/lib/ttsRegex/simpleRule";
 import { getTokensForParagraph } from "@/lib/utils/tokenCache";
 import { calculateChapterPercentComplete, findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import type { Chapter, Paragraph } from "@/types/book";
@@ -37,6 +43,9 @@ function findSentenceFor(bounds: [number, number][], idx: number): [number, numb
 }
 
 const PHRASE_SIZE = 4;
+const INITIAL_SCROLL_DELAY_MS = 120;
+const POSITION_SYNC_SUPPRESS_MS = 850;
+const INITIAL_PROGRESS_REVEAL_DELAY_MS = 260;
 
 type ParagraphRowProps = {
   paragraph: Paragraph;
@@ -156,16 +165,31 @@ export default function NormalReadingMode() {
   const { position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress, progressLoaded } = useReading();
   const { settings } = useSettings();
   const tts = useTts();
+  const { createRule, store: ttsRegexStore } = useTtsRegex();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showChapterMenu, setShowChapterMenu] = useState(false);
+  const [showRegexRules, setShowRegexRules] = useState(false);
+  const [regexInitialPattern, setRegexInitialPattern] = useState("");
+  const [regexInitialReplacement, setRegexInitialReplacement] = useState("");
+  const [showWordReplacement, setShowWordReplacement] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isTtsBarOpen, setIsTtsBarOpen] = useState(false);
+  const [displayedProgress, setDisplayedProgress] = useState(0);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const hasScrolledToInitialPosition = useRef(false);
+  const hasRevealedInitialProgress = useRef(false);
   const lastScrollUpdateRef = useRef<number>(0);
   const initialScrollTimeoutRef = useRef<number | null>(null);
+  const chapterSelectTimeoutRef = useRef<number | null>(null);
+  const suppressPositionSyncUntilRef = useRef<number>(0);
+  const resumeTtsAfterWordSheetRef = useRef(false);
+  const wordSheetResumePositionRef = useRef<Position | null>(null);
+  const skipWordSheetResumeRef = useRef(false);
+  const pendingResumeNeedsRuleCommitRef = useRef(false);
+  const regexStoreSnapshotBeforeSaveRef = useRef(ttsRegexStore);
+  const [pendingTtsResume, setPendingTtsResume] = useState<Position | null>(null);
 
   useEffect(() => {
     if (!highlightedWord) {
@@ -206,6 +230,18 @@ export default function NormalReadingMode() {
     return map;
   }, [book]);
 
+  const highlightedWordText = useMemo(() => {
+    if (!book || !highlightedWord) return "";
+    const paragraphIndex = paragraphIndexById.get(highlightedWord.paragraphId);
+    if (paragraphIndex === undefined) return "";
+
+    const paragraph = book.paragraphs[paragraphIndex];
+    if (!paragraph) return "";
+
+    const tokens = getTokensForParagraph(book, paragraph);
+    return tokens[highlightedWord.wordIndex] ?? "";
+  }, [book, highlightedWord, paragraphIndexById]);
+
   const currentChapter: Chapter | null = useMemo(() => {
     if (!book) return null;
     return findChapterForParagraph(book, position.paragraphId);
@@ -241,6 +277,10 @@ export default function NormalReadingMode() {
     estimateSize: () => 80,
     overscan: 10,
   });
+
+  const suppressPositionSync = useCallback((durationMs: number) => {
+    suppressPositionSyncUntilRef.current = Date.now() + durationMs;
+  }, []);
 
   const findAndScrollToWord = useCallback((target: Position, attempt = 0) => {
     if (attempt > 20) return; // Max retries
@@ -281,25 +321,60 @@ export default function NormalReadingMode() {
   }, [book, paragraphIndexById, rowVirtualizer, findAndScrollToWord]);
 
   useEffect(() => {
-    if (!book || hasScrolledToInitialPosition.current) return;
-    hasScrolledToInitialPosition.current = true;
+    hasScrolledToInitialPosition.current = false;
+    hasRevealedInitialProgress.current = false;
+    suppressPositionSyncUntilRef.current = 0;
+  }, [book?.id]);
+
+  useEffect(() => {
+    if (!progressLoaded) {
+      setDisplayedProgress(0);
+      return;
+    }
+
+    const delay = hasRevealedInitialProgress.current ? 0 : INITIAL_PROGRESS_REVEAL_DELAY_MS;
+    hasRevealedInitialProgress.current = true;
+
+    const timeoutId = window.setTimeout(() => {
+      setDisplayedProgress(progressPercent);
+    }, delay);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [progressLoaded, progressPercent]);
+
+  useEffect(() => {
+    return () => {
+      if (chapterSelectTimeoutRef.current !== null) {
+        window.clearTimeout(chapterSelectTimeoutRef.current);
+        chapterSelectTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!book || !progressLoaded || hasScrolledToInitialPosition.current) return;
 
     // Small delay to allow layout
     initialScrollTimeoutRef.current = window.setTimeout(() => {
+      suppressPositionSync(POSITION_SYNC_SUPPRESS_MS);
+
       // If we have a highlighted word, prioritize centering it
       if (highlightedWord) {
         findAndScrollToWord(highlightedWord);
       } else {
         scrollToPosition(position, false);
       }
-    }, 100);
+      hasScrolledToInitialPosition.current = true;
+    }, INITIAL_SCROLL_DELAY_MS);
 
     return () => {
       if (initialScrollTimeoutRef.current !== null) {
         window.clearTimeout(initialScrollTimeoutRef.current);
       }
     };
-  }, [book, position, highlightedWord, scrollToPosition, findAndScrollToWord]);
+  }, [book, position, highlightedWord, progressLoaded, scrollToPosition, findAndScrollToWord, suppressPositionSync]);
 
   // Scroll to highlighted word when it changes (e.g., switching from speed mode)
   useEffect(() => {
@@ -358,6 +433,7 @@ export default function NormalReadingMode() {
     setIsScrolled(scrollTop > 10);
 
     if (!progressLoaded || !hasScrolledToInitialPosition.current) return;
+    if (Date.now() < suppressPositionSyncUntilRef.current) return;
     
     const now = Date.now();
     if (now - lastScrollUpdateRef.current < 150) return;
@@ -366,16 +442,9 @@ export default function NormalReadingMode() {
     const virtualItems = rowVirtualizer.getVirtualItems();
     if (virtualItems.length === 0) return;
 
-    let closestItem = virtualItems[0];
-    let closestDelta = Math.abs(virtualItems[0].start - scrollTop);
-
-    for (const item of virtualItems) {
-      const delta = Math.abs(item.start - scrollTop);
-      if (delta < closestDelta) {
-        closestDelta = delta;
-        closestItem = item;
-      }
-    }
+    const probeOffset = scrollTop + 24;
+    const closestItem = virtualItems.find((item) => probeOffset >= item.start && probeOffset < item.end)
+      ?? virtualItems[virtualItems.length - 1];
 
     const paragraph = book.paragraphs[closestItem.index];
     if (paragraph && paragraph.id !== position.paragraphId) {
@@ -384,7 +453,7 @@ export default function NormalReadingMode() {
         wordIndex: 0
       });
     }
-  }, [book, position.paragraphId, rowVirtualizer, setPosition]);
+  }, [book, position.paragraphId, progressLoaded, rowVirtualizer, setPosition]);
 
   const handleWordClick = useCallback((paragraphId: number, wordIndex: number) => {
     // When TTS is playing, don't allow changing the current word via clicks.
@@ -407,19 +476,146 @@ export default function NormalReadingMode() {
     setMode("speed");
   }, [book, highlightedWord, position, setPosition, setMode]);
 
+  const openWordReplacementSheet = useCallback(() => {
+    const wasPlaying = tts.status === "playing";
+    resumeTtsAfterWordSheetRef.current = wasPlaying;
+    wordSheetResumePositionRef.current = highlightedWord ?? position;
+    skipWordSheetResumeRef.current = false;
+    pendingResumeNeedsRuleCommitRef.current = false;
+    regexStoreSnapshotBeforeSaveRef.current = ttsRegexStore;
+
+    if (wasPlaying) {
+      tts.pause();
+    }
+    setShowWordReplacement(true);
+  }, [highlightedWord, position, tts, ttsRegexStore]);
+
+  const closeWordReplacementSheet = useCallback(() => {
+    setShowWordReplacement(false);
+
+    const shouldResume = resumeTtsAfterWordSheetRef.current && !skipWordSheetResumeRef.current;
+    const resumePos = wordSheetResumePositionRef.current;
+
+    resumeTtsAfterWordSheetRef.current = false;
+    wordSheetResumePositionRef.current = null;
+    skipWordSheetResumeRef.current = false;
+
+    if (shouldResume && resumePos) {
+      setPendingTtsResume(resumePos);
+      return;
+    }
+    pendingResumeNeedsRuleCommitRef.current = false;
+    regexStoreSnapshotBeforeSaveRef.current = ttsRegexStore;
+  }, [ttsRegexStore]);
+
+  useEffect(() => {
+    if (!pendingTtsResume) return;
+
+    if (
+      pendingResumeNeedsRuleCommitRef.current &&
+      regexStoreSnapshotBeforeSaveRef.current === ttsRegexStore
+    ) {
+      return;
+    }
+
+    pendingResumeNeedsRuleCommitRef.current = false;
+    regexStoreSnapshotBeforeSaveRef.current = ttsRegexStore;
+
+    setPendingTtsResume(null);
+    void tts.playFrom(pendingTtsResume);
+  }, [pendingTtsResume, tts, ttsRegexStore]);
+
+  const handleSaveWordReplacement = useCallback(
+    (word: string, replacement: string, scope: "global" | "book") => {
+      if (scope === "book" && !book?.id) {
+        throw new Error("Cannot create a book-scoped rule without a book id.");
+      }
+
+      const pattern = createSimpleWordPattern(word);
+      if (!pattern) {
+        throw new Error("Cannot create pronunciation rule for an empty word.");
+      }
+
+      pendingResumeNeedsRuleCommitRef.current = resumeTtsAfterWordSheetRef.current;
+      regexStoreSnapshotBeforeSaveRef.current = ttsRegexStore;
+
+      createRule({
+        scope,
+        bookId: scope === "book" ? book?.id : undefined,
+        input: {
+          pattern,
+          replacement,
+          source: "simple",
+          caseInsensitive: true,
+          enabled: true,
+        },
+      });
+    },
+    [book?.id, createRule, ttsRegexStore]
+  );
+
+  const handlePlayWordReplacementPreview = useCallback(
+    async (text: string) => {
+      let ready = tts.isReady;
+      if (!ready) {
+        ready = await isNativeTtsAvailable();
+      }
+      if (!ready) {
+        console.warn("[WordReplacement] TTS not available for preview");
+        return;
+      }
+      await speakNativeText({
+        text,
+        rate: settings.ttsPlaybackRate,
+        lang: settings.ttsLanguage || "en-US",
+        voice: settings.ttsVoiceIndex,
+        queueStrategy: "flush",
+      });
+    },
+    [settings.ttsLanguage, settings.ttsPlaybackRate, settings.ttsVoiceIndex, tts.isReady]
+  );
+
+  const handleOpenRegexFromWordReplacement = useCallback((word: string, replacement: string) => {
+    skipWordSheetResumeRef.current = true;
+    setRegexInitialPattern(word);
+    setRegexInitialReplacement(replacement);
+    setShowRegexRules(true);
+  }, []);
+
+  const readerTools = useMemo(
+    () => [
+      {
+        id: "pronunciation",
+        label: "Fix pronunciation",
+        icon: PRONUNCIATION_ICON,
+        onTap: openWordReplacementSheet,
+      },
+    ],
+    [openWordReplacementSheet]
+  );
+
   const handleChapterSelect = useCallback((chapter: Chapter) => {
     if (!book) return;
     
     const index = paragraphIndexById.get(chapter.startParagraphId);
     if (index !== undefined) {
-      rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "smooth" });
+      suppressPositionSync(POSITION_SYNC_SUPPRESS_MS);
+      rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
+      if (chapterSelectTimeoutRef.current !== null) {
+        window.clearTimeout(chapterSelectTimeoutRef.current);
+      }
+      // Second pass after items near target are rendered and measured
+      chapterSelectTimeoutRef.current = window.setTimeout(() => {
+        rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
+        chapterSelectTimeoutRef.current = null;
+      }, 120);
       setPosition({
         paragraphId: chapter.startParagraphId,
         wordIndex: 0
       });
     }
     setShowChapterMenu(false);
-  }, [book, paragraphIndexById, rowVirtualizer, setPosition]);
+  }, [book, paragraphIndexById, rowVirtualizer, setPosition, suppressPositionSync]);
 
   const handleBack = useCallback(() => {
     tts.stop();
@@ -463,14 +659,9 @@ export default function NormalReadingMode() {
           className="flex-1 truncate text-center hover:scale-[1.02] transition-transform duration-150"
         >
           {currentChapter ? (
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
-                Chapter {currentChapter.index + 1}
-              </span>
-              <span className="text-sm text-neutral-200 font-medium truncate max-w-[200px]">
-                {currentChapter.title}
-              </span>
-            </div>
+            <span className="text-sm text-neutral-200 font-medium truncate max-w-[200px]">
+              {currentChapter.title}
+            </span>
           ) : (
             <span className="text-sm text-neutral-400">Full book</span>
           )}
@@ -501,10 +692,10 @@ export default function NormalReadingMode() {
             {currentChapter ? `Chapter ${currentChapter.index + 1}` : "Progress"}
           </span>
           <span className="font-medium text-neutral-400">
-            {progressLoaded ? `${progressPercent}%` : ""}
+            {progressLoaded ? `${displayedProgress}%` : ""}
           </span>
         </div>
-        {progressLoaded && <ProgressBar value={progressPercent} />}
+        {progressLoaded && <ProgressBar value={displayedProgress} />}
       </div>
 
       {/* Reading Content */}
@@ -583,49 +774,52 @@ export default function NormalReadingMode() {
           className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 z-10"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
         >
-          <div className="pointer-events-auto flex items-center gap-2">
-            <motion.button
-              type="button"
-              onClick={handleResumeSpeedReading}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 0.9, y: 0 }}
-              transition={{ delay: 0.3, duration: 0.25 }}
-              className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                text-green-300 text-sm font-medium backdrop-blur-md
-                px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
-                transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20`}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-              </svg>
-              Speed Read
-            </motion.button>
-
-            {tts.isReady ? (
+          <div className="pointer-events-auto flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2">
               <motion.button
                 type="button"
-                onClick={() => setIsTtsBarOpen((v) => !v)}
+                onClick={handleResumeSpeedReading}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 0.9, y: 0 }}
-                transition={{ delay: 0.35, duration: 0.25 }}
+                transition={{ delay: 0.3, duration: 0.25 }}
                 className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
                   text-green-300 text-sm font-medium backdrop-blur-md
                   px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
-                  transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20 ${
-                    tts.isReady ? "" : "opacity-70"
-                  }`}
+                  transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6.75 6.75 0 006.75-6.75v-1.5a6.75 6.75 0 10-13.5 0v1.5A6.75 6.75 0 0012 18.75z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 18.75v.75a3 3 0 006 0v-.75" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
                 </svg>
-                TTS
+                Speed Read
               </motion.button>
-            ) : null}
+
+              {tts.isReady ? (
+                <motion.button
+                  type="button"
+                  onClick={() => setIsTtsBarOpen((v) => !v)}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 0.9, y: 0 }}
+                  transition={{ delay: 0.35, duration: 0.25 }}
+                  className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
+                    text-green-300 text-sm font-medium backdrop-blur-md
+                    px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
+                    transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20 ${
+                      tts.isReady ? "" : "opacity-70"
+                    }`}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6.75 6.75 0 006.75-6.75v-1.5a6.75 6.75 0 10-13.5 0v1.5A6.75 6.75 0 0012 18.75z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 18.75v.75a3 3 0 006 0v-.75" />
+                  </svg>
+                  TTS
+                </motion.button>
+              ) : null}
+            </div>
+            <ReaderToolsMenu tools={readerTools} />
           </div>
         </div>
       ) : null}
@@ -649,6 +843,25 @@ export default function NormalReadingMode() {
         currentChapterIndex={currentChapter ? currentChapter.index : null}
         onSelect={handleChapterSelect}
         onClose={() => setShowChapterMenu(false)}
+      />
+      <WordReplacementSheet
+        isOpen={showWordReplacement}
+        onClose={closeWordReplacementSheet}
+        onSave={handleSaveWordReplacement}
+        onOpenRegex={handleOpenRegexFromWordReplacement}
+        onPlayPreview={handlePlayWordReplacementPreview}
+        initialWord={highlightedWordText}
+      />
+      <TtsRegexRulesModal
+        isOpen={showRegexRules}
+        onClose={() => {
+          setShowRegexRules(false);
+          setRegexInitialPattern("");
+          setRegexInitialReplacement("");
+        }}
+        book={book}
+        initialPattern={regexInitialPattern}
+        initialReplacement={regexInitialReplacement}
       />
     </div>
   );

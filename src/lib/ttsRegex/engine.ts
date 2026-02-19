@@ -17,6 +17,7 @@ export const TTS_REGEX_HIGH_IMPACT_PERCENT = 5;
 
 export type CompiledTtsRegexRule = {
   id: string;
+  source: TtsRegexRule["source"];
   replacement: string;
   tokenRegex: RegExp;
   chunkRegex: RegExp;
@@ -162,6 +163,7 @@ export function compileRule(rule: TtsRegexRule): CompiledRuleResult {
       ok: true,
       compiled: {
         id: rule.id,
+        source: rule.source,
         replacement: rule.replacement,
         tokenRegex,
         chunkRegex,
@@ -199,11 +201,19 @@ export function applyRulesTokenMode(
     let spoken = token;
 
     for (const rule of activeRules) {
-      rule.tokenRegex.lastIndex = 0;
-      if (!rule.tokenRegex.test(token)) continue;
-
-      rule.tokenRegex.lastIndex = 0;
-      spoken = token.replace(rule.tokenRegex, rule.replacement);
+      if (rule.source === "simple") {
+        // Simple rules should preserve punctuation around a word token
+        // (e.g. "Reserved." -> "Rereeere.").
+        rule.chunkRegexSingle.lastIndex = 0;
+        if (!rule.chunkRegexSingle.test(token)) continue;
+        rule.chunkRegexSingle.lastIndex = 0;
+        spoken = token.replace(rule.chunkRegexSingle, rule.replacement);
+      } else {
+        rule.tokenRegex.lastIndex = 0;
+        if (!rule.tokenRegex.test(token)) continue;
+        rule.tokenRegex.lastIndex = 0;
+        spoken = token.replace(rule.tokenRegex, rule.replacement);
+      }
       totalMatches += 1;
       break;
     }

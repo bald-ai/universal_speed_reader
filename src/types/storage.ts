@@ -10,16 +10,6 @@ export type ProcessingStatus =
   | "completed"
   | "failed";
 
-export const PROCESSING_STATUS_ORDER: readonly ProcessingStatus[] = [
-  "queued",
-  "validating",
-  "extracting_metadata",
-  "extracting_text",
-  "building_chapters",
-  "completed",
-  "failed",
-] as const;
-
 export type ImportErrorBucket =
   | "Unsupported format"
   | "File too large"
