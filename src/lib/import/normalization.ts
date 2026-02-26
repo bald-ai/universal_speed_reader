@@ -1,8 +1,8 @@
 import type { BookChapterRow, BookChunkRow, StoredParagraph } from "@/types/storage";
 
-export const DEFAULT_CHUNK_SIZE = 50;
+const DEFAULT_CHUNK_SIZE = 50;
 
-export function tokenizeWords(text: string): string[] {
+function tokenizeWords(text: string): string[] {
   return text
     .split(/\s+/)
     .map((word) => word.replace(/^["']+|["']+$/g, ""))

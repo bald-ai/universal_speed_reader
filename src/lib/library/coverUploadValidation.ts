@@ -1,11 +1,11 @@
 export const MAX_COVER_FILE_BYTES = 5 * 1024 * 1024;
-export const MIN_COVER_WIDTH = 120;
-export const MIN_COVER_HEIGHT = 160;
+const MIN_COVER_WIDTH = 120;
+const MIN_COVER_HEIGHT = 160;
 
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
-export type CoverValidationErrorCode =
+type CoverValidationErrorCode =
   | "unsupported_format"
   | "file_too_large"
   | "file_empty"
@@ -22,7 +22,7 @@ export class CoverValidationError extends Error {
   }
 }
 
-export type CoverValidationResult = {
+type CoverValidationResult = {
   dataUrl: string;
   width: number;
   height: number;

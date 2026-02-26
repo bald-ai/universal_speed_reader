@@ -34,7 +34,7 @@ const EMPTY_SNAPSHOT: StorageSnapshot = {
   import_jobs: [],
 };
 
-export type InMemoryRepositoryOptions = {
+type InMemoryRepositoryOptions = {
   persistKey?: string;
 };
 

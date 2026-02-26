@@ -20,19 +20,19 @@ const IMPORT_TIMEOUT_MS = 180_000;
 const MAX_TITLE_LENGTH = 160;
 const MAX_AUTHOR_LENGTH = 160;
 
-export type ImportPayload = {
+type ImportPayload = {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
 };
 
-export type ImportSnapshotRow = {
+type ImportSnapshotRow = {
   bookId: string;
   status: ProcessingStatus;
   error: string | null;
 };
 
-export type UpdateBookMetadataInput = {
+type UpdateBookMetadataInput = {
   bookId: string;
   title: string;
   author: string | null;

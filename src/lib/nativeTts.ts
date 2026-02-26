@@ -8,7 +8,7 @@ type RangeStartInfo = {
   spokenWord: string;
 };
 
-export type NativeTtsQueueStrategy = "flush" | "add";
+type NativeTtsQueueStrategy = "flush" | "add";
 
 export type NativeTtsVoice = {
   voiceURI: string;

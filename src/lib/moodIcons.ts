@@ -1,4 +1,4 @@
-export type MoodIcon = {
+type MoodIcon = {
   key: string;
   emoji: string;
 };

@@ -22,7 +22,7 @@ export type TtsRegexStoreV1 = {
 
 export type TtsRegexScope = "global" | "book";
 
-export type TtsRegexPreviewExample = {
+type TtsRegexPreviewExample = {
   before: string;
   after: string;
 };

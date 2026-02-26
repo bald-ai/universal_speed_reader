@@ -20,7 +20,7 @@ type NavigatorWithWakeLock = Navigator & {
   };
 };
 
-export const ScreenControl = registerPlugin<ScreenControlPlugin>("ScreenControl");
+const ScreenControl = registerPlugin<ScreenControlPlugin>("ScreenControl");
 let nativeKeepAwakeUsers = 0;
 let nativeToggleQueue: Promise<void> = Promise.resolve();
 

@@ -7,13 +7,13 @@ import type {
 } from "@/types/ttsRegex";
 import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
 
-export const TTS_REGEX_STORE_VERSION = 1;
+const TTS_REGEX_STORE_VERSION = 1;
 export const TTS_REGEX_MAX_PATTERN_LENGTH = 200;
 export const TTS_REGEX_MAX_REPLACEMENT_LENGTH = 120;
 export const TTS_REGEX_MAX_RULES_PER_SCOPE = 300;
-export const TTS_REGEX_PREVIEW_MAX_EXAMPLES = 20;
-export const TTS_REGEX_HIGH_IMPACT_MATCH_COUNT = 500;
-export const TTS_REGEX_HIGH_IMPACT_PERCENT = 5;
+const TTS_REGEX_PREVIEW_MAX_EXAMPLES = 20;
+const TTS_REGEX_HIGH_IMPACT_MATCH_COUNT = 500;
+const TTS_REGEX_HIGH_IMPACT_PERCENT = 5;
 
 export type CompiledTtsRegexRule = {
   id: string;
@@ -24,7 +24,7 @@ export type CompiledTtsRegexRule = {
   chunkRegexSingle: RegExp;
 };
 
-export type CompiledRuleResult =
+type CompiledRuleResult =
   | {
       ok: true;
       compiled: CompiledTtsRegexRule;
@@ -34,16 +34,16 @@ export type CompiledRuleResult =
       error: string;
     };
 
-export type ApplyRulesStats = {
+type ApplyRulesStats = {
   totalMatches: number;
 };
 
-export type ApplyRulesTokenModeResult = {
+type ApplyRulesTokenModeResult = {
   spokenTokens: string[];
   stats: ApplyRulesStats;
 };
 
-export type ApplyRulesChunkModeResult = {
+type ApplyRulesChunkModeResult = {
   spokenText: string;
   stats: ApplyRulesStats;
 };

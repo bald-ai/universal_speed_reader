@@ -12,12 +12,12 @@ type TocEntry = {
 
 type ParsePhase = Extract<ProcessingStatus, "extracting_metadata" | "extracting_text" | "building_chapters">;
 
-export type ParsedChapter = {
+type ParsedChapter = {
   title: string;
   start_paragraph_id: number;
 };
 
-export type ParsedEpubResult = {
+type ParsedEpubResult = {
   title: string;
   author: string | null;
   language: string | null;
@@ -28,7 +28,7 @@ export type ParsedEpubResult = {
   tocEntries: number;
 };
 
-export type ParseEpubOptions = {
+type ParseEpubOptions = {
   onPhaseChange?: (phase: ParsePhase) => void | Promise<void>;
 };
 
