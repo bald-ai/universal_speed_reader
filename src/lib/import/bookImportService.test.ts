@@ -47,7 +47,7 @@ describe("book import service state machine", () => {
   });
 
   it("runs happy-path transitions and reaches completed", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/fitzgerald-great-gatsby.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/fitzgerald-great-gatsby.epub"));
     const bookId = await service.importFromBytes({
       fileName: "fitzgerald-great-gatsby.epub",
       mimeType: "application/epub+zip",
@@ -86,7 +86,7 @@ describe("book import service state machine", () => {
   });
 
   it("increments import_jobs attempt on manual retry", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/shelley-frankenstein.epub"));
     const bookId = await service.importFromBytes({
       fileName: "shelley-frankenstein.epub",
       mimeType: "application/epub+zip",
@@ -128,7 +128,7 @@ describe("book import service state machine", () => {
   });
 
   it("deduplicates concurrent retry requests for the same book", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/fitzgerald-great-gatsby.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/fitzgerald-great-gatsby.epub"));
     const bookId = await service.importFromBytes({
       fileName: "fitzgerald-great-gatsby.epub",
       mimeType: "application/epub+zip",
@@ -144,7 +144,7 @@ describe("book import service state machine", () => {
   });
 
   it("deletes completed books and removes raw retry source", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/shelley-frankenstein.epub"));
     const bookId = await service.importFromBytes({
       fileName: "shelley-frankenstein.epub",
       mimeType: "application/epub+zip",
@@ -162,7 +162,7 @@ describe("book import service state machine", () => {
   });
 
   it("updates title, author, and replacement cover metadata", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/fitzgerald-great-gatsby.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/fitzgerald-great-gatsby.epub"));
     const bookId = await service.importFromBytes({
       fileName: "fitzgerald-great-gatsby.epub",
       mimeType: "application/epub+zip",
@@ -184,7 +184,7 @@ describe("book import service state machine", () => {
   });
 
   it("restoreOriginalBook resets reading progress after successful restore", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/shelley-frankenstein.epub"));
     const bookId = await service.importFromBytes({
       fileName: "shelley-frankenstein.epub",
       mimeType: "application/epub+zip",
@@ -209,7 +209,7 @@ describe("book import service state machine", () => {
   });
 
   it("retryImport does not clear reading progress", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/shelley-frankenstein.epub"));
     const bookId = await service.importFromBytes({
       fileName: "shelley-frankenstein.epub",
       mimeType: "application/epub+zip",
@@ -234,7 +234,7 @@ describe("book import service state machine", () => {
   });
 
   it("blocks restoreOriginalBook while the same book is processing", async () => {
-    const bytes = new Uint8Array(readFileSync("Devnotes/fixtures/shelley-frankenstein.epub"));
+    const bytes = new Uint8Array(readFileSync("fixtures/shelley-frankenstein.epub"));
     const bookId = await service.importFromBytes({
       fileName: "shelley-frankenstein.epub",
       mimeType: "application/epub+zip",

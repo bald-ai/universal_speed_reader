@@ -11,7 +11,6 @@ act accordingly.
 - Future-AI clarity: make intent obvious, keep logic easy to find, and add short comments only when behavior is not self-evident.
 - Feature-first organization: keep code close to the feature unless it is truly shared.
 - Consistent naming: use stable, descriptive names; avoid old/new/temp/v2/fixed; keep naming patterns uniform inside a feature.
-- Language glossary is the shared source of truth: consult `language.md` for UI/screens/flows. Update it only when the user asks or after a confirmed misunderstanding.
 - Separation by layer:
   - `src/pages/` handles route/page composition
   - `src/components/` renders UI

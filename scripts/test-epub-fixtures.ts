@@ -36,8 +36,8 @@ type ExpectedMetricsSnapshot = {
 };
 
 const PROJECT_ROOT = process.cwd();
-const EXPECTED_METRICS_PATH = path.join(PROJECT_ROOT, "Devnotes/fixtures/expected_metrics.json");
-const REPORT_PATH = path.join(PROJECT_ROOT, "Devnotes/reports/android_import_validation.md");
+const EXPECTED_METRICS_PATH = path.join(PROJECT_ROOT, "fixtures/expected_metrics.json");
+const REPORT_PATH = path.join(PROJECT_ROOT, "reports/android_import_validation.md");
 
 class TrackingRepository extends InMemoryBookRepository {
   readonly transitionLog = new Map<string, TransitionRow[]>();

@@ -1,7 +1,7 @@
 {
   "fixtures": [
     {
-      "file": "Devnotes/fixtures/plath-bell-jar.epub",
+      "file": "fixtures/plath-bell-jar.epub",
       "expectedTitle": "The Bell Jar",
       "expectedParagraphs": 2397,
       "expectedChapters": 21,
@@ -14,7 +14,7 @@
       ]
     },
     {
-      "file": "Devnotes/fixtures/fitzgerald-great-gatsby.epub",
+      "file": "fixtures/fitzgerald-great-gatsby.epub",
       "expectedTitle": "The Great Gatsby",
       "expectedParagraphs": 1621,
       "expectedChapters": 11,
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "file": "Devnotes/fixtures/shelley-frankenstein.epub",
+      "file": "fixtures/shelley-frankenstein.epub",
       "expectedTitle": "Frankenstein",
       "expectedParagraphs": 691,
       "expectedChapters": 29,
