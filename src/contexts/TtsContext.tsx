@@ -1,5 +1,3 @@
-"use client";
-
 import {
   createContext,
   useCallback,
@@ -54,6 +52,7 @@ type Props = { children: ReactNode };
 const MAX_UTTERANCE_CHARS = 1800;
 const MAX_TRANSFORMED_CHUNK_CHARS = 5000;
 const TTS_DEBUG_PREFIX = "[TTS DEBUG]";
+const TTS_DEBUG_ENABLED = import.meta.env.DEV;
 
 function formatTtsDebugPayload(payload: Record<string, unknown>): string {
   try {
@@ -61,6 +60,11 @@ function formatTtsDebugPayload(payload: Record<string, unknown>): string {
   } catch {
     return "{\"error\":\"Failed to stringify TTS debug payload\"}";
   }
+}
+
+function logTtsDebug(label: string, payload: Record<string, unknown>): void {
+  if (!TTS_DEBUG_ENABLED) return;
+  console.warn(`${TTS_DEBUG_PREFIX} ${label} ${formatTtsDebugPayload(payload)}`);
 }
 
 type SpokenRange = {
@@ -501,9 +505,7 @@ export function TtsProvider(props: Props) {
               : null,
             exactTextSentToNative: transformed.text,
           };
-          console.warn(
-            `${TTS_DEBUG_PREFIX} about to speak ${formatTtsDebugPayload(aboutToSpeakPayload)}`
-          );
+          logTtsDebug("about to speak", aboutToSpeakPayload);
 
           await speakNativeText({
             text: transformed.text,
@@ -574,7 +576,7 @@ export function TtsProvider(props: Props) {
     let unsubscribe: (() => void) | null = null;
 
     (async () => {
-      unsubscribe = await subscribeRangeStart((info) => {
+      const unsubscribeNow = await subscribeRangeStart((info) => {
         if (closed || !isPlayingRef.current) return;
         if (matchModeRef.current === "chunk") return;
 
@@ -587,13 +589,16 @@ export function TtsProvider(props: Props) {
           spokenWord: info.spokenWord,
           mappedPosition: position,
         };
-        console.warn(
-          `${TTS_DEBUG_PREFIX} native range start ${formatTtsDebugPayload(nativeRangePayload)}`
-        );
+        logTtsDebug("native range start", nativeRangePayload);
 
         setHighlightedWord(position);
         setPosition(position);
       });
+      if (closed) {
+        unsubscribeNow();
+        return;
+      }
+      unsubscribe = unsubscribeNow;
     })();
 
     return () => {

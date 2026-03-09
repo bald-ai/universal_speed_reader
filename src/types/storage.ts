@@ -44,6 +44,8 @@ export type BookRow = {
   updated_at: number;
 };
 
+export type BookPatch = Partial<Omit<BookRow, "id" | "created_at">>;
+
 export type BookChunkRow = {
   book_id: string;
   chunk_index: number;
@@ -78,6 +80,8 @@ export type ImportJobRow = {
   started_at: number;
   finished_at: number | null;
 };
+
+export type ImportJobPatch = Partial<Pick<ImportJobRow, "status" | "error" | "finished_at">>;
 
 export type StorageSnapshot = {
   books: BookRow[];

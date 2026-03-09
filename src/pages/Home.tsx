@@ -41,10 +41,14 @@ export default function Home() {
   const [editActionError, setEditActionError] = useState<string | null>(null);
   const [moodFolders, setMoodFolders] = useState<MoodFolder[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const importRefreshTimeoutRef = useRef<number | null>(null);
   const importService = useMemo(() => getBookImportService(), []);
 
-  const refreshLibrary = useCallback(async () => {
-    setIsLoading(true);
+  const refreshLibrary = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true;
+    if (showLoading) {
+      setIsLoading(true);
+    }
     try {
       const [loaded, folders] = await Promise.all([loadLibraryEntries(), loadFolders()]);
       setEntries(loaded);
@@ -53,17 +57,35 @@ export default function Home() {
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Failed to load library");
     } finally {
-      setIsLoading(false);
+      if (showLoading) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
+  const scheduleRefreshFromImport = useCallback(() => {
+    if (importRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(importRefreshTimeoutRef.current);
+    }
+    importRefreshTimeoutRef.current = window.setTimeout(() => {
+      importRefreshTimeoutRef.current = null;
+      void refreshLibrary({ showLoading: false });
+    }, 180);
+  }, [refreshLibrary]);
+
   useEffect(() => {
-    void refreshLibrary();
+    void refreshLibrary({ showLoading: true });
     const unsubscribe = importService.subscribe(() => {
-      void refreshLibrary();
+      scheduleRefreshFromImport();
     });
-    return unsubscribe;
-  }, [importService, refreshLibrary]);
+    return () => {
+      unsubscribe();
+      if (importRefreshTimeoutRef.current !== null) {
+        window.clearTimeout(importRefreshTimeoutRef.current);
+        importRefreshTimeoutRef.current = null;
+      }
+    };
+  }, [importService, refreshLibrary, scheduleRefreshFromImport]);
 
   const entryById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
   const editingEntry = useMemo(
@@ -289,11 +311,16 @@ export default function Home() {
           className="flex justify-center"
         >
           <div className="w-full rounded-xl bg-neutral-900 border border-neutral-800 p-1 h-9 flex items-center">
-            <div className="relative w-full grid grid-cols-2">
+            <div className="relative w-full grid grid-cols-2" role="tablist" aria-label="Library views">
               <button
                 type="button"
                 onClick={() => setView("mood")}
                 className="relative h-7 rounded-lg"
+                role="tab"
+                id="home-tab-mood"
+                aria-selected={view === "mood"}
+                aria-controls="home-panel-mood"
+                tabIndex={view === "mood" ? 0 : -1}
               >
                 {view === "mood" ? (
                   <motion.div
@@ -314,6 +341,11 @@ export default function Home() {
                 type="button"
                 onClick={() => setView("library")}
                 className="relative h-7 rounded-lg"
+                role="tab"
+                id="home-tab-library"
+                aria-selected={view === "library"}
+                aria-controls="home-panel-library"
+                tabIndex={view === "library" ? 0 : -1}
               >
                 {view === "library" ? (
                   <motion.div
@@ -337,6 +369,9 @@ export default function Home() {
         {/* Book Section */}
         {view === "library" ? (
           <motion.section
+            id="home-panel-library"
+            role="tabpanel"
+            aria-labelledby="home-tab-library"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.4 }}
@@ -422,15 +457,17 @@ export default function Home() {
             </div>
           </motion.section>
         ) : (
-          <MoodView
-            books={libraryBooks}
-            onOpenBook={(bookId) => {
-              const entry = entryById.get(bookId);
-              if (!entry) return;
-              if (entry.processingStatus !== "completed") return;
-              setLocation(`/reader/${bookId}`);
-            }}
-          />
+          <section id="home-panel-mood" role="tabpanel" aria-labelledby="home-tab-mood">
+            <MoodView
+              books={libraryBooks}
+              onOpenBook={(bookId) => {
+                const entry = entryById.get(bookId);
+                if (!entry) return;
+                if (entry.processingStatus !== "completed") return;
+                setLocation(`/reader/${bookId}`);
+              }}
+            />
+          </section>
         )}
 
         {importError ? (

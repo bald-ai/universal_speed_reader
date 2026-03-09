@@ -1,4 +1,3 @@
-"use client";
 
 import {
   createContext,
@@ -11,6 +10,7 @@ import {
 import type { Book } from "@/types/book";
 import { primeBookTokenCache } from "@/lib/utils/tokenCache";
 import { getBookRepository } from "@/lib/storage/appRepository";
+import type { BookRepository } from "@/lib/storage/bookRepository";
 import type { ProcessingStatus } from "@/types/storage";
 
 type BookContextValue = {
@@ -26,6 +26,60 @@ type ProviderProps = {
   children: ReactNode;
 };
 
+type BookLoadResult =
+  | { kind: "ready"; book: Book }
+  | { kind: "processing" }
+  | { kind: "error"; message: string };
+
+function isProcessingStatus(status: ProcessingStatus): boolean {
+  return (
+    status === "queued" ||
+    status === "validating" ||
+    status === "extracting_metadata" ||
+    status === "extracting_text" ||
+    status === "building_chapters"
+  );
+}
+
+async function resolveBookLoadResult(
+  repository: Pick<BookRepository, "getReadableBook" | "getBook">,
+  bookId: string
+): Promise<BookLoadResult> {
+  const readable = await repository.getReadableBook(bookId);
+  if (readable) {
+    return {
+      kind: "ready",
+      book: readable.book,
+    };
+  }
+
+  const metadata = await repository.getBook(bookId);
+  if (!metadata) {
+    return {
+      kind: "error",
+      message: "Book not found",
+    };
+  }
+
+  if (isProcessingStatus(metadata.processing_status)) {
+    return {
+      kind: "processing",
+    };
+  }
+
+  if (metadata.processing_status === "failed") {
+    return {
+      kind: "error",
+      message: metadata.processing_error ?? "Import failed",
+    };
+  }
+
+  return {
+    kind: "error",
+    message: "Book content is unavailable",
+  };
+}
+
 export function BookProvider(props: ProviderProps) {
   const { bookId, children } = props;
   const [book, setBook] = useState<Book | null>(null);
@@ -36,13 +90,6 @@ export function BookProvider(props: ProviderProps) {
     let cancelled = false;
     let retryTimeoutId: number | null = null;
 
-    const isProcessingStatus = (status: ProcessingStatus) =>
-      status === "queued" ||
-      status === "validating" ||
-      status === "extracting_metadata" ||
-      status === "extracting_text" ||
-      status === "building_chapters";
-
     async function loadBook() {
       setIsLoading(true);
       setError(null);
@@ -50,40 +97,31 @@ export function BookProvider(props: ProviderProps) {
 
       try {
         const repo = await getBookRepository();
-        const readable = await repo.getReadableBook(bookId);
-
-        if (!readable) {
-          const metadata = await repo.getBook(bookId);
-          if (!metadata) {
-            throw new Error("Book not found");
-          }
-          if (isProcessingStatus(metadata.processing_status)) {
-            if (!cancelled) {
-              setBook(null);
-              setIsLoading(true);
-              shouldSetLoaded = false;
-              retryTimeoutId = window.setTimeout(() => {
-                void loadBook();
-              }, 450);
-            }
-            return;
-          }
-          if (metadata.processing_status === "failed") {
-            throw new Error(metadata.processing_error ?? "Import failed");
-          }
-          throw new Error("Book content is unavailable");
-        }
-
-        const parsed: Book = readable.book;
+        const result = await resolveBookLoadResult(repo, bookId);
 
         if (!cancelled) {
-          setBook(parsed);
-          if (typeof window !== "undefined") {
-            window.setTimeout(() => {
-              if (!cancelled) {
-                primeBookTokenCache(parsed);
-              }
-            }, 0);
+          if (result.kind === "processing") {
+            setBook(null);
+            setIsLoading(true);
+            shouldSetLoaded = false;
+            retryTimeoutId = window.setTimeout(() => {
+              void loadBook();
+            }, 450);
+            return;
+          }
+
+          if (result.kind === "ready") {
+            setBook(result.book);
+            if (typeof window !== "undefined") {
+              window.setTimeout(() => {
+                if (!cancelled) {
+                  primeBookTokenCache(result.book);
+                }
+              }, 0);
+            }
+          } else {
+            setError(result.message);
+            setBook(null);
           }
         }
       } catch (err) {
@@ -132,3 +170,8 @@ export function useBook(): BookContextValue {
   }
   return ctx;
 }
+
+export const __bookContextInternals = {
+  isProcessingStatus,
+  resolveBookLoadResult,
+};

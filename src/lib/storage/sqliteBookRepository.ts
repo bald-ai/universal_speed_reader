@@ -6,12 +6,15 @@ import {
 } from "@capacitor-community/sqlite";
 import type { BookRepository, ListBooksOptions } from "@/lib/storage/bookRepository";
 import type { Book, Chapter, Paragraph } from "@/types/book";
+import type { Mode } from "@/types/reading";
 import type {
   AppSettingRow,
+  BookPatch,
   BookChapterRow,
   BookChunkRow,
   BookContentReplacement,
   BookRow,
+  ImportJobPatch,
   ImportJobRow,
   ProcessingStatus,
   ReadableBookBundle,
@@ -85,23 +88,62 @@ const SCHEMA_V1_SQL = `
 
 type SqlRow = Record<string, unknown>;
 
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : String(value ?? "");
+const PROCESSING_STATUS_VALUES = new Set<ProcessingStatus>([
+  "queued",
+  "validating",
+  "extracting_metadata",
+  "extracting_text",
+  "building_chapters",
+  "completed",
+  "failed",
+]);
+
+const MODE_VALUES = new Set<Mode>(["normal", "speed"]);
+
+function readRequiredString(row: SqlRow, key: string): string {
+  const value = row[key];
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    throw new Error(`Invalid persisted data: ${key} is missing`);
+  }
+  return String(value);
 }
 
-function asNumber(value: unknown): number {
-  if (typeof value === "number") return value;
+function readRequiredNumber(row: SqlRow, key: string): number {
+  const value = row[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
   if (typeof value === "string" && value.trim().length > 0) {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return 0;
+  throw new Error(`Invalid persisted data: ${key} is not a valid number`);
 }
 
-function asNullableString(value: unknown): string | null {
+function readNullableString(row: SqlRow, key: string): string | null {
+  const value = row[key];
   if (value === null || value === undefined) return null;
   const next = String(value);
   return next.length > 0 ? next : null;
+}
+
+function readProcessingStatus(row: SqlRow, key: string): ProcessingStatus {
+  const value = readRequiredString(row, key);
+  if (!PROCESSING_STATUS_VALUES.has(value as ProcessingStatus)) {
+    throw new Error(`Invalid persisted data: ${key} has unsupported status "${value}"`);
+  }
+  return value as ProcessingStatus;
+}
+
+function readMode(row: SqlRow, key: string): Mode {
+  const value = readRequiredString(row, key);
+  if (!MODE_VALUES.has(value as Mode)) {
+    throw new Error(`Invalid persisted data: ${key} has unsupported mode "${value}"`);
+  }
+  return value as Mode;
 }
 
 function parseParagraphsJson(raw: unknown): Paragraph[] {
@@ -122,47 +164,47 @@ function parseParagraphsJson(raw: unknown): Paragraph[] {
 
 function toBookRow(row: SqlRow): BookRow {
   return {
-    id: asString(row.id),
-    title: asString(row.title),
-    author: asNullableString(row.author),
-    cover_path: asNullableString(row.cover_path),
-    language: asNullableString(row.language),
-    source_uri: asString(row.source_uri),
-    size_bytes: asNumber(row.size_bytes),
-    processing_status: asString(row.processing_status) as ProcessingStatus,
-    processing_error: asNullableString(row.processing_error),
-    total_chunks: asNumber(row.total_chunks),
-    total_paragraphs: asNumber(row.total_paragraphs),
-    total_words: asNumber(row.total_words),
-    created_at: asNumber(row.created_at),
-    updated_at: asNumber(row.updated_at),
+    id: readRequiredString(row, "id"),
+    title: readRequiredString(row, "title"),
+    author: readNullableString(row, "author"),
+    cover_path: readNullableString(row, "cover_path"),
+    language: readNullableString(row, "language"),
+    source_uri: readRequiredString(row, "source_uri"),
+    size_bytes: readRequiredNumber(row, "size_bytes"),
+    processing_status: readProcessingStatus(row, "processing_status"),
+    processing_error: readNullableString(row, "processing_error"),
+    total_chunks: readRequiredNumber(row, "total_chunks"),
+    total_paragraphs: readRequiredNumber(row, "total_paragraphs"),
+    total_words: readRequiredNumber(row, "total_words"),
+    created_at: readRequiredNumber(row, "created_at"),
+    updated_at: readRequiredNumber(row, "updated_at"),
   };
 }
 
 function toBookChunkRow(row: SqlRow): BookChunkRow {
   return {
-    book_id: asString(row.book_id),
-    chunk_index: asNumber(row.chunk_index),
+    book_id: readRequiredString(row, "book_id"),
+    chunk_index: readRequiredNumber(row, "chunk_index"),
     paragraphs_json: parseParagraphsJson(row.paragraphs_json),
   };
 }
 
 function toBookChapterRow(row: SqlRow): BookChapterRow {
   return {
-    book_id: asString(row.book_id),
-    chapter_index: asNumber(row.chapter_index),
-    title: asString(row.title),
-    start_paragraph_id: asNumber(row.start_paragraph_id),
+    book_id: readRequiredString(row, "book_id"),
+    chapter_index: readRequiredNumber(row, "chapter_index"),
+    title: readRequiredString(row, "title"),
+    start_paragraph_id: readRequiredNumber(row, "start_paragraph_id"),
   };
 }
 
 function toReadingProgressRow(row: SqlRow): ReadingProgressRow {
   return {
-    book_id: asString(row.book_id),
-    paragraph_id: asNumber(row.paragraph_id),
-    word_index: asNumber(row.word_index),
-    mode: asString(row.mode) as ReadingProgressRow["mode"],
-    updated_at: asNumber(row.updated_at),
+    book_id: readRequiredString(row, "book_id"),
+    paragraph_id: readRequiredNumber(row, "paragraph_id"),
+    word_index: readRequiredNumber(row, "word_index"),
+    mode: readMode(row, "mode"),
+    updated_at: readRequiredNumber(row, "updated_at"),
   };
 }
 
@@ -176,19 +218,22 @@ function toAppSettingRow(row: SqlRow): AppSettingRow {
     }
   }
   return {
-    key: asString(row.key),
+    key: readRequiredString(row, "key"),
     value_json: valueJson,
   };
 }
 
 function toImportJobRow(row: SqlRow): ImportJobRow {
   return {
-    book_id: asString(row.book_id),
-    attempt: asNumber(row.attempt),
-    status: asString(row.status) as ProcessingStatus,
-    error: asNullableString(row.error),
-    started_at: asNumber(row.started_at),
-    finished_at: row.finished_at === null || row.finished_at === undefined ? null : asNumber(row.finished_at),
+    book_id: readRequiredString(row, "book_id"),
+    attempt: readRequiredNumber(row, "attempt"),
+    status: readProcessingStatus(row, "status"),
+    error: readNullableString(row, "error"),
+    started_at: readRequiredNumber(row, "started_at"),
+    finished_at:
+      row.finished_at === null || row.finished_at === undefined
+        ? null
+        : readRequiredNumber(row, "finished_at"),
   };
 }
 
@@ -283,54 +328,28 @@ export class SqliteBookRepository implements BookRepository {
     });
   }
 
-  async patchBook(bookId: string, patch: Partial<BookRow>): Promise<BookRow> {
+  async patchBook(bookId: string, patch: BookPatch): Promise<BookRow> {
     return this.withLock(async () => {
       const db = await this.getDb();
+      const patchKeys = Object.keys(patch);
+      if (patchKeys.includes("id") || patchKeys.includes("created_at")) {
+        throw new Error("patchBook does not allow updating immutable book fields");
+      }
+
+      const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+      if (entries.length > 0) {
+        const setClause = entries.map(([column]) => `${column} = ?`).join(", ");
+        await db.run(`UPDATE books SET ${setClause} WHERE id = ?`, [
+          ...entries.map(([, value]) => value),
+          bookId,
+        ]);
+      }
+
       const rows = await this.queryRows(db, "SELECT * FROM books WHERE id = ? LIMIT 1", [bookId]);
       if (rows.length === 0) {
         throw new Error(`Book ${bookId} not found`);
       }
-      const existing = toBookRow(rows[0]);
-      const merged: BookRow = { ...existing, ...patch };
-      await db.run(
-        `
-        INSERT INTO books (
-          id, title, author, cover_path, language, source_uri, size_bytes,
-          processing_status, processing_error, total_chunks, total_paragraphs,
-          total_words, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          title=excluded.title,
-          author=excluded.author,
-          cover_path=excluded.cover_path,
-          language=excluded.language,
-          source_uri=excluded.source_uri,
-          size_bytes=excluded.size_bytes,
-          processing_status=excluded.processing_status,
-          processing_error=excluded.processing_error,
-          total_chunks=excluded.total_chunks,
-          total_paragraphs=excluded.total_paragraphs,
-          total_words=excluded.total_words,
-          updated_at=excluded.updated_at
-        `,
-        [
-          merged.id,
-          merged.title,
-          merged.author,
-          merged.cover_path,
-          merged.language,
-          merged.source_uri,
-          merged.size_bytes,
-          merged.processing_status,
-          merged.processing_error,
-          merged.total_chunks,
-          merged.total_paragraphs,
-          merged.total_words,
-          merged.created_at,
-          merged.updated_at,
-        ]
-      );
-      return merged;
+      return toBookRow(rows[0]);
     });
   }
 
@@ -343,6 +362,72 @@ export class SqliteBookRepository implements BookRepository {
       processing_status: status,
       processing_error: patch?.processing_error ?? null,
       updated_at: patch?.updated_at ?? Date.now(),
+    });
+  }
+
+  async setBookAndImportStatus(
+    bookId: string,
+    attempt: number,
+    status: ProcessingStatus,
+    patch?: {
+      processing_error?: string | null;
+      updated_at?: number;
+      finished_at?: number | null;
+    }
+  ): Promise<void> {
+    await this.withLock(async () => {
+      const db = await this.getDb();
+      const now = patch?.updated_at ?? Date.now();
+      const processingError = patch?.processing_error ?? null;
+      const hasFinishedAtPatch = Object.prototype.hasOwnProperty.call(patch ?? {}, "finished_at");
+      const finishedAt = hasFinishedAtPatch ? (patch?.finished_at ?? null) : null;
+
+      await db.beginTransaction();
+      try {
+        const bookRows = await this.queryRows(db, "SELECT id FROM books WHERE id = ? LIMIT 1", [bookId]);
+        if (bookRows.length === 0) {
+          throw new Error(`Book ${bookId} not found`);
+        }
+        const jobRows = await this.queryRows(
+          db,
+          "SELECT status, error, finished_at FROM import_jobs WHERE book_id = ? AND attempt = ? LIMIT 1",
+          [bookId, attempt]
+        );
+        if (jobRows.length === 0) {
+          throw new Error(`Import job ${bookId}/${attempt} not found`);
+        }
+
+        await db.run(
+          `
+          UPDATE books
+          SET processing_status = ?, processing_error = ?, updated_at = ?
+          WHERE id = ?
+          `,
+          [status, processingError, now, bookId],
+          false
+        );
+
+        const nextFinishedAt = hasFinishedAtPatch
+          ? finishedAt
+          : (jobRows[0].finished_at === null || jobRows[0].finished_at === undefined
+              ? null
+              : readRequiredNumber(jobRows[0], "finished_at"));
+
+        await db.run(
+          `
+          UPDATE import_jobs
+          SET status = ?, error = ?, finished_at = ?
+          WHERE book_id = ? AND attempt = ?
+          `,
+          [status, processingError, nextFinishedAt, bookId, attempt],
+          false
+        );
+
+        await db.commitTransaction();
+      } catch (error) {
+        await db.rollbackTransaction();
+        throw error;
+      }
     });
   }
 
@@ -470,48 +555,39 @@ export class SqliteBookRepository implements BookRepository {
       const db = await this.getDb();
       const bookRows = await this.queryRows(db, "SELECT * FROM books WHERE id = ? LIMIT 1", [bookId]);
       if (bookRows.length === 0) return null;
-      const aggregate: StoredBookAggregate = {
-        book: toBookRow(bookRows[0]),
-        chapters: (
-          await this.queryRows(
-            db,
-            "SELECT * FROM book_chapters WHERE book_id = ? ORDER BY chapter_index ASC",
-            [bookId]
-          )
-        ).map(toBookChapterRow),
-        chunks: (
-          await this.queryRows(
-            db,
-            "SELECT * FROM book_chunks WHERE book_id = ? ORDER BY chunk_index ASC",
-            [bookId]
-          )
-        ).map(toBookChunkRow),
-      };
-      if (aggregate.book.processing_status !== "completed") return null;
+      const metadata = toBookRow(bookRows[0]);
+      if (metadata.processing_status !== "completed") return null;
 
-      const paragraphs: Paragraph[] = aggregate.chunks
-        .sort((a, b) => a.chunk_index - b.chunk_index)
-        .flatMap((chunk) => chunk.paragraphs_json);
-      const chapters: Chapter[] = aggregate.chapters
-        .sort((a, b) => a.chapter_index - b.chapter_index)
-        .map((chapter) => ({
+      const chapterRows = await this.queryRows(
+        db,
+        "SELECT * FROM book_chapters WHERE book_id = ? ORDER BY chapter_index ASC",
+        [bookId]
+      );
+      const chunkRows = await this.queryRows(
+        db,
+        "SELECT * FROM book_chunks WHERE book_id = ? ORDER BY chunk_index ASC",
+        [bookId]
+      );
+
+      const paragraphs: Paragraph[] = chunkRows.map(toBookChunkRow).flatMap((chunk) => chunk.paragraphs_json);
+      const chapters: Chapter[] = chapterRows.map(toBookChapterRow).map((chapter) => ({
           index: chapter.chapter_index,
           title: chapter.title,
           startParagraphId: chapter.start_paragraph_id,
         }));
 
       const book: Book = {
-        id: aggregate.book.id,
-        title: aggregate.book.title,
-        author: aggregate.book.author ?? undefined,
-        coverUrl: aggregate.book.cover_path ?? undefined,
+        id: metadata.id,
+        title: metadata.title,
+        author: metadata.author ?? undefined,
+        coverUrl: metadata.cover_path ?? undefined,
         paragraphs,
         chapters,
-        totalWords: aggregate.book.total_words,
+        totalWords: metadata.total_words,
       };
 
       return {
-        metadata: aggregate.book,
+        metadata,
         book,
       };
     });
@@ -614,40 +690,37 @@ export class SqliteBookRepository implements BookRepository {
   async patchImportJob(
     bookId: string,
     attempt: number,
-    patch: Partial<Pick<ImportJobRow, "status" | "error" | "finished_at">>
+    patch: ImportJobPatch
   ): Promise<void> {
     await this.withLock(async () => {
       const db = await this.getDb();
+      const entries: Array<[string, unknown]> = [];
+      if (Object.prototype.hasOwnProperty.call(patch, "status") && patch.status) {
+        entries.push(["status", patch.status]);
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "error")) {
+        entries.push(["error", patch.error ?? null]);
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "finished_at")) {
+        entries.push(["finished_at", patch.finished_at ?? null]);
+      }
+      if (entries.length === 0) return;
+
+      const setClause = entries.map(([column]) => `${column} = ?`).join(", ");
+      await db.run(`UPDATE import_jobs SET ${setClause} WHERE book_id = ? AND attempt = ?`, [
+        ...entries.map(([, value]) => value),
+        bookId,
+        attempt,
+      ]);
+
       const rows = await this.queryRows(
         db,
-        "SELECT * FROM import_jobs WHERE book_id = ? AND attempt = ? LIMIT 1",
+        "SELECT book_id FROM import_jobs WHERE book_id = ? AND attempt = ? LIMIT 1",
         [bookId, attempt]
       );
       if (rows.length === 0) {
         throw new Error(`Import job ${bookId}/${attempt} not found`);
       }
-      const existing = toImportJobRow(rows[0]);
-      const hasErrorPatch = Object.prototype.hasOwnProperty.call(patch, "error");
-      const hasFinishedAtPatch = Object.prototype.hasOwnProperty.call(patch, "finished_at");
-      const nextStatus = patch.status ?? existing.status;
-      const nextError = hasErrorPatch ? (patch.error ?? null) : existing.error;
-      const nextFinishedAt = hasFinishedAtPatch
-        ? (patch.finished_at ?? null)
-        : existing.finished_at;
-      await db.run(
-        `
-        UPDATE import_jobs
-        SET status = ?, error = ?, finished_at = ?
-        WHERE book_id = ? AND attempt = ?
-        `,
-        [
-          nextStatus,
-          nextError,
-          nextFinishedAt,
-          bookId,
-          attempt,
-        ]
-      );
     });
   }
 
@@ -672,7 +745,8 @@ export class SqliteBookRepository implements BookRepository {
         [bookId]
       );
       if (rows.length === 0) return 1;
-      const maxAttempt = asNumber(rows[0].max_attempt);
+      if (rows[0].max_attempt === null || rows[0].max_attempt === undefined) return 1;
+      const maxAttempt = readRequiredNumber(rows[0], "max_attempt");
       return maxAttempt + 1;
     });
   }
@@ -874,7 +948,13 @@ export class SqliteBookRepository implements BookRepository {
   private async readUserVersion(db: SQLiteDBConnection): Promise<number> {
     const rows = await this.queryRows(db, "PRAGMA user_version;");
     if (rows.length === 0) return 0;
-    return asNumber(rows[0]?.user_version);
+    const value = rows[0]?.user_version;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
   }
 
   private async applyMigrations(db: SQLiteDBConnection, currentVersion: number): Promise<void> {

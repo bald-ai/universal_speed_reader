@@ -183,6 +183,8 @@ export default function NormalReadingMode() {
   const lastScrollUpdateRef = useRef<number>(0);
   const initialScrollTimeoutRef = useRef<number | null>(null);
   const chapterSelectTimeoutRef = useRef<number | null>(null);
+  const findWordRetryTimeoutRef = useRef<number | null>(null);
+  const findWordRetryTokenRef = useRef(0);
   const suppressPositionSyncUntilRef = useRef<number>(0);
   const resumeTtsAfterWordSheetRef = useRef(false);
   const wordSheetResumePositionRef = useRef<Position | null>(null);
@@ -283,6 +285,15 @@ export default function NormalReadingMode() {
   }, []);
 
   const findAndScrollToWord = useCallback((target: Position, attempt = 0) => {
+    if (attempt === 0) {
+      findWordRetryTokenRef.current += 1;
+      if (findWordRetryTimeoutRef.current !== null) {
+        window.clearTimeout(findWordRetryTimeoutRef.current);
+        findWordRetryTimeoutRef.current = null;
+      }
+    }
+
+    const retryToken = findWordRetryTokenRef.current;
     if (attempt > 20) return; // Max retries
 
     const wordEl = scrollContainerRef.current?.querySelector(
@@ -301,7 +312,8 @@ export default function NormalReadingMode() {
       }
 
       // Retry with backoff
-      setTimeout(() => {
+      findWordRetryTimeoutRef.current = window.setTimeout(() => {
+        if (retryToken !== findWordRetryTokenRef.current) return;
         findAndScrollToWord(target, attempt + 1);
       }, 50 + (attempt * 20));
     }
@@ -350,6 +362,11 @@ export default function NormalReadingMode() {
         window.clearTimeout(chapterSelectTimeoutRef.current);
         chapterSelectTimeoutRef.current = null;
       }
+      if (findWordRetryTimeoutRef.current !== null) {
+        window.clearTimeout(findWordRetryTimeoutRef.current);
+        findWordRetryTimeoutRef.current = null;
+      }
+      findWordRetryTokenRef.current += 1;
     };
   }, []);
 

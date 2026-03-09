@@ -1,7 +1,9 @@
 import type {
   AppSettingRow,
   BookContentReplacement,
+  BookPatch,
   BookRow,
+  ImportJobPatch,
   ImportJobRow,
   ProcessingStatus,
   ReadableBookBundle,
@@ -21,12 +23,22 @@ export interface BookRepository {
   listBooks(options?: ListBooksOptions): Promise<BookRow[]>;
   getBook(bookId: string): Promise<BookRow | null>;
   upsertBook(book: BookRow): Promise<void>;
-  patchBook(bookId: string, patch: Partial<BookRow>): Promise<BookRow>;
+  patchBook(bookId: string, patch: BookPatch): Promise<BookRow>;
   setBookStatus(
     bookId: string,
     status: ProcessingStatus,
     patch?: Pick<BookRow, "processing_error" | "updated_at">
   ): Promise<BookRow>;
+  setBookAndImportStatus(
+    bookId: string,
+    attempt: number,
+    status: ProcessingStatus,
+    patch?: {
+      processing_error?: string | null;
+      updated_at?: number;
+      finished_at?: number | null;
+    }
+  ): Promise<void>;
   deleteBook(bookId: string): Promise<void>;
 
   replaceBookContent(bookId: string, replacement: BookContentReplacement): Promise<BookRow>;
@@ -46,7 +58,7 @@ export interface BookRepository {
   patchImportJob(
     bookId: string,
     attempt: number,
-    patch: Partial<Pick<ImportJobRow, "status" | "error" | "finished_at">>
+    patch: ImportJobPatch
   ): Promise<void>;
   listImportJobs(bookId: string): Promise<ImportJobRow[]>;
   nextImportAttempt(bookId: string): Promise<number>;

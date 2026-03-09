@@ -1,20 +1,25 @@
 import type { Book, Paragraph } from "@/types/book";
 import { tokenizeParagraph } from "./wordExtraction";
 
-const bookTokenCaches = new Map<string, Map<number, string[]>>();
+type TokenCacheEntry = {
+  paragraphCount: number;
+  tokensByParagraphId: Map<number, string[]>;
+};
 
-function getTokenCacheKey(bookId: string, paragraphCount: number): string {
-  return `${bookId}:${paragraphCount}`;
-}
+const bookTokenCaches = new Map<string, TokenCacheEntry>();
 
 function getBookTokenCache(book: Book): Map<number, string[]> {
-  const key = getTokenCacheKey(book.id, book.paragraphs.length);
-  const existing = bookTokenCaches.get(key);
-  if (existing) return existing;
+  const existing = bookTokenCaches.get(book.id);
+  if (existing && existing.paragraphCount === book.paragraphs.length) {
+    return existing.tokensByParagraphId;
+  }
 
-  const fresh = new Map<number, string[]>();
-  bookTokenCaches.set(key, fresh);
-  return fresh;
+  const tokensByParagraphId = new Map<number, string[]>();
+  bookTokenCaches.set(book.id, {
+    paragraphCount: book.paragraphs.length,
+    tokensByParagraphId,
+  });
+  return tokensByParagraphId;
 }
 
 export function getTokensForParagraph(book: Book, paragraph: Paragraph): string[] {
@@ -41,10 +46,5 @@ export function primeBookTokenCache(book: Book): void {
 }
 
 export function clearBookTokenCache(bookId: string): void {
-  const prefix = `${bookId}:`;
-  for (const key of bookTokenCaches.keys()) {
-    if (key.startsWith(prefix)) {
-      bookTokenCaches.delete(key);
-    }
-  }
+  bookTokenCaches.delete(bookId);
 }

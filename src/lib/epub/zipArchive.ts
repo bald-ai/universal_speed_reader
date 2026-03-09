@@ -34,11 +34,11 @@ function decodeUtf8(bytes: Uint8Array): string {
 }
 
 async function inflateRaw(bytes: Uint8Array, maxOutputBytes: number): Promise<Uint8Array> {
-  const copy = new Uint8Array(bytes);
   if (typeof DecompressionStream === "undefined") {
     throw new Error("Unsupported format: this device cannot decompress EPUB archives");
   }
-  const stream = new Blob([copy.buffer]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  const byteSlice = bytes.slice();
+  const stream = new Blob([byteSlice]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -96,8 +96,11 @@ export class ZipArchive {
   }
 
   static fromArrayBuffer(buffer: ArrayBuffer): ZipArchive {
-    const bytes = new Uint8Array(buffer);
-    const view = new DataView(buffer);
+    return ZipArchive.fromBytes(new Uint8Array(buffer));
+  }
+
+  static fromBytes(bytes: Uint8Array): ZipArchive {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const eocdOffset = findEndOfCentralDirectory(view, bytes.length);
     if (eocdOffset === -1) {
       throw new Error("Corrupted/Unreadable EPUB: missing end-of-central-directory");

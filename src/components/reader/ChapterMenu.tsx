@@ -1,4 +1,3 @@
-"use client";
 
 import { motion, AnimatePresence } from "framer-motion";
 import type { Chapter } from "@/types/book";

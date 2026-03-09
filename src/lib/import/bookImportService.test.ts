@@ -3,19 +3,24 @@ import { readFileSync } from "node:fs";
 import { InMemoryBookRepository } from "@/lib/storage/inMemoryBookRepository";
 import { BookImportService } from "@/lib/import/bookImportService";
 import { loadRawEpub } from "@/lib/import/rawEpubStore";
-import type { BookRow, ProcessingStatus } from "@/types/storage";
+import type { ProcessingStatus } from "@/types/storage";
 
 class TrackingRepository extends InMemoryBookRepository {
   readonly transitions: Array<{ status: ProcessingStatus; updatedAt: number }> = [];
 
-  override async setBookStatus(
+  override async setBookAndImportStatus(
     bookId: string,
+    attempt: number,
     status: ProcessingStatus,
-    patch?: Pick<BookRow, "processing_error" | "updated_at">
+    patch?: {
+      processing_error?: string | null;
+      updated_at?: number;
+      finished_at?: number | null;
+    }
   ) {
-    const updated = await super.setBookStatus(bookId, status, patch);
-    this.transitions.push({ status, updatedAt: updated.updated_at });
-    return updated;
+    await super.setBookAndImportStatus(bookId, attempt, status, patch);
+    const book = await this.getBook(bookId);
+    this.transitions.push({ status, updatedAt: book?.updated_at ?? Date.now() });
   }
 }
 

@@ -1,9 +1,11 @@
 import type {
   AppSettingRow,
+  BookPatch,
   BookChapterRow,
   BookChunkRow,
   BookContentReplacement,
   BookRow,
+  ImportJobPatch,
   ImportJobRow,
   ProcessingStatus,
   ReadableBookBundle,
@@ -39,10 +41,7 @@ type InMemoryRepositoryOptions = {
 };
 
 function clone<T>(value: T): T {
-  if (typeof structuredClone === "function") {
-    return structuredClone(value);
-  }
-  return JSON.parse(JSON.stringify(value)) as T;
+  return structuredClone(value);
 }
 
 function sortByNumberAsc<T>(items: T[], read: (item: T) => number): T[] {
@@ -63,6 +62,30 @@ function isStorageSnapshot(value: unknown): value is StorageSnapshot {
     Array.isArray(value.app_settings) &&
     Array.isArray(value.import_jobs)
   );
+}
+
+function migratePersistedEnvelope(raw: unknown): StorageSnapshot | null {
+  if (!isObject(raw) || !("version" in raw) || !("data" in raw)) return null;
+  const envelope = raw as PersistedEnvelope;
+
+  // Migration scaffold: keep this switch in place so future storage versions can
+  // transform older snapshots instead of silently dropping user data.
+  switch (envelope.version) {
+    case STORAGE_VERSION:
+      return isStorageSnapshot(envelope.data) ? envelope.data : null;
+    default:
+      if (envelope.version < STORAGE_VERSION) {
+        console.warn(
+          `Unsupported persisted storage version ${envelope.version}. ` +
+            "Data migration is required before loading this snapshot."
+        );
+        return null;
+      }
+      console.warn(
+        `Persisted storage version ${envelope.version} is newer than supported version ${STORAGE_VERSION}.`
+      );
+      return null;
+  }
 }
 
 function isBrowserLocalStorageAvailable(): boolean {
@@ -139,8 +162,13 @@ export class InMemoryBookRepository implements BookRepository {
     });
   }
 
-  async patchBook(bookId: string, patch: Partial<BookRow>): Promise<BookRow> {
+  async patchBook(bookId: string, patch: BookPatch): Promise<BookRow> {
     return this.withLock(async () => {
+      const patchKeys = Object.keys(patch);
+      if (patchKeys.includes("id") || patchKeys.includes("created_at")) {
+        throw new Error("patchBook does not allow updating immutable book fields");
+      }
+
       const index = this.state.books.findIndex((entry) => entry.id === bookId);
       if (index === -1) {
         throw new Error(`Book ${bookId} not found`);
@@ -165,6 +193,49 @@ export class InMemoryBookRepository implements BookRepository {
       processing_status: status,
       processing_error: patch?.processing_error ?? null,
       updated_at: updatedAt,
+    });
+  }
+
+  async setBookAndImportStatus(
+    bookId: string,
+    attempt: number,
+    status: ProcessingStatus,
+    patch?: {
+      processing_error?: string | null;
+      updated_at?: number;
+      finished_at?: number | null;
+    }
+  ): Promise<void> {
+    await this.withLock(async () => {
+      const bookIndex = this.state.books.findIndex((entry) => entry.id === bookId);
+      if (bookIndex === -1) {
+        throw new Error(`Book ${bookId} not found`);
+      }
+      const jobIndex = this.state.import_jobs.findIndex(
+        (entry) => entry.book_id === bookId && entry.attempt === attempt
+      );
+      if (jobIndex === -1) {
+        throw new Error(`Import job ${bookId}/${attempt} not found`);
+      }
+
+      const now = patch?.updated_at ?? Date.now();
+      const hasFinishedAtPatch = Object.prototype.hasOwnProperty.call(patch ?? {}, "finished_at");
+
+      this.state.books[bookIndex] = {
+        ...this.state.books[bookIndex],
+        processing_status: status,
+        processing_error: patch?.processing_error ?? null,
+        updated_at: now,
+      };
+      this.state.import_jobs[jobIndex] = {
+        ...this.state.import_jobs[jobIndex],
+        status,
+        error: patch?.processing_error ?? null,
+        finished_at: hasFinishedAtPatch
+          ? (patch?.finished_at ?? null)
+          : this.state.import_jobs[jobIndex].finished_at,
+      };
+      await this.persist();
     });
   }
 
@@ -397,7 +468,7 @@ export class InMemoryBookRepository implements BookRepository {
   async patchImportJob(
     bookId: string,
     attempt: number,
-    patch: Partial<Pick<ImportJobRow, "status" | "error" | "finished_at">>
+    patch: ImportJobPatch
   ): Promise<void> {
     await this.withLock(async () => {
       const index = this.state.import_jobs.findIndex(
@@ -468,12 +539,10 @@ export class InMemoryBookRepository implements BookRepository {
           request.onsuccess = () => resolve(request.result);
         });
 
-        if (isObject(raw) && "version" in raw && "data" in raw) {
-          const parsed = raw as PersistedEnvelope;
-          if (parsed.version === STORAGE_VERSION && isStorageSnapshot(parsed.data)) {
-            this.state = clone(parsed.data);
-            return;
-          }
+        const migrated = migratePersistedEnvelope(raw);
+        if (migrated) {
+          this.state = clone(migrated);
+          return;
         }
       } catch (error) {
         console.warn("Failed to load snapshot from IndexedDB:", error);
@@ -484,10 +553,10 @@ export class InMemoryBookRepository implements BookRepository {
     try {
       const raw = window.localStorage.getItem(persistKey);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as PersistedEnvelope;
-      if (!isObject(parsed) || parsed.version !== STORAGE_VERSION) return;
-      if (!isStorageSnapshot(parsed.data)) return;
-      this.state = clone(parsed.data);
+      const parsed = JSON.parse(raw) as unknown;
+      const migrated = migratePersistedEnvelope(parsed);
+      if (!migrated) return;
+      this.state = clone(migrated);
     } catch (error) {
       console.warn("Failed to load snapshot from localStorage:", error);
       this.state = clone(EMPTY_SNAPSHOT);

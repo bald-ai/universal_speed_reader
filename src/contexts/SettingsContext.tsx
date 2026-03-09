@@ -11,6 +11,7 @@ import {
 import type { TtsHighlightStyle } from "@/types/reading";
 import { TTS_RATE_DEFAULT, WPM_DEFAULT } from "@/lib/constants";
 import { getBookRepository } from "@/lib/storage/appRepository";
+import type { BookRepository } from "@/lib/storage/bookRepository";
 
 type Theme = "light" | "dark";
 
@@ -94,6 +95,27 @@ function sanitizeSettings(raw: unknown): Partial<Settings> {
   return out;
 }
 
+function applyThemeClass(theme: Theme, root: { classList: Pick<DOMTokenList, "add" | "remove"> }): void {
+  if (theme === "dark") {
+    root.classList.add("dark");
+  } else {
+    root.classList.remove("dark");
+  }
+}
+
+async function loadSettingsFromRepository(
+  repository: Pick<BookRepository, "getAppSetting">
+): Promise<Partial<Settings>> {
+  try {
+    const saved = await repository.getAppSetting<unknown>(SETTINGS_KEY);
+    if (saved === null) return {};
+    return sanitizeSettings(saved);
+  } catch (error) {
+    console.warn("Failed to load saved settings:", error);
+    return {};
+  }
+}
+
 export function SettingsProvider(props: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -115,16 +137,13 @@ export function SettingsProvider(props: { children: ReactNode }) {
     (async () => {
       try {
         const repo = await getBookRepository();
-        const saved = await repo.getAppSetting<unknown>(SETTINGS_KEY);
-        if (!cancelled && saved !== null) {
-          const safe = sanitizeSettings(saved);
+        const safe = await loadSettingsFromRepository(repo);
+        if (!cancelled) {
           setSettings((prev) => ({
             ...prev,
             ...safe,
           }));
         }
-      } catch (error) {
-        console.warn("Failed to load saved settings:", error);
       } finally {
         if (!cancelled) {
           setIsHydrated(true);
@@ -141,11 +160,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
     if (typeof window === "undefined") return;
 
     const root = window.document.documentElement;
-    if (settings.theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    applyThemeClass(settings.theme, root);
   }, [settings.theme]);
 
   useEffect(() => {
@@ -212,3 +227,9 @@ export function useSettings(): SettingsContextValue {
   }
   return ctx;
 }
+
+export const __settingsContextInternals = {
+  sanitizeSettings,
+  applyThemeClass,
+  loadSettingsFromRepository,
+};

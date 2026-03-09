@@ -2,6 +2,7 @@ import { parseEpubBytes } from "@/lib/epub/epubParser";
 import { getBookRepository } from "@/lib/storage/appRepository";
 import type { BookRepository } from "@/lib/storage/bookRepository";
 import { deleteRawEpub, loadRawEpub, storeRawEpub, type RawEpubRecord } from "@/lib/import/rawEpubStore";
+import { clearBookTokenCache } from "@/lib/utils/tokenCache";
 import {
   chunkParagraphs,
   computeTotalWords,
@@ -61,22 +62,33 @@ function createBookId(): string {
   return `book-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    const controller = new AbortController();
+    let settled = false;
+
+    const settleResolve = (value: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(value);
+    };
+
+    const settleReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(error);
+    };
+
     const timeoutId = setTimeout(() => {
-      reject(new ImportFailure("Processing timeout", "Processing timeout: import exceeded 180 seconds"));
+      controller.abort();
+      settleReject(
+        new ImportFailure("Processing timeout", "Processing timeout: import exceeded 180 seconds")
+      );
     }, timeoutMs);
 
-    promise.then(
-      (value) => {
-        clearTimeout(timeoutId);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timeoutId);
-        reject(error);
-      }
-    );
+    work(controller.signal).then(settleResolve, settleReject);
   });
 }
 
@@ -94,6 +106,9 @@ function classifyError(error: unknown): ImportFailure {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
 
+  if (normalized.includes("aborted")) {
+    return new ImportFailure("Processing timeout", "Processing timeout: import was cancelled");
+  }
   if (normalized.includes("timeout")) {
     return new ImportFailure("Processing timeout", message);
   }
@@ -109,9 +124,20 @@ function classifyError(error: unknown): ImportFailure {
 type ImportTask = {
   bookId: string;
   attempt: number;
-  source: RawEpubRecord;
+  source: Pick<RawEpubRecord, "fileName" | "mimeType" | "sizeBytes">;
   clearProgressOnSuccess: boolean;
 };
+
+function validateSource(source: Pick<RawEpubRecord, "fileName" | "sizeBytes">): ImportFailure | null {
+  const normalizedName = source.fileName.toLowerCase();
+  if (!normalizedName.endsWith(".epub")) {
+    return new ImportFailure("Unsupported format", "Unsupported format: only .epub files are allowed");
+  }
+  if (source.sizeBytes > MAX_IMPORT_SIZE_BYTES) {
+    return new ImportFailure("File too large", "File too large: maximum size is 150 MB");
+  }
+  return null;
+}
 
 type RawStoreAdapter = {
   store: (record: RawEpubRecord) => Promise<void>;
@@ -185,26 +211,6 @@ export class BookImportService {
     });
     this.emit();
 
-    const normalizedName = payload.fileName.toLowerCase();
-    if (!normalizedName.endsWith(".epub")) {
-      await this.failImport(
-        repository,
-        bookId,
-        attempt,
-        new ImportFailure("Unsupported format", "Unsupported format: only .epub files are allowed")
-      );
-      return bookId;
-    }
-    if (payload.bytes.byteLength > MAX_IMPORT_SIZE_BYTES) {
-      await this.failImport(
-        repository,
-        bookId,
-        attempt,
-        new ImportFailure("File too large", "File too large: maximum size is 150 MB")
-      );
-      return bookId;
-    }
-
     const source: RawEpubRecord = {
       bookId,
       fileName: payload.fileName,
@@ -213,6 +219,13 @@ export class BookImportService {
       bytes: payload.bytes,
       storedAt: now,
     };
+
+    const validationFailure = validateSource(source);
+    if (validationFailure) {
+      await this.failImport(repository, bookId, attempt, validationFailure);
+      return bookId;
+    }
+
     try {
       await this.rawStore.store(source);
     } catch (error) {
@@ -232,7 +245,11 @@ export class BookImportService {
     this.queue.push({
       bookId,
       attempt,
-      source,
+      source: {
+        fileName: source.fileName,
+        mimeType: source.mimeType,
+        sizeBytes: source.sizeBytes,
+      },
       clearProgressOnSuccess: false,
     });
     this.emit();
@@ -290,7 +307,11 @@ export class BookImportService {
       this.queue.push({
         bookId,
         attempt,
-        source,
+        source: {
+          fileName: source.fileName,
+          mimeType: source.mimeType,
+          sizeBytes: source.sizeBytes,
+        },
         clearProgressOnSuccess: false,
       });
       this.emit();
@@ -396,7 +417,11 @@ export class BookImportService {
       this.queue.push({
         bookId,
         attempt,
-        source,
+        source: {
+          fileName: source.fileName,
+          mimeType: source.mimeType,
+          sizeBytes: source.sizeBytes,
+        },
         clearProgressOnSuccess: true,
       });
       this.emit();
@@ -474,14 +499,9 @@ export class BookImportService {
         finishedAt?: number | null;
       }
     ) => {
-      const now = Date.now();
-      await repository.setBookStatus(bookId, status, {
+      await repository.setBookAndImportStatus(bookId, attempt, status, {
         processing_error: patch?.error ?? null,
-        updated_at: now,
-      });
-      await repository.patchImportJob(bookId, attempt, {
-        status,
-        error: patch?.error ?? null,
+        updated_at: Date.now(),
         finished_at: patch?.finishedAt ?? null,
       });
       this.emit();
@@ -489,23 +509,41 @@ export class BookImportService {
 
     try {
       await markStatus("validating");
-      if (source.sizeBytes > MAX_IMPORT_SIZE_BYTES) {
-        throw new ImportFailure("File too large", "File too large: maximum size is 150 MB");
+      const validationFailure = validateSource(source);
+      if (validationFailure) {
+        throw validationFailure;
       }
-      if (!source.fileName.toLowerCase().endsWith(".epub")) {
-        throw new ImportFailure("Unsupported format", "Unsupported format: only .epub files are allowed");
+
+      const storedSource = await this.rawStore.load(bookId);
+      if (!storedSource) {
+        throw new ImportFailure(
+          "Corrupted/Unreadable EPUB",
+          "Corrupted/Unreadable EPUB: no stored source file available for processing"
+        );
       }
 
       await repository.clearBookContent(bookId);
 
       const parsed = await withTimeout(
-        parseEpubBytes(source.bytes, {
-          onPhaseChange: async (phase) => {
-            await markStatus(phase);
-          },
-        }),
+        (signal) =>
+          parseEpubBytes(storedSource.bytes, {
+            signal,
+            onPhaseChange: async (phase) => {
+              if (signal.aborted) return;
+              await markStatus(phase);
+            },
+          }),
         IMPORT_TIMEOUT_MS
       );
+
+      if (storedSource.sizeBytes !== source.sizeBytes || storedSource.fileName !== source.fileName) {
+        // Keep metadata stable when the persisted source changed between queue and execution.
+        await repository.patchBook(bookId, {
+          source_uri: `indexeddb://raw_epubs/${bookId}/${encodeURIComponent(storedSource.fileName)}`,
+          size_bytes: storedSource.sizeBytes,
+          updated_at: Date.now(),
+        });
+      }
 
       if (parsed.paragraphs.length === 0) {
         throw new ImportFailure(
@@ -528,13 +566,14 @@ export class BookImportService {
       const chapterRows = normalizeChapters(bookId, parsed.chapters);
       const totalWords = parsed.totalWords > 0 ? parsed.totalWords : computeTotalWords(parsed.paragraphs);
       await repository.patchBook(bookId, {
-        title: parsed.title || fileNameToTitle(source.fileName),
+        title: parsed.title || fileNameToTitle(storedSource.fileName),
         author: parsed.author,
         cover_path: parsed.coverPath,
         language: parsed.language,
-        size_bytes: source.sizeBytes,
+        size_bytes: storedSource.sizeBytes,
         updated_at: Date.now(),
       });
+      clearBookTokenCache(bookId);
       await repository.replaceBookContent(bookId, {
         chunks: chunkRows,
         chapters: chapterRows,
@@ -560,13 +599,9 @@ export class BookImportService {
     failure: ImportFailure
   ): Promise<void> {
     const message = formatFailure(failure);
-    await repository.setBookStatus(bookId, "failed", {
+    await repository.setBookAndImportStatus(bookId, attempt, "failed", {
       processing_error: message,
       updated_at: Date.now(),
-    });
-    await repository.patchImportJob(bookId, attempt, {
-      status: "failed",
-      error: message,
       finished_at: Date.now(),
     });
     this.emit();
@@ -574,7 +609,11 @@ export class BookImportService {
 
   private emit(): void {
     for (const listener of this.listeners) {
-      listener();
+      try {
+        listener();
+      } catch (error) {
+        console.warn("Import subscriber failed:", error);
+      }
     }
   }
 
@@ -589,13 +628,15 @@ export class BookImportService {
     timeoutMs = IMPORT_TIMEOUT_MS + 120_000
   ): Promise<ProcessingStatus> {
     const start = Date.now();
+    let delayMs = 120;
     while (Date.now() - start < timeoutMs) {
       const repository = await this.repositoryPromise;
       const job = (await repository.listImportJobs(bookId)).find((entry) => entry.attempt === attempt);
       if (job?.status === "completed" || job?.status === "failed") {
         return job.status;
       }
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(1600, Math.round(delayMs * 1.5));
     }
     throw new Error("Restore timed out");
   }

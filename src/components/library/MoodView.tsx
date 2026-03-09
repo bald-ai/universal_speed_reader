@@ -196,79 +196,147 @@ export default function MoodView(props: MoodViewProps) {
   const [recent, setRecentMap] = useState<Record<string, string>>({});
   const [newEditId, setNewEditId] = useState<string | null>(null);
   const [pickerFor, setPickerFor] = useState<string | null>(null); // bookId
+  const [persistError, setPersistError] = useState<string | null>(null);
+  const foldersRef = useRef<MoodFolder[]>([]);
+  const folderMutationIdRef = useRef(0);
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
-    loadFolders().then(setFolders);
-    loadRecent().then(setRecentMap);
+    let cancelled = false;
+    (async () => {
+      try {
+        const [loadedFolders, loadedRecent] = await Promise.all([loadFolders(), loadRecent()]);
+        if (cancelled) return;
+        foldersRef.current = loadedFolders;
+        setFolders(loadedFolders);
+        setRecentMap(loadedRecent);
+        setPersistError(null);
+      } catch (error) {
+        if (!cancelled) {
+          setPersistError(error instanceof Error ? error.message : "Failed to load folders");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    foldersRef.current = folders;
+  }, [folders]);
 
   const bookById = useMemo(() => new Map(books.map((b) => [b.id, b])), [books]);
 
   const unassigned = useMemo(() => getUnassignedBooks(folders, books), [folders, books]);
 
-  const toggleBookInFolder = (folderId: string, bookId: string) => {
-    setFolders((prev) => {
-      const next = prev.map((f) => {
+  const persistFoldersWithRollback = useCallback(
+    (next: MoodFolder[], previous: MoodFolder[], mutationId: number) => {
+      persistQueueRef.current = persistQueueRef.current
+        .then(async () => {
+          try {
+            await saveFolders(next);
+            if (folderMutationIdRef.current === mutationId) {
+              setPersistError(null);
+            }
+          } catch (error) {
+            if (folderMutationIdRef.current === mutationId) {
+              foldersRef.current = previous;
+              setFolders(previous);
+            }
+            setPersistError(error instanceof Error ? error.message : "Failed to save folders");
+          }
+        })
+        .catch(() => undefined);
+    },
+    []
+  );
+
+  const applyFolderMutation = useCallback(
+    (mutate: (current: MoodFolder[]) => MoodFolder[]) => {
+      const previous = foldersRef.current;
+      const next = mutate(previous);
+      if (next === previous) return;
+
+      const mutationId = folderMutationIdRef.current + 1;
+      folderMutationIdRef.current = mutationId;
+      foldersRef.current = next;
+      setFolders(next);
+      persistFoldersWithRollback(next, previous, mutationId);
+    },
+    [persistFoldersWithRollback]
+  );
+
+  const toggleBookInFolder = useCallback((folderId: string, bookId: string) => {
+    applyFolderMutation((current) => {
+      let changed = false;
+      const next = current.map((f) => {
         if (f.id !== folderId) return f;
+        changed = true;
         const has = f.bookIds.includes(bookId);
-        return { ...f, bookIds: has ? f.bookIds.filter((id) => id !== bookId) : [...f.bookIds, bookId] };
+        return {
+          ...f,
+          bookIds: has ? f.bookIds.filter((id) => id !== bookId) : [...f.bookIds, bookId],
+        };
       });
-      void saveFolders(next);
-      return next;
+      return changed ? next : current;
     });
-  };
+  }, [applyFolderMutation]);
 
   const commitEdit = useCallback((folderId: string, label: string, icon?: string, color?: string) => {
     const nextLabel = label.trim();
     if (!nextLabel) return;
-    setFolders((prev) => {
-      const next = prev.map((f) => (f.id === folderId ? { ...f, label: nextLabel, icon, color: color ?? f.color } : f));
-      void saveFolders(next);
-      return next;
+    applyFolderMutation((current) => {
+      let changed = false;
+      const next = current.map((f) => {
+        if (f.id !== folderId) return f;
+        changed = true;
+        return { ...f, label: nextLabel, icon, color: color ?? f.color };
+      });
+      return changed ? next : current;
     });
-  }, []);
+  }, [applyFolderMutation]);
 
   const deleteFolder = useCallback((folderId: string) => {
-    setFolders((prev) => {
-      const next = prev.filter((f) => f.id !== folderId);
-      void saveFolders(next);
-      return next;
+    applyFolderMutation((current) => {
+      const next = current.filter((f) => f.id !== folderId);
+      return next.length === current.length ? current : next;
     });
-  }, []);
+  }, [applyFolderMutation]);
 
-  const createFolder = () => {
+  const createFolder = useCallback(() => {
     const id = `mood-${Date.now().toString(36)}`;
     const f: MoodFolder = { id, label: "New Folder", color: DEFAULT_FOLDER_COLOR, bookIds: [] };
-    setFolders((prev) => {
-      const next = [...prev, f];
-      void saveFolders(next);
-      return next;
-    });
+    applyFolderMutation((current) => [...current, f]);
     setNewEditId(id);
-  };
+  }, [applyFolderMutation]);
 
-  const openMostRecent = (folderId: string, bookId: string) => {
-    void setRecent(folderId, bookId);
-    setRecentMap((m) => ({ ...m, [folderId]: bookId }));
+  const openMostRecent = useCallback((folderId: string, bookId: string) => {
+    setRecentMap((previous) => ({ ...previous, [folderId]: bookId }));
     onOpenBook(bookId);
-  };
+    void setRecent(folderId, bookId)
+      .then(() => {
+        setPersistError(null);
+      })
+      .catch((error) => {
+        setPersistError(error instanceof Error ? error.message : "Failed to save recent book");
+      });
+  }, [onOpenBook]);
 
   const sensors = useSensors(
    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
-   const { active, over } = event;
-   if (!over || active.id === over.id) return;
-   setFolders((prev) => {
-     const oldIndex = prev.findIndex((f) => f.id === active.id);
-     const newIndex = prev.findIndex((f) => f.id === over.id);
-     if (oldIndex === -1 || newIndex === -1) return prev;
-     const next = arrayMove(prev, oldIndex, newIndex);
-     saveFolders(next);
-     return next;
-   });
-  }, []);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    applyFolderMutation((current) => {
+      const oldIndex = current.findIndex((f) => f.id === String(active.id));
+      const newIndex = current.findIndex((f) => f.id === String(over.id));
+      if (oldIndex === -1 || newIndex === -1) return current;
+      return arrayMove(current, oldIndex, newIndex);
+    });
+  }, [applyFolderMutation]);
 
   const folderIds = useMemo(() => folders.map((f) => f.id), [folders]);
 
@@ -288,12 +356,20 @@ export default function MoodView(props: MoodViewProps) {
                folder={folder}
                bookById={bookById}
                recentBookId={recent[folder.id]}
-               onOpenRecent={openMostRecent}
-               onToggleBook={(bookId) => toggleBookInFolder(folder.id, bookId)}
+               onOpenRecent={(folderId, bookId) => {
+                 void openMostRecent(folderId, bookId);
+               }}
+               onToggleBook={(bookId) => {
+                 toggleBookInFolder(folder.id, bookId);
+               }}
                startInEditMode={newEditId === folder.id}
                onConsumeEditMode={() => setNewEditId(null)}
-               onCommitEdit={commitEdit}
-               onDeleteFolder={deleteFolder}
+               onCommitEdit={(folderId, label, icon, color) => {
+                 commitEdit(folderId, label, icon, color);
+               }}
+               onDeleteFolder={(folderId) => {
+                 deleteFolder(folderId);
+               }}
              />
            ))}
          </div>
@@ -302,12 +378,20 @@ export default function MoodView(props: MoodViewProps) {
 
       <button
         type="button"
-        onClick={createFolder}
+        onClick={() => {
+          createFolder();
+        }}
         className="w-full rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/20 px-4 py-4 text-sm text-neutral-500
           hover:border-violet-500/40 hover:text-violet-400 transition-colors"
       >
         + New Folder
       </button>
+
+      {persistError ? (
+        <div className="rounded-xl border border-red-500/35 bg-red-950/35 px-3 py-2 text-xs text-red-200">
+          {persistError}
+        </div>
+      ) : null}
 
       <div className="pt-2">
         <div className="text-xs uppercase tracking-[0.2em] text-neutral-500 mb-3 px-1">

@@ -1,4 +1,3 @@
-"use client";
 
 import { BookProvider } from "@/contexts/BookContext";
 import { ReadingProvider } from "@/contexts/ReadingContext";

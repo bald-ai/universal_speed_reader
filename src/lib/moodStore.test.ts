@@ -188,13 +188,13 @@ describe("moodStore", () => {
     restore();
   });
 
-  it("falls back to empty state when persisted JSON is malformed", async () => {
+  it("falls back to repository state when localStorage JSON is malformed", async () => {
     const { restore } = installLocalStorageMock({
       [MOOD_STORE_STORAGE_KEY]: "{invalid-json",
     });
 
     __resetMoodStoreForTests();
-    expect(await loadFolders()).toEqual([]);
+    expect(await loadFolders()).toEqual(BASE_FOLDERS);
     expect(await loadRecent()).toEqual({});
     restore();
   });

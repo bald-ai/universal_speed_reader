@@ -1,4 +1,3 @@
-"use client";
 
 import {
   createContext,
@@ -13,6 +12,8 @@ import {
 import type { Mode, Position } from "@/types/reading";
 import { useBook } from "./BookContext";
 import { getBookRepository } from "@/lib/storage/appRepository";
+import type { BookRepository } from "@/lib/storage/bookRepository";
+import type { Book } from "@/types/book";
 import type { ReadingProgressRow } from "@/types/storage";
 
 type ReadingContextValue = {
@@ -39,6 +40,8 @@ const DEFAULT_POSITION: Position = {
 };
 
 type SavedProgressLike = Pick<ReadingProgressRow, "paragraph_id" | "word_index" | "mode"> | null;
+
+type ParagraphBook = Pick<Book, "paragraphs">;
 
 export function resolveReadingStateFromProgress(
   paragraphIds: number[],
@@ -79,6 +82,52 @@ export function resolveReadingStateFromProgress(
   };
 }
 
+function buildProgressRow(
+  book: ParagraphBook | null,
+  bookId: string,
+  nextMode: Mode,
+  nextPosition: Position
+): ReadingProgressRow | null {
+  if (!book || book.paragraphs.length === 0) return null;
+
+  const paragraphExists = book.paragraphs.some((paragraph) => paragraph.id === nextPosition.paragraphId);
+  const fallbackParagraphId = book.paragraphs[0].id;
+
+  return {
+    book_id: bookId,
+    paragraph_id: paragraphExists ? nextPosition.paragraphId : fallbackParagraphId,
+    word_index: Math.max(0, nextPosition.wordIndex),
+    mode: nextMode,
+    updated_at: Date.now(),
+  };
+}
+
+function ensureValidPosition(book: ParagraphBook | null, position: Position): Position | null {
+  if (!book || book.paragraphs.length === 0) return null;
+
+  const isValid = book.paragraphs.some((paragraph) => paragraph.id === position.paragraphId);
+  if (isValid) return null;
+
+  return {
+    paragraphId: book.paragraphs[0].id,
+    wordIndex: 0,
+  };
+}
+
+async function loadReadingStateFromRepository(
+  repository: Pick<BookRepository, "getReadingProgress">,
+  bookId: string,
+  paragraphIds: number[]
+): Promise<{ mode: Mode; position: Position }> {
+  try {
+    const saved = await repository.getReadingProgress(bookId);
+    return resolveReadingStateFromProgress(paragraphIds, saved);
+  } catch (error) {
+    console.warn("Failed to load reading progress:", error);
+    return resolveReadingStateFromProgress(paragraphIds, null);
+  }
+}
+
 export function ReadingProvider(props: ProviderProps) {
   const { bookId, children } = props;
   const { book } = useBook();
@@ -111,20 +160,11 @@ export function ReadingProvider(props: ProviderProps) {
     (async () => {
       try {
         const repo = await getBookRepository();
-        const saved = await repo.getReadingProgress(bookId);
+        const resolved = await loadReadingStateFromRepository(repo, bookId, paragraphIds);
         if (cancelled) return;
-        const resolved = resolveReadingStateFromProgress(paragraphIds, saved);
         setModeState(resolved.mode);
         setPositionState(resolved.position);
         setHighlightedWordState(null);
-      } catch (error) {
-        console.warn("Failed to load reading progress:", error);
-        if (!cancelled) {
-          const resolved = resolveReadingStateFromProgress(paragraphIds, null);
-          setModeState(resolved.mode);
-          setPositionState(resolved.position);
-          setHighlightedWordState(null);
-        }
       } finally {
         if (!cancelled) {
           setProgressLoaded(true);
@@ -162,41 +202,26 @@ export function ReadingProvider(props: ProviderProps) {
     }, 220);
   }, [flushProgress]);
 
-  const buildProgressRow = useCallback((nextMode: Mode, nextPosition: Position): ReadingProgressRow | null => {
-    if (!book || book.paragraphs.length === 0) return null;
-
-    const paragraphExists = book.paragraphs.some((paragraph) => paragraph.id === nextPosition.paragraphId);
-    const fallbackParagraphId = book.paragraphs[0].id;
-
-    return {
-      book_id: bookId,
-      paragraph_id: paragraphExists ? nextPosition.paragraphId : fallbackParagraphId,
-      word_index: Math.max(0, nextPosition.wordIndex),
-      mode: nextMode,
-      updated_at: Date.now(),
-    };
-  }, [book, bookId]);
-
   const saveProgress = useCallback((overrides?: { mode?: Mode; position?: Position }) => {
     if (!progressLoaded) return;
 
     const nextMode = overrides?.mode ?? modeRef.current;
     const nextPosition = overrides?.position ?? positionRef.current;
-    const row = buildProgressRow(nextMode, nextPosition);
+    const row = buildProgressRow(book, bookId, nextMode, nextPosition);
     if (!row) return;
     scheduleProgressSave(row);
-  }, [buildProgressRow, progressLoaded, scheduleProgressSave]);
+  }, [book, bookId, progressLoaded, scheduleProgressSave]);
 
   const queueCurrentProgressForFlush = useCallback(() => {
     if (!progressLoaded) return;
 
     const currentPosition = positionRef.current;
     const currentMode = modeRef.current;
-    const row = buildProgressRow(currentMode, currentPosition);
+    const row = buildProgressRow(book, bookId, currentMode, currentPosition);
     if (!row) return;
 
     pendingProgressRef.current = row;
-  }, [buildProgressRow, progressLoaded]);
+  }, [book, bookId, progressLoaded]);
 
   const flushProgressNow = useCallback(() => {
     queueCurrentProgressForFlush();
@@ -210,11 +235,12 @@ export function ReadingProvider(props: ProviderProps) {
   // Persist as the user reads so an app kill still restores near-latest progress.
   useEffect(() => {
     if (!progressLoaded) return;
-    const row = buildProgressRow(mode, position);
+    const row = buildProgressRow(book, bookId, mode, position);
     if (!row) return;
     scheduleProgressSave(row);
   }, [
-    buildProgressRow,
+    book,
+    bookId,
     mode,
     position.paragraphId,
     position.wordIndex,
@@ -249,15 +275,9 @@ export function ReadingProvider(props: ProviderProps) {
 
   // Keep position valid when paragraphs are replaced (for example after a manual retry import).
   useEffect(() => {
-    if (!book || book.paragraphs.length === 0) return;
-
-    const isValid = book.paragraphs.some((p) => p.id === position.paragraphId);
-    if (!isValid) {
-      setPositionState({
-        paragraphId: book.paragraphs[0].id,
-        wordIndex: 0,
-      });
-    }
+    const nextPosition = ensureValidPosition(book, position);
+    if (!nextPosition) return;
+    setPositionState(nextPosition);
   }, [book, position.paragraphId]);
 
   const setMode = useCallback((nextMode: Mode) => {
@@ -299,3 +319,9 @@ export function useReading(): ReadingContextValue {
   }
   return ctx;
 }
+
+export const __readingContextInternals = {
+  buildProgressRow,
+  ensureValidPosition,
+  loadReadingStateFromRepository,
+};

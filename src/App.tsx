@@ -1,12 +1,21 @@
 import { Route, Switch } from "wouter";
 import Home from "./pages/Home";
 import Reader from "./pages/Reader";
+import { AppErrorBoundary } from "@/components/shared/AppErrorBoundary";
 
 function App() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/reader/:bookId" component={Reader} />
+      <Route path="/">
+        <AppErrorBoundary title="Library screen crashed">
+          <Home />
+        </AppErrorBoundary>
+      </Route>
+      <Route path="/reader/:bookId">
+        <AppErrorBoundary title="Reader screen crashed">
+          <Reader />
+        </AppErrorBoundary>
+      </Route>
       <Route>
         <div className="flex items-center justify-center min-h-screen text-neutral-400">
           404: Page Not Found

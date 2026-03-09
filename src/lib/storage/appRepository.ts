@@ -36,3 +36,8 @@ export async function getBookRepository(): Promise<BookRepository> {
   }
   return repositoryPromise;
 }
+
+export function setBookRepositoryForTests(repo: BookRepository | null): void {
+  testOverride = repo;
+  repositoryPromise = null;
+}

@@ -1,16 +1,10 @@
 import type { BookChapterRow, BookChunkRow, StoredParagraph } from "@/types/storage";
+import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
 
 const DEFAULT_CHUNK_SIZE = 50;
 
-function tokenizeWords(text: string): string[] {
-  return text
-    .split(/\s+/)
-    .map((word) => word.replace(/^["']+|["']+$/g, ""))
-    .filter((word) => word.length > 0);
-}
-
 export function computeTotalWords(paragraphs: StoredParagraph[]): number {
-  return paragraphs.reduce((sum, paragraph) => sum + tokenizeWords(paragraph.text).length, 0);
+  return paragraphs.reduce((sum, paragraph) => sum + tokenizeParagraph(paragraph.text).length, 0);
 }
 
 export function hasSequentialParagraphIds(paragraphs: StoredParagraph[]): boolean {

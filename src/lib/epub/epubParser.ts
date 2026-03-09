@@ -2,6 +2,7 @@ import { load as loadHtml, type CheerioAPI } from "cheerio";
 import type { AnyNode } from "domhandler";
 import type { ProcessingStatus, StoredParagraph } from "@/types/storage";
 import { ZipArchive } from "@/lib/epub/zipArchive";
+import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
 
 type TocEntry = {
   title: string;
@@ -30,6 +31,7 @@ type ParsedEpubResult = {
 
 type ParseEpubOptions = {
   onPhaseChange?: (phase: ParsePhase) => void | Promise<void>;
+  signal?: AbortSignal;
 };
 
 type ManifestItem = {
@@ -66,13 +68,6 @@ const IGNORED_HEADINGS = new Set([
   "about the author",
   "all rights reserved",
 ]);
-
-function tokenize(text: string): string[] {
-  return text
-    .split(/\s+/)
-    .map((word) => word.replace(/^["']+|["']+$/g, ""))
-    .filter((word) => word.length > 0);
-}
 
 function normalizePath(href: string | undefined): string {
   if (!href) return "";
@@ -138,6 +133,11 @@ function normalizeForDedup(value: string): string {
 function textMatchesTitle(paraText: string, tocTitle: string): boolean {
   const normalizedPara = normalizeForDedup(paraText);
   const normalizedTitle = normalizeForDedup(tocTitle);
+  return matchesNormalizedTitle(normalizedPara, normalizedTitle);
+}
+
+function matchesNormalizedTitle(normalizedPara: string, normalizedTitle: string): boolean {
+  if (!normalizedPara || !normalizedTitle) return false;
 
   if (normalizedPara === normalizedTitle) return true;
   if (normalizedPara.startsWith(`${normalizedTitle} `)) return true;
@@ -163,6 +163,12 @@ function textMatchesTitle(paraText: string, tocTitle: string): boolean {
   }
 
   return false;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal) return;
+  if (!signal.aborted) return;
+  throw new Error("Import aborted");
 }
 
 function parseContainerPath(containerXml: string): string {
@@ -388,40 +394,64 @@ function extractParagraphsFromChapter(html: string): ExtractedParagraph[] {
 }
 
 function buildTocLookups(tocEntries: TocEntry[]) {
-  const tocAnchorMap = new Map<string, Map<string, string>>();
-  const tocFileMap = new Map<string, string>();
+  const tocAnchorMapByFile = new Map<string, Map<string, string>>();
+  const tocAnchorMapByUniqueFilename = new Map<string, Map<string, string>>();
+  const tocFileMapByFile = new Map<string, string>();
+  const tocFileMapByUniqueFilename = new Map<string, string>();
+  const filenameCounts = new Map<string, number>();
+
+  for (const tocEntry of tocEntries) {
+    const filename = getFilename(tocEntry.file);
+    filenameCounts.set(filename, (filenameCounts.get(filename) ?? 0) + 1);
+  }
 
   for (const tocEntry of tocEntries) {
     const normalizedFile = normalizePath(tocEntry.file);
     const filename = getFilename(tocEntry.file);
+    const canUseFilenameFallback = (filenameCounts.get(filename) ?? 0) === 1;
     if (tocEntry.anchor) {
       const normalizedAnchor = tocEntry.anchor.toLowerCase();
-      for (const key of [normalizedFile, filename]) {
-        if (!tocAnchorMap.has(key)) {
-          tocAnchorMap.set(key, new Map<string, string>());
+
+      if (!tocAnchorMapByFile.has(normalizedFile)) {
+        tocAnchorMapByFile.set(normalizedFile, new Map<string, string>());
+      }
+      tocAnchorMapByFile.get(normalizedFile)?.set(normalizedAnchor, tocEntry.title);
+
+      if (canUseFilenameFallback) {
+        if (!tocAnchorMapByUniqueFilename.has(filename)) {
+          tocAnchorMapByUniqueFilename.set(filename, new Map<string, string>());
         }
-        tocAnchorMap.get(key)?.set(normalizedAnchor, tocEntry.title);
+        tocAnchorMapByUniqueFilename.get(filename)?.set(normalizedAnchor, tocEntry.title);
       }
     } else {
-      tocFileMap.set(normalizedFile, tocEntry.title);
-      tocFileMap.set(filename, tocEntry.title);
+      tocFileMapByFile.set(normalizedFile, tocEntry.title);
+      if (canUseFilenameFallback) {
+        tocFileMapByUniqueFilename.set(filename, tocEntry.title);
+      }
     }
   }
 
-  return { tocAnchorMap, tocFileMap };
+  return {
+    tocAnchorMapByFile,
+    tocAnchorMapByUniqueFilename,
+    tocFileMapByFile,
+    tocFileMapByUniqueFilename,
+  };
 }
 
 export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptions): Promise<ParsedEpubResult> {
-  const zipBytes = new Uint8Array(bytes);
-  const zip = ZipArchive.fromArrayBuffer(zipBytes.buffer as ArrayBuffer);
+  throwIfAborted(options?.signal);
+  const zip = ZipArchive.fromBytes(bytes);
 
   if (zip.has("mimetype")) {
+    throwIfAborted(options?.signal);
     const mimetype = (await zip.readEntryText("mimetype")).trim().toLowerCase();
     if (!mimetype.includes("application/epub+zip")) {
       throw new Error("Unsupported format: not an EPUB archive");
     }
   }
 
+  throwIfAborted(options?.signal);
   await options?.onPhaseChange?.("extracting_metadata");
   const containerXml = await zip.readEntryText("META-INF/container.xml");
   const opfPath = parseContainerPath(containerXml);
@@ -438,13 +468,23 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
     tocEntries.push(...parseTocFromNcx(ncxXml, opf.ncxPath));
   }
 
-  const { tocAnchorMap, tocFileMap } = buildTocLookups(tocEntries);
+  const {
+    tocAnchorMapByFile,
+    tocAnchorMapByUniqueFilename,
+    tocFileMapByFile,
+    tocFileMapByUniqueFilename,
+  } = buildTocLookups(tocEntries);
+  const normalizedTocTitles = new Set<string>(tocEntries.map((entry) => normalizeForDedup(entry.title)));
+  const normalizedBookTitle = normalizeForDedup(opf.title);
+  const normalizedDuplicatedBookTitle = normalizeForDedup(`${opf.title}${opf.title}`);
   const paragraphs: StoredParagraph[] = [];
   const chapters: ParsedChapter[] = [];
   const seenChapterTitles = new Set<string>();
 
+  throwIfAborted(options?.signal);
   await options?.onPhaseChange?.("extracting_text");
   for (const spinePath of opf.spinePaths) {
+    throwIfAborted(options?.signal);
     if (!zip.has(spinePath)) continue;
     const chapterHtml = await zip.readEntryText(spinePath);
     const extractedParagraphs = extractParagraphsFromChapter(chapterHtml);
@@ -453,12 +493,15 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
     const normalizedEntryFile = normalizePath(spinePath);
     const entryFilename = getFilename(spinePath);
     const fileAnchorMap =
-      tocAnchorMap.get(normalizedEntryFile) ?? tocAnchorMap.get(entryFilename) ?? new Map<string, string>();
+      tocAnchorMapByFile.get(normalizedEntryFile) ??
+      tocAnchorMapByUniqueFilename.get(entryFilename) ??
+      new Map<string, string>();
 
     const fileChapters: ParsedChapter[] = [];
     let firstParagraphIdInFile: number | null = null;
 
     for (const extracted of extractedParagraphs) {
+      throwIfAborted(options?.signal);
       const normalizedParagraphText = normalizeForDedup(extracted.text);
       if (IGNORED_HEADINGS.has(normalizedParagraphText)) continue;
 
@@ -473,12 +516,10 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
 
       const isTocTitle =
         matchedTocTitle && normalizeForDedup(matchedTocTitle) === normalizedParagraphText;
-      const matchesAnyToc = tocEntries.some(
-        (entry) => normalizeForDedup(entry.title) === normalizedParagraphText
-      );
+      const matchesAnyToc = normalizedTocTitles.has(normalizedParagraphText);
       const isBookTitle =
-        normalizedParagraphText === normalizeForDedup(opf.title) ||
-        normalizedParagraphText === normalizeForDedup(`${opf.title}${opf.title}`);
+        normalizedParagraphText === normalizedBookTitle ||
+        normalizedParagraphText === normalizedDuplicatedBookTitle;
 
       if (isTocTitle || matchesAnyToc || isBookTitle) continue;
 
@@ -508,7 +549,10 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
     }
 
     if (fileChapters.length === 0 && firstParagraphIdInFile !== null) {
-      let chapterTitle = tocFileMap.get(normalizedEntryFile) ?? tocFileMap.get(entryFilename) ?? null;
+      let chapterTitle =
+        tocFileMapByFile.get(normalizedEntryFile) ??
+        tocFileMapByUniqueFilename.get(entryFilename) ??
+        null;
       // When TOC exists, keep chapter labels TOC-driven and avoid heading-based guesses.
       if (!chapterTitle && tocEntries.length === 0) {
         chapterTitle = extractHeadingFromChapter(loadHtml(chapterHtml)) ?? null;
@@ -530,6 +574,10 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
   const expectedChapters = tocEntries.length;
   const foundEnough = chapters.length >= expectedChapters / 2 || expectedChapters <= 2;
   if (!foundEnough && paragraphs.length > 0) {
+    const normalizedParagraphs = paragraphs.map((paragraph) => ({
+      paragraph,
+      normalized: normalizeForDedup(paragraph.text),
+    }));
     chapters.length = 0;
     seenChapterTitles.clear();
 
@@ -537,14 +585,14 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
       const chapterKey = normalizeForDedup(tocEntry.title);
       if (seenChapterTitles.has(chapterKey)) continue;
 
-      const matchedParagraph = paragraphs.find((paragraph) =>
-        textMatchesTitle(paragraph.text, tocEntry.title)
+      const matchedParagraph = normalizedParagraphs.find(({ normalized }) =>
+        matchesNormalizedTitle(normalized, chapterKey)
       );
       if (!matchedParagraph) continue;
       seenChapterTitles.add(chapterKey);
       chapters.push({
         title: tocEntry.title,
-        start_paragraph_id: matchedParagraph.id,
+        start_paragraph_id: matchedParagraph.paragraph.id,
       });
     }
     chapters.sort((a, b) => a.start_paragraph_id - b.start_paragraph_id);
@@ -557,7 +605,7 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
     });
   }
 
-  const totalWords = paragraphs.reduce((sum, paragraph) => sum + tokenize(paragraph.text).length, 0);
+  const totalWords = paragraphs.reduce((sum, paragraph) => sum + tokenizeParagraph(paragraph.text).length, 0);
   const normalizedChapters = chapters.map((chapter) => ({
     title: chapter.title,
     start_paragraph_id: chapter.start_paragraph_id,

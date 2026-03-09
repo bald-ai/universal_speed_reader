@@ -1,8 +1,10 @@
+import { getBookRepository } from "@/lib/storage/appRepository";
 import type { LibraryBook, MoodFolder } from "@/types/book";
 
 type RecentMap = Record<string, string>;
 
 export const MOOD_STORE_STORAGE_KEY = "universal_speed_reader.mood.v1";
+const MOOD_STORE_SETTING_KEY = "mood_store.v1";
 
 type PersistedMoodStoreV1 = {
   version: 1;
@@ -13,6 +15,7 @@ type PersistedMoodStoreV1 = {
 let foldersState: MoodFolder[] | null = null;
 let recentState: RecentMap = {};
 let hasHydrated = false;
+let hydratePromise: Promise<void> | null = null;
 
 function cloneFolders(folders: MoodFolder[]): MoodFolder[] {
   return folders.map((f) => ({ ...f, bookIds: [...f.bookIds] }));
@@ -49,9 +52,9 @@ function isRecentMap(value: unknown): value is RecentMap {
   return Object.values(value).every((entry) => typeof entry === "string");
 }
 
-function parsePersistedState(raw: string): PersistedMoodStoreV1 | null {
+function parsePersistedState(raw: unknown): PersistedMoodStoreV1 | null {
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
     if (!parsed || typeof parsed !== "object") return null;
     const record = parsed as Partial<PersistedMoodStoreV1>;
     if (record.version !== 1) return null;
@@ -67,55 +70,104 @@ function parsePersistedState(raw: string): PersistedMoodStoreV1 | null {
   }
 }
 
-function hydrateOnce(): void {
-  if (hasHydrated) return;
-  hasHydrated = true;
-
-  const storage = getLocalStorageSafe();
-  if (!storage) {
-    foldersState = [];
-    recentState = {};
-    return;
-  }
-
-  const raw = storage.getItem(MOOD_STORE_STORAGE_KEY);
-  if (!raw) {
-    foldersState = [];
-    recentState = {};
-    return;
-  }
-
-  const parsed = parsePersistedState(raw);
-  if (!parsed) {
-    foldersState = [];
-    recentState = {};
-    return;
-  }
-
-  foldersState = parsed.folders;
-  recentState = parsed.recent;
-}
-
-function persistState(): void {
-  const storage = getLocalStorageSafe();
-  if (!storage) return;
-  if (!foldersState) return;
-
-  const payload: PersistedMoodStoreV1 = {
+function toPersistedState(): PersistedMoodStoreV1 {
+  return {
     version: 1,
-    folders: cloneFolders(foldersState),
+    folders: cloneFolders(foldersState ?? []),
     recent: { ...recentState },
   };
+}
 
+async function loadFromRepository(): Promise<PersistedMoodStoreV1 | null> {
   try {
-    storage.setItem(MOOD_STORE_STORAGE_KEY, JSON.stringify(payload));
+    const repository = await getBookRepository();
+    const value = await repository.getAppSetting<unknown>(MOOD_STORE_SETTING_KEY);
+    return parsePersistedState(value);
+  } catch (error) {
+    console.warn("Failed to load mood store from repository:", error);
+    return null;
+  }
+}
+
+async function persistToRepository(state: PersistedMoodStoreV1): Promise<void> {
+  try {
+    const repository = await getBookRepository();
+    await repository.putAppSetting(MOOD_STORE_SETTING_KEY, state);
+  } catch (error) {
+    console.warn("Failed to persist mood store to repository:", error);
+  }
+}
+
+function loadFromLocalStorage(): { state: PersistedMoodStoreV1 | null; hasRawValue: boolean } {
+  const storage = getLocalStorageSafe();
+  if (!storage) return { state: null, hasRawValue: false };
+  const raw = storage.getItem(MOOD_STORE_STORAGE_KEY);
+  if (!raw) return { state: null, hasRawValue: false };
+  return {
+    state: parsePersistedState(raw),
+    hasRawValue: true,
+  };
+}
+
+function persistToLocalStorage(state: PersistedMoodStoreV1): void {
+  const storage = getLocalStorageSafe();
+  if (!storage) return;
+  try {
+    storage.setItem(MOOD_STORE_STORAGE_KEY, JSON.stringify(state));
   } catch (error) {
     console.warn("Failed to persist mood store:", error);
   }
 }
 
+async function hydrateOnce(): Promise<void> {
+  if (hasHydrated) return;
+  if (hydratePromise) {
+    await hydratePromise;
+    return;
+  }
+
+  hydratePromise = (async () => {
+    const localStorageState = loadFromLocalStorage();
+    if (localStorageState.state) {
+      foldersState = cloneFolders(localStorageState.state.folders);
+      recentState = { ...localStorageState.state.recent };
+      await persistToRepository(localStorageState.state);
+      hasHydrated = true;
+      return;
+    }
+    if (localStorageState.hasRawValue) {
+      console.warn("Failed to parse mood store from localStorage, falling back to repository");
+    }
+
+    const fromRepository = await loadFromRepository();
+    if (fromRepository) {
+      foldersState = cloneFolders(fromRepository.folders);
+      recentState = { ...fromRepository.recent };
+      persistToLocalStorage(fromRepository);
+      hasHydrated = true;
+      return;
+    }
+
+    foldersState = [];
+    recentState = {};
+    hasHydrated = true;
+  })();
+
+  try {
+    await hydratePromise;
+  } finally {
+    hydratePromise = null;
+  }
+}
+
+async function persistState(): Promise<void> {
+  const payload = toPersistedState();
+  persistToLocalStorage(payload);
+  await persistToRepository(payload);
+}
+
 export async function loadFolders(): Promise<MoodFolder[]> {
-  hydrateOnce();
+  await hydrateOnce();
   if (!foldersState) {
     foldersState = [];
   }
@@ -123,9 +175,9 @@ export async function loadFolders(): Promise<MoodFolder[]> {
 }
 
 export async function saveFolders(folders: MoodFolder[]): Promise<void> {
-  hydrateOnce();
+  await hydrateOnce();
   foldersState = cloneFolders(folders);
-  persistState();
+  await persistState();
 }
 
 export function getUnassignedBooks(folders: MoodFolder[], allBooks: LibraryBook[]): LibraryBook[] {
@@ -146,20 +198,20 @@ export function getFolderColorForBook(folders: MoodFolder[], bookId: string): st
 }
 
 export async function loadRecent(): Promise<RecentMap> {
-  hydrateOnce();
+  await hydrateOnce();
   return { ...recentState };
 }
 
 export async function saveRecent(recent: RecentMap): Promise<void> {
-  hydrateOnce();
+  await hydrateOnce();
   recentState = { ...recent };
-  persistState();
+  await persistState();
 }
 
 export async function setRecent(folderId: string, bookId: string): Promise<void> {
-  hydrateOnce();
+  await hydrateOnce();
   recentState = { ...recentState, [folderId]: bookId };
-  persistState();
+  await persistState();
 }
 
 export async function removeBookReferences(bookId: string): Promise<void> {
@@ -188,4 +240,5 @@ export function __resetMoodStoreForTests(): void {
   foldersState = null;
   recentState = {};
   hasHydrated = false;
+  hydratePromise = null;
 }
