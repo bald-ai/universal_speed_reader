@@ -328,6 +328,71 @@ describe("parseEpubBytes TOC preference", () => {
     expect(parsed.chapters).toEqual([{ title: "Only TOC Chapter", start_paragraph_id: 3 }]);
   });
 
+  it("uses the next readable paragraph when a TOC title heading is the first node in a chapter file", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const ncxPath = "OEBPS/toc.ncx";
+    const ch1Path = "OEBPS/Text/ch1.xhtml";
+    const ch2Path = "OEBPS/Text/ch2.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Parser Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch2" href="Text/ch2.xhtml" media-type="application/xhtml+xml" />
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml" />
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>`;
+
+    const ncx = `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="n1" playOrder="1">
+      <navLabel><text>Chapter 1. Alpha</text></navLabel>
+      <content src="Text/ch1.xhtml#ch1" />
+    </navPoint>
+    <navPoint id="n2" playOrder="2">
+      <navLabel><text>Chapter 2. Beta</text></navLabel>
+      <content src="Text/ch2.xhtml#ch2" />
+    </navPoint>
+  </navMap>
+</ncx>`;
+
+    const ch1 = `<html><body><div class="chapter" id="ch1"><h2>Chapter 1. Alpha</h2><p id="p1">First real paragraph.</p></div></body></html>`;
+    const ch2 = `<html><body><div class="chapter" id="ch2"><h2>Chapter 2. Beta</h2><p id="p2">Second real paragraph.</p></div></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: ncxPath, data: ncx },
+      { name: ch1Path, data: ch1 },
+      { name: ch2Path, data: ch2 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "Chapter 1. Alpha", start_paragraph_id: 1 },
+      { title: "Chapter 2. Beta", start_paragraph_id: 2 },
+    ]);
+    expect(parsed.paragraphs.map((paragraph) => paragraph.text)).toEqual([
+      "First real paragraph.",
+      "Second real paragraph.",
+    ]);
+  });
+
   it("uses heading fallback when TOC metadata is missing", async () => {
     const bytes = createTestEpub({ includeNav: false, includeNcx: false, includeHeadings: true });
     const parsed = await parseEpubBytes(bytes);

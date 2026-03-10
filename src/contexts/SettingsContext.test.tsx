@@ -22,8 +22,8 @@ function makeRepository(
   implementation: () => Promise<unknown>
 ): Pick<BookRepository, "getAppSetting"> {
   return {
-    async getAppSetting() {
-      return implementation();
+    async getAppSetting<T>(_key: string) {
+      return (await implementation()) as T | null;
     },
   };
 }

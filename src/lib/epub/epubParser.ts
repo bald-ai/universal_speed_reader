@@ -499,6 +499,7 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
 
     const fileChapters: ParsedChapter[] = [];
     let firstParagraphIdInFile: number | null = null;
+    let pendingChapterTitle: string | null = null;
 
     for (const extracted of extractedParagraphs) {
       throwIfAborted(options?.signal);
@@ -521,7 +522,11 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
         normalizedParagraphText === normalizedBookTitle ||
         normalizedParagraphText === normalizedDuplicatedBookTitle;
 
-      if (isTocTitle || matchesAnyToc || isBookTitle) continue;
+      if (matchedTocTitle && (isTocTitle || matchesAnyToc)) {
+        pendingChapterTitle = matchedTocTitle;
+        continue;
+      }
+      if (isBookTitle) continue;
 
       const paragraphId = paragraphs.length + 1;
       paragraphs.push({
@@ -530,6 +535,18 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
       });
       if (firstParagraphIdInFile === null) {
         firstParagraphIdInFile = paragraphId;
+      }
+
+      if (pendingChapterTitle) {
+        const chapterKey = normalizeForDedup(pendingChapterTitle);
+        if (!seenChapterTitles.has(chapterKey)) {
+          seenChapterTitles.add(chapterKey);
+          fileChapters.push({
+            title: pendingChapterTitle,
+            start_paragraph_id: paragraphId,
+          });
+        }
+        pendingChapterTitle = null;
       }
 
       if (matchedTocTitle) {
@@ -541,6 +558,17 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
             start_paragraph_id: paragraphId,
           });
         }
+      }
+    }
+
+    if (pendingChapterTitle && firstParagraphIdInFile !== null) {
+      const chapterKey = normalizeForDedup(pendingChapterTitle);
+      if (!seenChapterTitles.has(chapterKey)) {
+        seenChapterTitles.add(chapterKey);
+        fileChapters.push({
+          title: pendingChapterTitle,
+          start_paragraph_id: firstParagraphIdInFile,
+        });
       }
     }
 
