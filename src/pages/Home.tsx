@@ -15,9 +15,8 @@ import { motion } from "framer-motion";
 import type { LibraryBook } from "@/types/book";
 import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
 import { getBookImportService } from "@/lib/import/bookImportService";
-import { removeBookReferences, loadFolders, getFolderColorForBook } from "@/lib/moodStore";
+import { loadFolders, getFolderColorForBook } from "@/lib/moodStore";
 import type { MoodFolder } from "@/types/book";
-import { clearBookTokenCache } from "@/lib/utils/tokenCache";
 
 const BackgroundDecoration = memo(function BackgroundDecoration() {
   return (
@@ -170,8 +169,6 @@ export default function Home() {
       setDeletingBookId(entry.id);
       try {
         await importService.deleteBook(entry.id);
-        clearBookTokenCache(entry.id);
-        await removeBookReferences(entry.id);
         await refreshLibrary();
       } catch (error) {
         setImportError(error instanceof Error ? error.message : "Failed to delete book");

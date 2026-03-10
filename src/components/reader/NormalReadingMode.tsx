@@ -705,9 +705,7 @@ export default function NormalReadingMode() {
       {/* Progress Bar Section */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-2">
-          <span>
-            {currentChapter ? `Chapter ${currentChapter.index + 1}` : "Progress"}
-          </span>
+          <span>Chapter progress</span>
           <span className="font-medium text-neutral-400">
             {progressLoaded ? `${displayedProgress}%` : ""}
           </span>
@@ -751,34 +749,36 @@ export default function NormalReadingMode() {
                   width: "100%",
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
-                className="pb-4 max-w-2xl mx-auto px-6"
+                className="pb-4"
               >
-                {showChapterSeparator ? (
-                  <div
-                    aria-hidden="true"
-                    data-testid="chapter-separator"
-                    className="relative flex items-center justify-center py-16"
-                  >
+                <div className="w-full max-w-2xl mx-auto px-6">
+                  {showChapterSeparator ? (
                     <div
-                      className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(26,26,42,0.10)_30%,rgba(26,26,42,0.18)_50%,rgba(26,26,42,0.10)_70%,transparent_100%)]"
-                    />
-                    <div className="relative flex flex-col items-center gap-3">
-                      <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
-                      <div className="h-2 w-2 rotate-45 bg-neutral-500/80" />
-                      <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                      aria-hidden="true"
+                      data-testid="chapter-separator"
+                      className="relative flex items-center justify-center py-16"
+                    >
+                      <div
+                        className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(26,26,42,0.10)_30%,rgba(26,26,42,0.18)_50%,rgba(26,26,42,0.10)_70%,transparent_100%)]"
+                      />
+                      <div className="relative flex flex-col items-center gap-3">
+                        <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                        <div className="h-2 w-2 rotate-45 bg-neutral-500/80" />
+                        <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                <ParagraphRow
-                  paragraph={paragraph}
-                  words={words}
-                  highlightedWordIndex={highlightedWordIndex}
-                  highlightStyle={settings.ttsHighlightStyle}
-                  onWordClick={handleWordClick}
-                  wordClicksDisabled={tts.status === "playing"}
-                  fontSizeClass={fontSizeClass}
-                  fontFamilyClass={fontFamilyClass}
-                />
+                  ) : null}
+                  <ParagraphRow
+                    paragraph={paragraph}
+                    words={words}
+                    highlightedWordIndex={highlightedWordIndex}
+                    highlightStyle={settings.ttsHighlightStyle}
+                    onWordClick={handleWordClick}
+                    wordClicksDisabled={tts.status === "playing"}
+                    fontSizeClass={fontSizeClass}
+                    fontFamilyClass={fontFamilyClass}
+                  />
+                </div>
               </div>
             );
           })}

@@ -1,7 +1,9 @@
 import { parseEpubBytes } from "@/lib/epub/epubParser";
+import { removeBookReferences } from "@/lib/moodStore";
 import { getBookRepository } from "@/lib/storage/appRepository";
 import type { BookRepository } from "@/lib/storage/bookRepository";
 import { deleteRawEpub, loadRawEpub, storeRawEpub, type RawEpubRecord } from "@/lib/import/rawEpubStore";
+import { removeBookRulesFromStore, TTS_REGEX_SETTINGS_KEY } from "@/lib/ttsRegex/storePersistence";
 import { clearBookTokenCache } from "@/lib/utils/tokenCache";
 import {
   chunkParagraphs,
@@ -451,6 +453,9 @@ export class BookImportService {
       const repository = await this.repositoryPromise;
       await repository.deleteBook(bookId);
       await this.rawStore.remove(bookId);
+      clearBookTokenCache(bookId);
+      await removeBookReferences(bookId, { repository });
+      await this.removeDeletedBookTtsRules(repository, bookId);
       this.emit();
     });
   }
@@ -488,6 +493,16 @@ export class BookImportService {
       this.isRunning = false;
       this.emit();
     }
+  }
+
+  private async removeDeletedBookTtsRules(
+    repository: Pick<BookRepository, "getAppSetting" | "putAppSetting">,
+    bookId: string
+  ): Promise<void> {
+    const saved = await repository.getAppSetting<unknown>(TTS_REGEX_SETTINGS_KEY);
+    const { store, changed } = removeBookRulesFromStore(saved, bookId);
+    if (!changed) return;
+    await repository.putAppSetting(TTS_REGEX_SETTINGS_KEY, store);
   }
 
   private async executeTask(repository: BookRepository, task: ImportTask): Promise<void> {

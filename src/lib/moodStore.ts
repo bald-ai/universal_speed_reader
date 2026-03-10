@@ -1,4 +1,5 @@
 import { getBookRepository } from "@/lib/storage/appRepository";
+import type { BookRepository } from "@/lib/storage/bookRepository";
 import type { LibraryBook, MoodFolder } from "@/types/book";
 
 type RecentMap = Record<string, string>;
@@ -10,6 +11,11 @@ type PersistedMoodStoreV1 = {
   version: 1;
   folders: MoodFolder[];
   recent: RecentMap;
+};
+
+type MoodStoreRepository = Pick<BookRepository, "getAppSetting" | "putAppSetting">;
+type MoodStoreOptions = {
+  repository?: MoodStoreRepository;
 };
 
 let foldersState: MoodFolder[] | null = null;
@@ -78,10 +84,16 @@ function toPersistedState(): PersistedMoodStoreV1 {
   };
 }
 
-async function loadFromRepository(): Promise<PersistedMoodStoreV1 | null> {
+async function resolveRepository(
+  repository?: MoodStoreRepository
+): Promise<MoodStoreRepository> {
+  return repository ?? getBookRepository();
+}
+
+async function loadFromRepository(repository?: MoodStoreRepository): Promise<PersistedMoodStoreV1 | null> {
   try {
-    const repository = await getBookRepository();
-    const value = await repository.getAppSetting<unknown>(MOOD_STORE_SETTING_KEY);
+    const activeRepository = await resolveRepository(repository);
+    const value = await activeRepository.getAppSetting<unknown>(MOOD_STORE_SETTING_KEY);
     return parsePersistedState(value);
   } catch (error) {
     console.warn("Failed to load mood store from repository:", error);
@@ -89,10 +101,13 @@ async function loadFromRepository(): Promise<PersistedMoodStoreV1 | null> {
   }
 }
 
-async function persistToRepository(state: PersistedMoodStoreV1): Promise<void> {
+async function persistToRepository(
+  state: PersistedMoodStoreV1,
+  repository?: MoodStoreRepository
+): Promise<void> {
   try {
-    const repository = await getBookRepository();
-    await repository.putAppSetting(MOOD_STORE_SETTING_KEY, state);
+    const activeRepository = await resolveRepository(repository);
+    await activeRepository.putAppSetting(MOOD_STORE_SETTING_KEY, state);
   } catch (error) {
     console.warn("Failed to persist mood store to repository:", error);
   }
@@ -119,7 +134,7 @@ function persistToLocalStorage(state: PersistedMoodStoreV1): void {
   }
 }
 
-async function hydrateOnce(): Promise<void> {
+async function hydrateOnce(options?: MoodStoreOptions): Promise<void> {
   if (hasHydrated) return;
   if (hydratePromise) {
     await hydratePromise;
@@ -131,7 +146,7 @@ async function hydrateOnce(): Promise<void> {
     if (localStorageState.state) {
       foldersState = cloneFolders(localStorageState.state.folders);
       recentState = { ...localStorageState.state.recent };
-      await persistToRepository(localStorageState.state);
+      await persistToRepository(localStorageState.state, options?.repository);
       hasHydrated = true;
       return;
     }
@@ -139,7 +154,7 @@ async function hydrateOnce(): Promise<void> {
       console.warn("Failed to parse mood store from localStorage, falling back to repository");
     }
 
-    const fromRepository = await loadFromRepository();
+    const fromRepository = await loadFromRepository(options?.repository);
     if (fromRepository) {
       foldersState = cloneFolders(fromRepository.folders);
       recentState = { ...fromRepository.recent };
@@ -160,24 +175,24 @@ async function hydrateOnce(): Promise<void> {
   }
 }
 
-async function persistState(): Promise<void> {
+async function persistState(options?: MoodStoreOptions): Promise<void> {
   const payload = toPersistedState();
   persistToLocalStorage(payload);
-  await persistToRepository(payload);
+  await persistToRepository(payload, options?.repository);
 }
 
-export async function loadFolders(): Promise<MoodFolder[]> {
-  await hydrateOnce();
+export async function loadFolders(options?: MoodStoreOptions): Promise<MoodFolder[]> {
+  await hydrateOnce(options);
   if (!foldersState) {
     foldersState = [];
   }
   return cloneFolders(foldersState);
 }
 
-export async function saveFolders(folders: MoodFolder[]): Promise<void> {
-  await hydrateOnce();
+export async function saveFolders(folders: MoodFolder[], options?: MoodStoreOptions): Promise<void> {
+  await hydrateOnce(options);
   foldersState = cloneFolders(folders);
-  await persistState();
+  await persistState(options);
 }
 
 export function getUnassignedBooks(folders: MoodFolder[], allBooks: LibraryBook[]): LibraryBook[] {
@@ -197,32 +212,36 @@ export function getFolderColorForBook(folders: MoodFolder[], bookId: string): st
   return undefined;
 }
 
-export async function loadRecent(): Promise<RecentMap> {
-  await hydrateOnce();
+export async function loadRecent(options?: MoodStoreOptions): Promise<RecentMap> {
+  await hydrateOnce(options);
   return { ...recentState };
 }
 
-export async function saveRecent(recent: RecentMap): Promise<void> {
-  await hydrateOnce();
+export async function saveRecent(recent: RecentMap, options?: MoodStoreOptions): Promise<void> {
+  await hydrateOnce(options);
   recentState = { ...recent };
-  await persistState();
+  await persistState(options);
 }
 
-export async function setRecent(folderId: string, bookId: string): Promise<void> {
-  await hydrateOnce();
+export async function setRecent(
+  folderId: string,
+  bookId: string,
+  options?: MoodStoreOptions
+): Promise<void> {
+  await hydrateOnce(options);
   recentState = { ...recentState, [folderId]: bookId };
-  await persistState();
+  await persistState(options);
 }
 
-export async function removeBookReferences(bookId: string): Promise<void> {
-  const folders = await loadFolders();
+export async function removeBookReferences(bookId: string, options?: MoodStoreOptions): Promise<void> {
+  const folders = await loadFolders(options);
   const cleanedFolders = folders.map((folder) => ({
     ...folder,
     bookIds: folder.bookIds.filter((id) => id !== bookId),
   }));
-  await saveFolders(cleanedFolders);
+  await saveFolders(cleanedFolders, options);
 
-  const recent = await loadRecent();
+  const recent = await loadRecent(options);
   let changed = false;
   for (const folderId of Object.keys(recent)) {
     if (recent[folderId] === bookId) {
@@ -232,7 +251,7 @@ export async function removeBookReferences(bookId: string): Promise<void> {
   }
 
   if (changed) {
-    await saveRecent(recent);
+    await saveRecent(recent, options);
   }
 }
 

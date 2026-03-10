@@ -1,0 +1,8 @@
+{
+  "file": "65.epub",
+  "sourcePath": "/Users/michalkrsik/Desktop/gutenberg_epubs_2/65.epub",
+  "parsed": null,
+  "issues": [],
+  "excludeReason": "Source EPUB is structurally broken or unreadable.",
+  "error": "Corrupted/Unreadable EPUB: container.xml missing OPF rootfile"
+}

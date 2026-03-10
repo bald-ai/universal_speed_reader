@@ -244,19 +244,149 @@ describe("epub parser internals", () => {
     expect(anchorSets.some((anchors) => anchors.includes("nested-anchor"))).toBe(true);
   });
 
+  it("collects nested anchors from blank sibling wrappers", () => {
+    const html = `
+      <div id="blank-wrapper">
+        <a name="wrapped-anchor"></a>
+      </div>
+      <p>Body paragraph</p>
+    `;
+    const extracted = __epubParserInternals.extractParagraphsFromChapter(html);
+    expect(extracted).toEqual([
+      {
+        text: "Body paragraph",
+        anchors: ["blank-wrapper", "wrapped-anchor"],
+      },
+    ]);
+  });
+
   it("text-title fallback matcher handles exact and chapter-numbered variants", () => {
     expect(__epubParserInternals.textMatchesTitle("Chapter 1", "1. Chapter 1")).toBe(true);
     expect(__epubParserInternals.textMatchesTitle("The Beginning", "The Beginning")).toBe(true);
     expect(__epubParserInternals.textMatchesTitle("Unrelated text", "The Beginning")).toBe(false);
   });
+
+  it("parses nav toc hierarchy and landmarks from the navigation document", () => {
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li>
+          <a href="Text/part1.xhtml#part1">Part One</a>
+          <ol>
+            <li><a href="Text/ch1.xhtml#ch1">Chapter One</a></li>
+          </ol>
+        </li>
+      </ol>
+    </nav>
+    <nav epub:type="landmarks">
+      <ol>
+        <li><a epub:type="bodymatter" href="Text/ch1.xhtml#ch1">Start Reading</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const parsed = __epubParserInternals.parseNavigationDocument(nav, "OEBPS/nav.xhtml");
+    expect(parsed.tocEntries).toHaveLength(2);
+    expect(parsed.tocEntries[0]).toMatchObject({
+      title: "Part One",
+      depth: 1,
+      parentId: null,
+    });
+    expect(parsed.tocEntries[1]).toMatchObject({
+      title: "Chapter One",
+      depth: 2,
+      parentId: parsed.tocEntries[0]?.id ?? null,
+    });
+    expect(parsed.landmarks).toEqual([
+      {
+        file: "text/ch1.xhtml",
+        anchor: "ch1",
+        types: ["bodymatter"],
+      },
+    ]);
+  });
 });
 
-describe("parseEpubBytes TOC preference", () => {
+describe("parseEpubBytes TOC handling", () => {
   it("prefers EPUB3 nav when both nav and ncx are present", async () => {
     const bytes = createTestEpub({ includeNav: true, includeNcx: true });
     const parsed = await parseEpubBytes(bytes);
     expect(parsed.chapters.length).toBeGreaterThan(0);
     expect(parsed.chapters[0]?.title).toBe("Nav Two");
+  });
+
+  it("merges nav and ncx entries when they contribute different chapter targets", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const ncxPath = "OEBPS/toc.ncx";
+    const ch1Path = "OEBPS/Text/ch1.xhtml";
+    const ch2Path = "OEBPS/Text/ch2.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Parser Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch2" href="Text/ch2.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml" />
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/ch1.xhtml#p1">Nav One</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const ncx = `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="n1" playOrder="1">
+      <navLabel><text>NCX Two</text></navLabel>
+      <content src="Text/ch2.xhtml#p2" />
+    </navPoint>
+  </navMap>
+</ncx>`;
+
+    const ch1 = `<html><body><p id="p1">Alpha body.</p></body></html>`;
+    const ch2 = `<html><body><p id="p2">Beta body.</p></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: ncxPath, data: ncx },
+      { name: ch1Path, data: ch1 },
+      { name: ch2Path, data: ch2 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "Nav One", start_paragraph_id: 1 },
+      { title: "NCX Two", start_paragraph_id: 2 },
+    ]);
   });
 
   it("falls back to ncx when nav is missing", async () => {
@@ -393,6 +523,57 @@ describe("parseEpubBytes TOC preference", () => {
     ]);
   });
 
+  it("matches chapter anchors hidden inside blank wrapper nodes before the real paragraph", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const ch1Path = "OEBPS/Text/ch1.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Parser Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/ch1.xhtml#wrapped-anchor">Only Chapter</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const ch1 = `<html><body><div id="blank-wrapper"><a name="wrapped-anchor"></a></div><p>First real paragraph.</p></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: ch1Path, data: ch1 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.paragraphs.map((paragraph) => paragraph.text)).toEqual(["First real paragraph."]);
+    expect(parsed.chapters).toEqual([{ title: "Only Chapter", start_paragraph_id: 1 }]);
+  });
+
   it("uses heading fallback when TOC metadata is missing", async () => {
     const bytes = createTestEpub({ includeNav: false, includeNcx: false, includeHeadings: true });
     const parsed = await parseEpubBytes(bytes);
@@ -407,5 +588,359 @@ describe("parseEpubBytes TOC preference", () => {
     expect(parsed.chapters.length).toBe(1);
     expect(parsed.chapters[0]?.title).toBe("Full book");
     expect(parsed.chapters[0]?.start_paragraph_id).toBe(1);
+  });
+
+  it("selects nested chapter depth instead of top-level parts and contents", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const introPath = "OEBPS/Text/intro.xhtml";
+    const partPath = "OEBPS/Text/part1.xhtml";
+    const ch1Path = "OEBPS/Text/ch1.xhtml";
+    const ch2Path = "OEBPS/Text/ch2.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Parser Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="intro" href="Text/intro.xhtml" media-type="application/xhtml+xml" />
+    <item id="part" href="Text/part1.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch2" href="Text/ch2.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="intro"/>
+    <itemref idref="part"/>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/intro.xhtml#contents">Contents</a></li>
+        <li>
+          <a href="Text/part1.xhtml#part1">Part One</a>
+          <ol>
+            <li><a href="Text/ch1.xhtml#ch1">Chapter One</a></li>
+            <li><a href="Text/ch2.xhtml#ch2">Chapter Two</a></li>
+          </ol>
+        </li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const intro = `<html><body><h1 id="contents">Contents</h1><p>Front matter.</p></body></html>`;
+    const part = `<html><body><h1 id="part1">Part One</h1><p>Part opener.</p></body></html>`;
+    const ch1 = `<html><body><h2 id="ch1">Chapter One</h2><p id="p1">Alpha chapter text.</p></body></html>`;
+    const ch2 = `<html><body><h2 id="ch2">Chapter Two</h2><p id="p2">Beta chapter text.</p></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: introPath, data: intro },
+      { name: partPath, data: part },
+      { name: ch1Path, data: ch1 },
+      { name: ch2Path, data: ch2 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "Chapter One", start_paragraph_id: 3 },
+      { title: "Chapter Two", start_paragraph_id: 4 },
+    ]);
+  });
+
+  it("uses landmarks and guide hints to keep front matter out of the primary chapter list", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const titlePath = "OEBPS/Text/title.xhtml";
+    const ch1Path = "OEBPS/Text/ch1.xhtml";
+    const ch2Path = "OEBPS/Text/ch2.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Parser Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="title" href="Text/title.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch2" href="Text/ch2.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="title"/>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+  <guide>
+    <reference type="title-page" title="Title Page" href="Text/title.xhtml#titlepage" />
+    <reference type="text" title="Start" href="Text/ch1.xhtml#ch1" />
+  </guide>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/title.xhtml#titlepage">Title Page</a></li>
+        <li><a href="Text/ch1.xhtml#ch1">Chapter One</a></li>
+        <li><a href="Text/ch2.xhtml#ch2">Chapter Two</a></li>
+      </ol>
+    </nav>
+    <nav epub:type="landmarks">
+      <ol>
+        <li><a epub:type="bodymatter" href="Text/ch1.xhtml#ch1">Start Reading</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const title = `<html><body><h1 id="titlepage">Title Page</h1><p>Front matter.</p></body></html>`;
+    const ch1 = `<html><body><h2 id="ch1">Chapter One</h2><p id="p1">Alpha chapter text.</p></body></html>`;
+    const ch2 = `<html><body><h2 id="ch2">Chapter Two</h2><p id="p2">Beta chapter text.</p></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: titlePath, data: title },
+      { name: ch1Path, data: ch1 },
+      { name: ch2Path, data: ch2 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "Chapter One", start_paragraph_id: 2 },
+      { title: "Chapter Two", start_paragraph_id: 3 },
+    ]);
+  });
+
+  it("keeps dense same-file poem toc entries and drops the wrapper entry", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const poemsPath = "OEBPS/Text/poems.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Renascence and Other Poems</dc:title>
+  </metadata>
+  <manifest>
+    <item id="poems" href="Text/poems.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="poems"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/poems.xhtml#wrapper">Poems</a></li>
+        <li><a href="Text/poems.xhtml#renascence">Renascence</a></li>
+        <li><a href="Text/poems.xhtml#interim">Interim</a></li>
+        <li><a href="Text/poems.xhtml#suicide">The Suicide</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const poems = `<html><body>
+      <h1 id="wrapper">Poems</h1>
+      <h2 id="renascence">Renascence</h2>
+      <p>First poem body.</p>
+      <h2 id="interim">Interim</h2>
+      <p>Second poem body.</p>
+      <h2 id="suicide">The Suicide</h2>
+      <p>Third poem body.</p>
+    </body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: poemsPath, data: poems },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "Renascence", start_paragraph_id: 1 },
+      { title: "Interim", start_paragraph_id: 2 },
+      { title: "The Suicide", start_paragraph_id: 3 },
+    ]);
+  });
+
+  it("drops umbrella work titles when real play entries follow", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const wrapperPath = "OEBPS/Text/trilogy.xhtml";
+    const play1Path = "OEBPS/Text/play1.xhtml";
+    const play2Path = "OEBPS/Text/play2.xhtml";
+    const play3Path = "OEBPS/Text/play3.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Three Greek Plays</dc:title>
+  </metadata>
+  <manifest>
+    <item id="wrapper" href="Text/trilogy.xhtml" media-type="application/xhtml+xml" />
+    <item id="play1" href="Text/play1.xhtml" media-type="application/xhtml+xml" />
+    <item id="play2" href="Text/play2.xhtml" media-type="application/xhtml+xml" />
+    <item id="play3" href="Text/play3.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="wrapper"/>
+    <itemref idref="play1"/>
+    <itemref idref="play2"/>
+    <itemref idref="play3"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/trilogy.xhtml#trilogy">The Oedipus Trilogy</a></li>
+        <li><a href="Text/play1.xhtml#play1">OEDIPUS THE KING</a></li>
+        <li><a href="Text/play2.xhtml#play2">OEDIPUS AT COLONUS</a></li>
+        <li><a href="Text/play3.xhtml#play3">ANTIGONE</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const wrapper = `<html><body><h1 id="trilogy">The Oedipus Trilogy</h1><p>Umbrella matter.</p></body></html>`;
+    const play1 = `<html><body><h1 id="play1">OEDIPUS THE KING</h1><p>Play one body.</p></body></html>`;
+    const play2 = `<html><body><h1 id="play2">OEDIPUS AT COLONUS</h1><p>Play two body.</p></body></html>`;
+    const play3 = `<html><body><h1 id="play3">ANTIGONE</h1><p>Play three body.</p></body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: wrapperPath, data: wrapper },
+      { name: play1Path, data: play1 },
+      { name: play2Path, data: play2 },
+      { name: play3Path, data: play3 },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "OEDIPUS THE KING", start_paragraph_id: 2 },
+      { title: "OEDIPUS AT COLONUS", start_paragraph_id: 3 },
+      { title: "ANTIGONE", start_paragraph_id: 4 },
+    ]);
+  });
+
+  it("recovers implicit numbered chapters when the toc only covers front matter", async () => {
+    const opfPath = "OEBPS/content.opf";
+    const navPath = "OEBPS/nav.xhtml";
+    const frontPath = "OEBPS/Text/front.xhtml";
+    const mainPath = "OEBPS/Text/main.xhtml";
+
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>A Long Novel</dc:title>
+  </metadata>
+  <manifest>
+    <item id="front" href="Text/front.xhtml" media-type="application/xhtml+xml" />
+    <item id="main" href="Text/main.xhtml" media-type="application/xhtml+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+  </manifest>
+  <spine>
+    <itemref idref="front"/>
+    <itemref idref="main"/>
+  </spine>
+</package>`;
+
+    const nav = `<!doctype html>
+<html xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="Text/front.xhtml#book">A Long Novel</a></li>
+        <li><a href="Text/front.xhtml#ad">Advertisement</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>`;
+
+    const front = `<html><body><h1 id="book">A Long Novel</h1><h2 id="ad">Advertisement</h2><p>Front matter text.</p></body></html>`;
+    const main = `<html><body>
+      <h2>Chapter 1. Dawn</h2><p>Body one.</p>
+      <h2>Chapter 2. Noon</h2><p>Body two.</p>
+      <h2>Chapter 3. Dusk</h2><p>Body three.</p>
+      <h2>Chapter 4. Night</h2><p>Body four.</p>
+      <h2>Chapter 5. Storm</h2><p>Body five.</p>
+    </body></html>`;
+    const container = `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="${opfPath}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      { name: "META-INF/container.xml", data: container },
+      { name: opfPath, data: opf },
+      { name: navPath, data: nav },
+      { name: frontPath, data: front },
+      { name: mainPath, data: main },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.chapters).toEqual([
+      { title: "Chapter 1. Dawn", start_paragraph_id: 3 },
+      { title: "Chapter 2. Noon", start_paragraph_id: 5 },
+      { title: "Chapter 3. Dusk", start_paragraph_id: 7 },
+      { title: "Chapter 4. Night", start_paragraph_id: 9 },
+      { title: "Chapter 5. Storm", start_paragraph_id: 11 },
+    ]);
   });
 });

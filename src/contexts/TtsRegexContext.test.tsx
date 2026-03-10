@@ -203,4 +203,44 @@ describe("TtsRegexContext internals", () => {
     expect(out.globalRules[0]?.pattern).toBe("\\bReserved\\b");
     expect(out.globalRules[0]?.source).toBe("simple");
   });
+
+  it("removes only deleted book-scoped rules", () => {
+    const now = Date.now();
+    const result = __ttsRegexContextInternals.removeBookRulesFromStore(
+      {
+        version: 1,
+        matchMode: "token",
+        globalRules: [],
+        bookRulesById: {
+          "book-1": [
+            {
+              id: "book-1-rule",
+              pattern: "alpha",
+              replacement: "bravo",
+              enabled: true,
+              caseInsensitive: true,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          "book-2": [
+            {
+              id: "book-2-rule",
+              pattern: "charlie",
+              replacement: "delta",
+              enabled: true,
+              caseInsensitive: true,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+        },
+      },
+      "book-1"
+    );
+
+    expect(result.changed).toBe(true);
+    expect(result.store.bookRulesById["book-1"]).toBeUndefined();
+    expect(result.store.bookRulesById["book-2"]).toHaveLength(1);
+  });
 });

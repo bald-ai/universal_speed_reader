@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "bun test",
+    "test:chapter-audit": "bun scripts/chapter-audit.ts",
     "test:epub-fixtures": "bun scripts/test-epub-fixtures.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "android:sync": "bunx cap sync android",

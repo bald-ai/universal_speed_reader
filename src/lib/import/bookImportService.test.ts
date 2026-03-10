@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import { InMemoryBookRepository } from "@/lib/storage/inMemoryBookRepository";
 import { BookImportService } from "@/lib/import/bookImportService";
 import { loadRawEpub } from "@/lib/import/rawEpubStore";
+import {
+  __resetMoodStoreForTests,
+  loadFolders,
+  loadRecent,
+  saveFolders,
+  saveRecent,
+} from "@/lib/moodStore";
+import { TTS_REGEX_SETTINGS_KEY } from "@/lib/ttsRegex/storePersistence";
 import type { ProcessingStatus } from "@/types/storage";
 
 class TrackingRepository extends InMemoryBookRepository {
@@ -46,6 +54,7 @@ describe("book import service state machine", () => {
   let service: BookImportService;
 
   beforeEach(async () => {
+    __resetMoodStoreForTests();
     repo = new TrackingRepository();
     await repo.init();
     service = new BookImportService(Promise.resolve(repo));
@@ -148,7 +157,7 @@ describe("book import service state machine", () => {
     expect(jobs.map((job) => job.attempt)).toEqual([1, 2]);
   });
 
-  it("deletes completed books and removes raw retry source", async () => {
+  it("deletes completed books and removes all book-linked state", async () => {
     const bytes = new Uint8Array(readFileSync("fixtures/shelley-frankenstein.epub"));
     const bookId = await service.importFromBytes({
       fileName: "shelley-frankenstein.epub",
@@ -157,13 +166,90 @@ describe("book import service state machine", () => {
     });
     expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
     expect(await loadRawEpub(bookId)).not.toBeNull();
+    await repo.saveReadingProgress({
+      book_id: bookId,
+      paragraph_id: 5,
+      word_index: 1,
+      mode: "normal",
+      updated_at: Date.now(),
+    });
+    await saveFolders(
+      [
+        { id: "focus", label: "Focus", bookIds: [bookId, "other-book"] },
+        { id: "calm", label: "Calm", bookIds: [bookId] },
+      ],
+      { repository: repo }
+    );
+    await saveRecent(
+      {
+        focus: bookId,
+        calm: "other-book",
+      },
+      { repository: repo }
+    );
+    await repo.putAppSetting(TTS_REGEX_SETTINGS_KEY, {
+      version: 1,
+      matchMode: "token",
+      globalRules: [],
+      bookRulesById: {
+        [bookId]: [
+          {
+            id: "deleted-book-rule",
+            pattern: "alpha",
+            replacement: "bravo",
+            enabled: true,
+            caseInsensitive: true,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        "other-book": [
+          {
+            id: "other-book-rule",
+            pattern: "charlie",
+            replacement: "delta",
+            enabled: true,
+            caseInsensitive: true,
+            createdAt: 2,
+            updatedAt: 2,
+          },
+        ],
+      },
+    });
 
     await service.deleteBook(bookId);
 
     expect(await repo.getBook(bookId)).toBeNull();
     expect(await repo.getBookAggregate(bookId)).toBeNull();
+    expect(await repo.getReadingProgress(bookId)).toBeNull();
     expect(await repo.listImportJobs(bookId)).toEqual([]);
     expect(await loadRawEpub(bookId)).toBeNull();
+    expect(await loadFolders({ repository: repo })).toEqual([
+      { id: "focus", label: "Focus", bookIds: ["other-book"] },
+      { id: "calm", label: "Calm", bookIds: [] },
+    ]);
+    expect(await loadRecent({ repository: repo })).toEqual({
+      calm: "other-book",
+    });
+    expect(await repo.getAppSetting<unknown>(TTS_REGEX_SETTINGS_KEY)).toEqual({
+      version: 1,
+      matchMode: "token",
+      globalRules: [],
+      bookRulesById: {
+        "other-book": [
+          {
+            id: "other-book-rule",
+            pattern: "charlie",
+            replacement: "delta",
+            enabled: true,
+            caseInsensitive: true,
+            createdAt: 2,
+            updatedAt: 2,
+            source: "regex",
+          },
+        ],
+      },
+    });
   });
 
   it("updates title, author, and replacement cover metadata", async () => {
