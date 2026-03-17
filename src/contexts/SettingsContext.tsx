@@ -53,6 +53,7 @@ export type Settings = {
   orpHighlight: boolean;
   orpHighlightColor: string;
   progressBarTheme: ProgressBarTheme;
+  horizontalPadding: number;
 };
 
 type SettingsContextValue = {
@@ -72,6 +73,7 @@ const DEFAULT_SETTINGS: Settings = {
   orpHighlight: true,
   orpHighlightColor: "#10b981",
   progressBarTheme: "cotton-candy",
+  horizontalPadding: 24,
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
@@ -122,6 +124,10 @@ function sanitizeSettings(raw: unknown): Partial<Settings> {
 
   if (typeof raw.progressBarTheme === "string" && PROGRESS_BAR_THEMES.some((t) => t.name === raw.progressBarTheme)) {
     out.progressBarTheme = raw.progressBarTheme as ProgressBarTheme;
+  }
+
+  if (typeof raw.horizontalPadding === "number" && raw.horizontalPadding >= 0 && raw.horizontalPadding <= 64) {
+    out.horizontalPadding = raw.horizontalPadding;
   }
 
   return out;

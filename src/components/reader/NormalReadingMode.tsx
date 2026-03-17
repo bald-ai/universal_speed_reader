@@ -717,7 +717,8 @@ export default function NormalReadingMode() {
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 pb-20 pt-4"
+        className="flex-1 overflow-y-auto pb-20 pt-4"
+        style={{ paddingLeft: settings.horizontalPadding, paddingRight: settings.horizontalPadding }}
       >
         <div
           style={{
@@ -751,7 +752,7 @@ export default function NormalReadingMode() {
                 }}
                 className="pb-4"
               >
-                <div className="w-full max-w-2xl mx-auto px-6">
+                <div className="w-full max-w-2xl mx-auto">
                   {showChapterSeparator ? (
                     <div
                       aria-hidden="true"

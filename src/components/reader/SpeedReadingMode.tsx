@@ -202,7 +202,7 @@ export default function SpeedReadingMode() {
       <div className="absolute inset-0 bg-gradient-to-b from-neutral-950 via-neutral-900/30 to-neutral-950 pointer-events-none" />
       
       {/* Word Display Area - always crisp and clear at base level */}
-      <div className="flex-1 flex items-center justify-center px-6 relative z-10">
+      <div className="flex-1 flex items-center justify-center relative z-10" style={{ paddingLeft: settings.horizontalPadding, paddingRight: settings.horizontalPadding }}>
         <div className={`text-4xl sm:text-6xl md:text-7xl font-semibold tracking-tight text-center ${fontFamilyClass}`}>
           <AnimatePresence mode="wait">
             {displayedWord ? (

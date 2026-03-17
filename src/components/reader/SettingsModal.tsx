@@ -317,6 +317,52 @@ export default function SettingsModal(props: SettingsModalProps) {
                 </div>
               </section>
 
+              {/* Horizontal Padding */}
+              <section>
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="font-medium text-neutral-200">Text padding</span>
+                  <motion.span
+                    key={settings.horizontalPadding}
+                    initial={{ scale: 1.2, color: "#a78bfa" }}
+                    animate={{ scale: 1, color: "#a78bfa" }}
+                    className="text-xs text-violet-400 font-medium"
+                  >
+                    {settings.horizontalPadding}px
+                  </motion.span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="range"
+                    min={0}
+                    max={64}
+                    step={4}
+                    value={settings.horizontalPadding}
+                    onChange={(event) => updateSettings({ horizontalPadding: Number(event.target.value) })}
+                    className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
+                      [&::-webkit-slider-thumb]:appearance-none
+                      [&::-webkit-slider-thumb]:w-4
+                      [&::-webkit-slider-thumb]:h-4
+                      [&::-webkit-slider-thumb]:rounded-full
+                      [&::-webkit-slider-thumb]:bg-violet-500
+                      [&::-webkit-slider-thumb]:shadow-lg
+                      [&::-webkit-slider-thumb]:shadow-violet-500/30
+                      [&::-webkit-slider-thumb]:transition-transform
+                      [&::-webkit-slider-thumb]:hover:scale-110
+                      [&::-moz-range-thumb]:w-4
+                      [&::-moz-range-thumb]:h-4
+                      [&::-moz-range-thumb]:rounded-full
+                      [&::-moz-range-thumb]:bg-violet-500
+                      [&::-moz-range-thumb]:border-0
+                      [&::-moz-range-thumb]:shadow-lg
+                      [&::-moz-range-thumb]:shadow-violet-500/30"
+                  />
+                  <div className="flex justify-between text-xs text-neutral-500 mt-2">
+                    <span>None</span>
+                    <span>Wide</span>
+                  </div>
+                </div>
+              </section>
+
               {/* WPM */}
               <section>
                 <div className="flex items-center justify-between mb-2.5">
