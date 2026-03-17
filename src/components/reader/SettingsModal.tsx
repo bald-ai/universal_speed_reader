@@ -2,7 +2,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/contexts/SettingsContext";
-import { useSettings } from "@/contexts/SettingsContext";
+import { useSettings, PROGRESS_BAR_THEMES } from "@/contexts/SettingsContext";
 import {
   clampWpm,
   normalizeTtsPlaybackRate,
@@ -438,6 +438,49 @@ export default function SettingsModal(props: SettingsModalProps) {
                   </div>
                 </section>
               )}
+
+              {/* Progress Bar Theme */}
+              <section>
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="font-medium text-neutral-200">Progress bar style</span>
+                  <span className="text-xs text-neutral-400 font-medium">
+                    {PROGRESS_BAR_THEMES.find((t) => t.name === settings.progressBarTheme)?.label ?? "Cotton Candy"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {PROGRESS_BAR_THEMES.map((theme) => (
+                    <motion.button
+                      key={theme.name}
+                      type="button"
+                      onClick={() => updateSettings({ progressBarTheme: theme.name })}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.97 }}
+                      className={`relative rounded-xl p-2.5 transition-all duration-200 ${
+                        settings.progressBarTheme === theme.name
+                          ? "border border-white/30 bg-neutral-800/80"
+                          : "border border-neutral-800 bg-neutral-900 hover:border-neutral-700"
+                      }`}
+                    >
+                      <span className="block text-[11px] text-neutral-300 mb-1.5 text-left">{theme.label}</span>
+                      <div className="relative w-full h-2 rounded-full bg-neutral-700 overflow-hidden">
+                        <div
+                          className="absolute top-0 left-0 h-full w-3/4 rounded-full"
+                          style={{
+                            background: `linear-gradient(to right, ${theme.from}, ${theme.via}, ${theme.to})`,
+                          }}
+                        />
+                        <div
+                          className="absolute top-0 h-full w-3 rounded-full blur-sm"
+                          style={{
+                            left: "calc(75% - 6px)",
+                            backgroundColor: `${theme.glow}60`,
+                          }}
+                        />
+                      </div>
+                    </motion.button>
+                  ))}
+                </div>
+              </section>
 
               {/* TTS Speed */}
               <section>

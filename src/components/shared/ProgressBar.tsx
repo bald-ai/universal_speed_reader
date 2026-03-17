@@ -1,5 +1,8 @@
 
 import { motion } from "framer-motion";
+import { useMemo } from "react";
+import { useSettings } from "@/contexts/SettingsContext";
+import { PROGRESS_BAR_THEMES } from "@/contexts/SettingsContext";
 
 type ProgressBarProps = {
   value: number;
@@ -9,11 +12,20 @@ type ProgressBarProps = {
 export default function ProgressBar(props: ProgressBarProps) {
   const { value, className = "" } = props;
   const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  const { settings } = useSettings();
+
+  const theme = useMemo(
+    () => PROGRESS_BAR_THEMES.find((t) => t.name === settings.progressBarTheme) ?? PROGRESS_BAR_THEMES[0],
+    [settings.progressBarTheme]
+  );
 
   return (
     <div className={`relative w-full h-2 rounded-full bg-neutral-800 overflow-hidden ${className}`}>
       <motion.div
-        className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-violet-500 via-cyan-400 to-emerald-400"
+        className="absolute top-0 left-0 h-full rounded-full"
+        style={{
+          background: `linear-gradient(to right, ${theme.from}, ${theme.via}, ${theme.to})`,
+        }}
         initial={{ width: 0 }}
         animate={{ width: `${clamped}%` }}
         transition={{ duration: 0.3, ease: "easeOut" }}
@@ -21,8 +33,11 @@ export default function ProgressBar(props: ProgressBarProps) {
       {/* Glow effect at leading edge */}
       {clamped > 0 && (
         <motion.div
-          className="absolute top-0 h-full w-4 rounded-full bg-cyan-400/50 blur-sm"
-          style={{ left: `calc(${clamped}% - 8px)` }}
+          className="absolute top-0 h-full w-4 rounded-full blur-sm"
+          style={{
+            left: `calc(${clamped}% - 8px)`,
+            backgroundColor: `${theme.glow}80`,
+          }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
