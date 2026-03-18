@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
 import {
   DndContext,
   closestCenter,
@@ -190,6 +190,192 @@ function FolderPicker(props: {
   );
 }
 
+function FolderCardProgressBar({ percent }: { percent: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-violet-400 transition-[width] duration-300"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <span className="text-[11px] font-semibold tabular-nums text-neutral-100">{percent}%</span>
+    </div>
+  );
+}
+
+function BookRowContent(props: { book: LibraryBook; isSelected: boolean }) {
+  const { book, isSelected } = props;
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="min-w-0 flex-1">
+        <div className={`truncate text-[12px] font-medium text-neutral-100 ${isSelected ? "text-violet-200" : ""}`}>
+          {book.title}
+        </div>
+        <div className="truncate text-[10px] text-neutral-500">{book.author ?? "Unknown author"}</div>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-0.5">
+        <span className="text-[10px] tabular-nums text-neutral-400">{Math.round(book.progressPercent)}%</span>
+        <div className="h-0.5 w-8 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-violet-400" style={{ width: `${book.progressPercent}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReorderableBookRow(props: {
+  value: string;
+  book: LibraryBook;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const { value, book, isSelected, onSelect } = props;
+  const controls = useDragControls();
+
+  return (
+    <Reorder.Item
+      value={value}
+      dragListener={false}
+      dragControls={controls}
+      className={`flex items-center rounded-lg border transition-colors ${
+        isSelected
+          ? "border-violet-500/20 bg-violet-500/15"
+          : "border-transparent hover:bg-white/5"
+      }`}
+      whileDrag={{
+        scale: 1.02,
+        boxShadow: "0 8px 25px rgba(0,0,0,0.5)",
+        backgroundColor: "rgba(30,25,50,0.95)",
+        borderRadius: 8,
+        zIndex: 50,
+      }}
+    >
+      <div
+        className="flex w-6 shrink-0 cursor-grab items-center justify-center py-2 pl-0.5 pr-1 touch-none active:cursor-grabbing"
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          controls.start(event);
+        }}
+      >
+        <div className="h-4 w-[3px] rounded-full bg-white/[0.12] transition-colors hover:bg-white/25 active:bg-violet-400/40" />
+      </div>
+      <button type="button" onClick={onSelect} className="min-w-0 flex-1 py-2 pl-0 pr-2.5 text-left">
+        <BookRowContent book={book} isSelected={isSelected} />
+      </button>
+    </Reorder.Item>
+  );
+}
+
+function FolderBookPickerOverlay(props: {
+  books: LibraryBook[];
+  orderedBookIds: string[];
+  selectedId: string | undefined;
+  onSelect: (id: string) => void;
+  onReorder: (nextBookIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const { books, orderedBookIds, selectedId, onSelect, onReorder, onClose } = props;
+  const [query, setQuery] = useState("");
+  const bookById = useMemo(() => new Map(books.map((book) => [book.id, book])), [books]);
+
+  const filteredBooks = useMemo(() => {
+    if (!query.trim()) return books;
+    const normalizedQuery = query.toLowerCase();
+    return books.filter((book) => {
+      const author = book.author ?? "";
+      return book.title.toLowerCase().includes(normalizedQuery) || author.toLowerCase().includes(normalizedQuery);
+    });
+  }, [books, query]);
+
+  const isFiltering = query.trim().length > 0;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+      onPointerDown={(event) => event.stopPropagation()}
+      className="absolute inset-0 z-10 flex flex-col overflow-hidden rounded-2xl bg-neutral-900/[0.97] backdrop-blur-sm"
+    >
+      <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
+        <div className="relative flex-1">
+          <svg
+            className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") onClose();
+            }}
+            placeholder={`Search ${books.length} books...`}
+            className="w-full rounded-lg border border-white/10 bg-black/40 py-1.5 pl-6.5 pr-2 text-[11px] text-neutral-100 outline-none transition-colors placeholder:text-neutral-600 focus:border-violet-500/40"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 text-[10px] text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        >
+          &#x2715;
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {filteredBooks.length === 0 ? (
+          <div className="flex h-20 items-center justify-center">
+            <div className="text-[11px] italic text-neutral-600">No matches</div>
+          </div>
+        ) : isFiltering ? (
+          <div className="space-y-0.5">
+            {filteredBooks.map((book) => (
+              <button
+                key={book.id}
+                type="button"
+                onClick={() => onSelect(book.id)}
+                className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                  book.id === selectedId
+                    ? "border-violet-500/20 bg-violet-500/15"
+                    : "border-transparent hover:bg-white/5"
+                }`}
+              >
+                <BookRowContent book={book} isSelected={book.id === selectedId} />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Reorder.Group axis="y" values={orderedBookIds} onReorder={onReorder} className="space-y-0.5">
+            {orderedBookIds.map((bookId) => {
+              const book = bookById.get(bookId);
+              if (!book) return null;
+
+              return (
+                <ReorderableBookRow
+                  key={book.id}
+                  value={book.id}
+                  book={book}
+                  isSelected={book.id === selectedId}
+                  onSelect={() => onSelect(book.id)}
+                />
+              );
+            })}
+          </Reorder.Group>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 export default function MoodView(props: MoodViewProps) {
   const { books, onOpenBook } = props;
   const [folders, setFolders] = useState<MoodFolder[]>([]);
@@ -283,6 +469,25 @@ export default function MoodView(props: MoodViewProps) {
     });
   }, [applyFolderMutation]);
 
+  const reorderFolderBooks = useCallback((folderId: string, nextBookIds: string[]) => {
+    applyFolderMutation((current) => {
+      let changed = false;
+      const next = current.map((folder) => {
+        if (folder.id !== folderId) return folder;
+        if (
+          folder.bookIds.length === nextBookIds.length &&
+          folder.bookIds.every((bookId, index) => bookId === nextBookIds[index])
+        ) {
+          return folder;
+        }
+
+        changed = true;
+        return { ...folder, bookIds: nextBookIds };
+      });
+      return changed ? next : current;
+    });
+  }, [applyFolderMutation]);
+
   const commitEdit = useCallback((folderId: string, label: string, icon?: string, color?: string) => {
     const nextLabel = label.trim();
     if (!nextLabel) return;
@@ -311,9 +516,8 @@ export default function MoodView(props: MoodViewProps) {
     setNewEditId(id);
   }, [applyFolderMutation]);
 
-  const openMostRecent = useCallback((folderId: string, bookId: string) => {
+  const setFolderRecentBook = useCallback((folderId: string, bookId: string) => {
     setRecentMap((previous) => ({ ...previous, [folderId]: bookId }));
-    onOpenBook(bookId);
     void setRecent(folderId, bookId)
       .then(() => {
         setPersistError(null);
@@ -321,7 +525,12 @@ export default function MoodView(props: MoodViewProps) {
       .catch((error) => {
         setPersistError(error instanceof Error ? error.message : "Failed to save recent book");
       });
-  }, [onOpenBook]);
+  }, []);
+
+  const openMostRecent = useCallback((folderId: string, bookId: string) => {
+    setFolderRecentBook(folderId, bookId);
+    onOpenBook(bookId);
+  }, [onOpenBook, setFolderRecentBook]);
 
   const sensors = useSensors(
    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -359,6 +568,8 @@ export default function MoodView(props: MoodViewProps) {
                onOpenRecent={(folderId, bookId) => {
                  void openMostRecent(folderId, bookId);
                }}
+               onSelectRecentBook={setFolderRecentBook}
+               onReorderBooks={reorderFolderBooks}
                onToggleBook={(bookId) => {
                  toggleBookInFolder(folder.id, bookId);
                }}
@@ -457,6 +668,8 @@ function FolderCard(props: {
   bookById: Map<string, LibraryBook>;
   recentBookId: string | undefined;
   onOpenRecent: (folderId: string, bookId: string) => void;
+  onSelectRecentBook: (folderId: string, bookId: string) => void;
+  onReorderBooks: (folderId: string, nextBookIds: string[]) => void;
   onToggleBook: (bookId: string) => void;
   startInEditMode: boolean;
   onConsumeEditMode: () => void;
@@ -468,6 +681,8 @@ function FolderCard(props: {
     bookById,
     recentBookId,
     onOpenRecent,
+    onSelectRecentBook,
+    onReorderBooks,
     onToggleBook,
     startInEditMode,
     onConsumeEditMode,
@@ -476,6 +691,7 @@ function FolderCard(props: {
   } = props;
 
   const [menuState, setMenuState] = useState<LocalMenuState>(startInEditMode ? "edit" : "closed");
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState(folder.label);
   const [iconDraft, setIconDraft] = useState<string | undefined>(iconKeyForFolder(folder));
   const [colorDraft, setColorDraft] = useState<string | undefined>(folder.color);
@@ -483,6 +699,7 @@ function FolderCard(props: {
   useEffect(() => {
     if (startInEditMode) {
       setMenuState("edit");
+      setIsPickerOpen(false);
       setRenameDraft(folder.label);
       setIconDraft(iconKeyForFolder(folder));
       setColorDraft(folder.color);
@@ -494,60 +711,28 @@ function FolderCard(props: {
   const theme = folderTheme(folder);
 
   useEffect(() => {
-    if (menuState === "closed") return;
+    if (menuState === "closed" && !isPickerOpen) return;
     const onDown = (e: MouseEvent) => {
       if (!ref.current) return;
       if (ref.current.contains(e.target as Node)) return;
       setMenuState("closed");
+      setIsPickerOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [menuState]);
+  }, [isPickerOpen, menuState]);
 
   const allBooksInFolder = folder.bookIds.map((id) => bookById.get(id)).filter(Boolean) as LibraryBook[];
   const bookCount = allBooksInFolder.length;
-  const carouselRef = useRef<HTMLDivElement | null>(null);
-  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-
-  const recentBookIndex = useMemo(() => {
-    if (bookCount === 0) return 0;
-    if (!recentBookId) return 0;
-    const index = folder.bookIds.indexOf(recentBookId);
-    return index >= 0 ? index : 0;
-  }, [bookCount, folder.bookIds, recentBookId]);
-
-  const syncActiveSlideFromScroll = useCallback(() => {
-    const carousel = carouselRef.current;
-    if (!carousel || bookCount === 0) {
-      setActiveSlideIndex(0);
-      return;
-    }
-    const slideWidth = carousel.clientWidth || 1;
-    const rawIndex = Math.round(carousel.scrollLeft / slideWidth);
-    const nextIndex = Math.max(0, Math.min(bookCount - 1, rawIndex));
-    setActiveSlideIndex((current) => (current === nextIndex ? current : nextIndex));
-  }, [bookCount]);
-
-  useEffect(() => {
-    if (bookCount === 0) {
-      setActiveSlideIndex(0);
-      return;
-    }
-    setActiveSlideIndex((current) => Math.min(current, bookCount - 1));
-  }, [bookCount]);
-
-  useEffect(() => {
-    const carousel = carouselRef.current;
-    if (!carousel || bookCount === 0) return;
-    const targetIndex = Math.max(0, Math.min(bookCount - 1, recentBookIndex));
-    carousel.scrollLeft = targetIndex * carousel.clientWidth;
-    setActiveSlideIndex(targetIndex);
-  }, [bookCount, recentBookIndex]);
+  const selectedBookId = recentBookId && folder.bookIds.includes(recentBookId) ? recentBookId : folder.bookIds[0];
+  const selectedBook = selectedBookId ? bookById.get(selectedBookId) : undefined;
 
   const isEditing = menuState === "edit";
   const isManagingBooks = menuState === "books";
   const isMenuOpen = menuState === "menu";
   const isDeleting = menuState === "delete";
+  const overlayLocked = isEditing || isManagingBooks || isDeleting;
+  const searchDisabled = overlayLocked || bookCount === 0;
 
   const {
     attributes,
@@ -566,7 +751,7 @@ function FolderCard(props: {
   };
 
   return (
-    <div ref={setNodeRef} style={sortableStyle} {...attributes} {...listeners}>
+    <div ref={setNodeRef} style={sortableStyle} {...attributes} {...(!isPickerOpen ? listeners : {})}>
       <motion.div
         ref={ref}
         whileHover={isDragging ? undefined : { y: -4, transition: { duration: 0.25, ease: "easeOut" } }}
@@ -586,7 +771,22 @@ function FolderCard(props: {
             <span className="text-[10px] text-neutral-500 shrink-0">{bookCount}</span>
           </div>
 
-          <div className="relative shrink-0">
+          <div className="relative flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (searchDisabled) return;
+                setIsPickerOpen(true);
+                setMenuState("closed");
+              }}
+              disabled={searchDisabled}
+              className="flex h-6 w-6 items-center justify-center rounded-md bg-white/5 text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Browse folder books"
+            >
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -642,100 +842,65 @@ function FolderCard(props: {
           </div>
         </div>
 
-        <div className="relative px-2 pb-1.5 pt-0.5 flex-1 flex flex-col">
-          {bookCount > 0 ? (
-            <div className="flex-1 flex flex-col">
-              <div className="relative flex-1">
-                <div
-                  className={`pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 z-[1] flex h-10 w-5 items-center justify-center transition-opacity duration-200 ${
-                    activeSlideIndex === 0 ? "opacity-0" : "opacity-[0.15]"
-                  }`}
-                  aria-hidden="true"
-                >
-                  <svg className="h-4 w-2 text-neutral-100" viewBox="0 0 8 16" fill="none">
-                    <polyline
-                      points="6,2 2,8 6,14"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+        <div className="relative flex flex-1 flex-col px-2 pt-1 pb-2">
+          {selectedBook ? (
+            <AnimatePresence mode="wait">
+              <motion.button
+                key={selectedBook.id}
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.2 }}
+                type="button"
+                onClick={() => onOpenRecent(folder.id, selectedBook.id)}
+                disabled={!!selectedBook.isMock}
+                className="flex flex-1 flex-col rounded-xl border border-white/5 bg-black/20 px-3 py-3 text-left transition-all duration-150 hover:border-white/10 hover:bg-black/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:hover:border-white/5 disabled:hover:bg-black/20 disabled:active:scale-100"
+              >
+                <MoodBookCover
+                  coverUrl={selectedBook.coverUrl}
+                  progressPercent={Math.max(0, Math.min(100, Math.round(selectedBook.progressPercent)))}
+                  title={selectedBook.title}
+                />
+                <div className="mt-auto">
+                  <div className="line-clamp-2 text-sm font-semibold leading-snug text-neutral-100">
+                    {selectedBook.title}
+                  </div>
+                  <div className="mt-1 text-[11px] text-neutral-400 truncate">
+                    {selectedBook.author ?? "Unknown author"}
+                  </div>
+                  <div className="mt-2">
+                    <FolderCardProgressBar percent={Math.max(0, Math.min(100, Math.round(selectedBook.progressPercent)))} />
+                  </div>
                 </div>
-
-                <div
-                  className={`pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 z-[1] flex h-10 w-5 items-center justify-center transition-opacity duration-200 ${
-                    activeSlideIndex === bookCount - 1 ? "opacity-0" : "opacity-[0.15]"
-                  }`}
-                  aria-hidden="true"
-                >
-                  <svg className="h-4 w-2 text-neutral-100" viewBox="0 0 8 16" fill="none">
-                    <polyline
-                      points="2,2 6,8 2,14"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </div>
-
-                <div
-                  ref={carouselRef}
-                  onScroll={syncActiveSlideFromScroll}
-                  className="flex h-full overflow-x-auto snap-x snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                >
-                  {allBooksInFolder.map((book) => {
-                    const progressPercent = Math.max(0, Math.min(100, Math.round(book.progressPercent)));
-                    return (
-                      <div key={book.id} className="w-full shrink-0 snap-start px-1">
-                        <button
-                          type="button"
-                          onClick={() => onOpenRecent(folder.id, book.id)}
-                          disabled={!!book.isMock}
-                          className="w-full h-full rounded-xl bg-black/20 border border-white/5
-                            hover:bg-black/30 hover:border-white/10 active:scale-[0.98]
-                            transition-all duration-150 px-3 py-3 text-left flex flex-col
-                            disabled:hover:bg-black/20 disabled:hover:border-white/5 disabled:active:scale-100 disabled:cursor-not-allowed"
-                        >
-                          <MoodBookCover
-                            coverUrl={book.coverUrl}
-                            progressPercent={progressPercent}
-                            title={book.title}
-                          />
-                          <div className="mt-auto">
-                            <div className="text-sm font-semibold text-neutral-100 leading-snug line-clamp-2">{book.title}</div>
-                            <div className="text-[11px] text-neutral-400 truncate mt-1">{book.author ?? "Unknown author"}</div>
-                            <div className="mt-2 flex items-center gap-2">
-                              <div className="h-1 flex-1 rounded-full bg-white/10 overflow-hidden">
-                                <div
-                                  className="h-full rounded-full bg-violet-400 transition-[width] duration-300"
-                                  style={{ width: `${progressPercent}%` }}
-                                />
-                              </div>
-                              <span className="text-[11px] text-neutral-100 font-semibold tabular-nums">
-                                {progressPercent}%
-                              </span>
-                            </div>
-                          </div>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-
-            </div>
+              </motion.button>
+            </AnimatePresence>
           ) : (
-            <div className="flex-1 rounded-xl bg-black/10 border border-white/[0.03] flex flex-col items-center justify-center gap-2 px-4">
-              <svg className="w-10 h-10 text-neutral-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-white/[0.03] bg-black/10 px-4">
+              <svg className="h-10 w-10 text-neutral-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
               </svg>
               <div className="text-[11px] text-neutral-600">Add books to start</div>
             </div>
           )}
         </div>
+
+        <AnimatePresence initial={false}>
+          {isPickerOpen && bookCount > 0 ? (
+            <FolderBookPickerOverlay
+              books={allBooksInFolder}
+              orderedBookIds={allBooksInFolder.map((book) => book.id)}
+              selectedId={selectedBook?.id}
+              onSelect={(bookId) => {
+                onSelectRecentBook(folder.id, bookId);
+                setIsPickerOpen(false);
+              }}
+              onReorder={(nextBookIds) => {
+                onReorderBooks(folder.id, nextBookIds);
+              }}
+              onClose={() => setIsPickerOpen(false)}
+            />
+          ) : null}
+        </AnimatePresence>
 
         <AnimatePresence initial={false}>
           {isEditing ? (
