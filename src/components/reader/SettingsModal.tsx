@@ -485,37 +485,6 @@ export default function SettingsModal(props: SettingsModalProps) {
                 </section>
               )}
 
-              {/* Startup Screen */}
-              <section>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-medium text-neutral-200">Open to last book</span>
-                    <p className="text-xs text-neutral-500 mt-1">
-                      Skip the mood page and jump straight into your last read.
-                    </p>
-                  </div>
-                  <motion.button
-                    type="button"
-                    onClick={() =>
-                      updateSettings({
-                        startupScreen: settings.startupScreen === "last-book" ? "mood" : "last-book",
-                      })
-                    }
-                    className={`relative w-10 h-6 rounded-full transition-colors duration-200 ${
-                      settings.startupScreen === "last-book"
-                        ? "bg-violet-500"
-                        : "bg-neutral-700"
-                    }`}
-                  >
-                    <motion.div
-                      className="absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-md"
-                      animate={{ x: settings.startupScreen === "last-book" ? 18 : 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    />
-                  </motion.button>
-                </div>
-              </section>
-
               {/* Progress Bar Theme */}
               <section>
                 <div className="flex items-center justify-between mb-2.5">
