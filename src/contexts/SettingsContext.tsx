@@ -38,7 +38,7 @@ export const PROGRESS_BAR_THEMES: ProgressBarThemeConfig[] = [
   { name: "toybox-adventure", label: "Toybox Adventure", from: "#A855F7", via: "#e879f9", to: "#FACC15", glow: "#FACC15" },
   { name: "warm-mischief", label: "Warm Mischief", from: "#F97316", via: "#fbbf24", to: "#0EA5E9", glow: "#F97316" },
   { name: "friendly-rivalry", label: "Friendly Rivalry", from: "#2563EB", via: "#818cf8", to: "#FB7185", glow: "#818cf8" },
-  { name: "candy-coop", label: "Candy Co-op", from: "#EC4899", via: "#f0abfc", to: "#22D3EE", glow: "#EC4899" },
+  { name: "candy-coop", label: "Candy", from: "#EC4899", via: "#f0abfc", to: "#22D3EE", glow: "#EC4899" },
 ];
 
 export type Settings = {
