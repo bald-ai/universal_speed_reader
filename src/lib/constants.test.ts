@@ -4,6 +4,7 @@ import {
   clampWpm,
   normalizeTtsPlaybackRate,
   normalizeWpm,
+  stepReaderWpm,
   TTS_RATE_DEFAULT,
   TTS_RATE_MAX,
   TTS_RATE_MIN,
@@ -35,5 +36,12 @@ describe("shared speed constants helpers", () => {
     expect(normalizeWpm(253)).toBe(255);
     expect(normalizeWpm(248)).toBe(250);
     expect(normalizeWpm(Number.POSITIVE_INFINITY)).toBe(WPM_DEFAULT);
+  });
+
+  it("steps reader WPM in fixed increments of 10", () => {
+    expect(stepReaderWpm(250, "up")).toBe(260);
+    expect(stepReaderWpm(255, "down")).toBe(245);
+    expect(stepReaderWpm(WPM_MIN, "down")).toBe(WPM_MIN);
+    expect(stepReaderWpm(WPM_MAX, "up")).toBe(WPM_MAX);
   });
 });

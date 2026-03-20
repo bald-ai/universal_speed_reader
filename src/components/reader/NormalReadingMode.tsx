@@ -802,10 +802,11 @@ export default function NormalReadingMode() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 0.9, y: 0 }}
                 transition={{ delay: 0.3, duration: 0.25 }}
-                className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                  text-green-300 text-sm font-medium backdrop-blur-md
-                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
-                  transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20`}
+                className="flex items-center gap-2 rounded-xl bg-neutral-800/80
+                  text-sm font-medium backdrop-blur-md
+                  px-4 py-2 border border-neutral-600/50 hover:border-neutral-500
+                  transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20"
+                style={{ color: settings.speedButtonColor }}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
@@ -823,11 +824,12 @@ export default function NormalReadingMode() {
                   animate={{ opacity: 0.9, y: 0 }}
                   transition={{ delay: 0.35, duration: 0.25 }}
                   className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
-                    text-green-300 text-sm font-medium backdrop-blur-md
-                    px-4 py-2 border border-neutral-600/50 hover:border-neutral-500 hover:text-green-200
+                    text-sm font-medium backdrop-blur-md
+                    px-4 py-2 border border-neutral-600/50 hover:border-neutral-500
                     transition-all duration-200 hover:bg-neutral-800 shadow-lg shadow-black/20 ${
                       tts.isReady ? "" : "opacity-70"
                     }`}
+                  style={{ color: settings.ttsButtonColor }}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6.75 6.75 0 006.75-6.75v-1.5a6.75 6.75 0 10-13.5 0v1.5A6.75 6.75 0 0012 18.75z" />

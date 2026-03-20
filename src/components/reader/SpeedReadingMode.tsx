@@ -3,27 +3,19 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
-import { clampWpm, normalizeWpm } from "@/lib/constants";
+import { stepReaderWpm } from "@/lib/constants";
+import SpeedReaderWpmControls from "@/components/reader/SpeedReaderWpmControls";
+import {
+  advancePlaybackTempoState,
+  createPlaybackTempoState,
+  getRemainingPlaybackDelayMs,
+  syncPlaybackTempoState,
+  type PlaybackTempoState,
+} from "@/lib/reader/speedReaderTempo";
 import { startSpeedModeKeepAwake } from "@/lib/screenAwake";
 import { findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import { getNextPosition, getWordAtPosition } from "@/lib/utils/bookHelpers";
 import type { Position } from "@/types/reading";
-
-function calculateDelayForWord(targetWpm: number, rampIndex: number, rampUpWords = 25): number {
-  const clampedWpm = clampWpm(targetWpm);
-  const startWpm = clampedWpm * 0.7;
-
-  let currentWpm: number;
-  if (rampIndex < rampUpWords) {
-    const increment = (clampedWpm - startWpm) / Math.max(1, rampUpWords - 1);
-    currentWpm = startWpm + increment * rampIndex;
-  } else {
-    currentWpm = clampedWpm;
-  }
-
-  const delay = Math.round(60000 / currentWpm);
-  return delay;
-}
 
 function splitWordMiddle(word: string): { before: string; middle: string; after: string } {
   if (!word) return { before: "", middle: "", after: "" };
@@ -46,6 +38,7 @@ export default function SpeedReadingMode() {
   const [wordKey, setWordKey] = useState<number>(0);
 
   const positionRef = useRef<Position | null>(position);
+  const playbackTempoRef = useRef<PlaybackTempoState | null>(null);
   const controlsTimeoutRef = useRef<number | null>(null);
 
   // Only sync positionRef from context when paused (user navigated externally)
@@ -66,53 +59,120 @@ export default function SpeedReadingMode() {
   useEffect(() => {
     if (!book || isPaused) return;
 
-    let frameId: number;
-    let lastWordTime = performance.now();
-    let rampIndex = 0;
+    const currentPosition = positionRef.current;
 
-    const tick = (time: number) => {
+    if (!playbackTempoRef.current) {
+      playbackTempoRef.current = createPlaybackTempoState({
+        book,
+        position: currentPosition,
+        targetWpm: settings.wpm,
+        tempo: settings.speedReaderTempo,
+      });
+    } else {
+      syncPlaybackTempoState({
+        state: playbackTempoRef.current,
+        book,
+        position: currentPosition,
+        targetWpm: settings.wpm,
+        tempo: settings.speedReaderTempo,
+      });
+    }
+
+    let timeoutId: number | null = null;
+    let cancelled = false;
+
+    const clearScheduledTick = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const scheduleTick = () => {
+      const playbackTempo = playbackTempoRef.current;
+      if (!playbackTempo) {
+        setMode("normal");
+        return;
+      }
+
+      const now = performance.now();
+      const remainingDelayMs = getRemainingPlaybackDelayMs({
+        lastWordTime: playbackTempo.lastWordTime,
+        nextDelayMs: playbackTempo.nextDelayMs,
+        now,
+      });
+
+      clearScheduledTick();
+      timeoutId = window.setTimeout(runTick, remainingDelayMs);
+    };
+
+    const runTick = () => {
+      if (cancelled) return;
+
       const currentPosition = positionRef.current;
+      const playbackTempo = playbackTempoRef.current;
       if (!currentPosition) {
         setMode("normal");
         return;
       }
 
-      const delay = calculateDelayForWord(settings.wpm, rampIndex);
-
-      if (time - lastWordTime >= delay) {
-        lastWordTime = time;
-        rampIndex++;
-
-        const word = getWordAtPosition(book, currentPosition);
-        if (!word) {
-          setMode("normal");
-          return;
-        }
-
-        setDisplayedWord(word);
-        setWordKey((prev) => prev + 1);
-        setPosition(currentPosition);
-
-        const nextPosition = getNextPosition(book, currentPosition);
-        positionRef.current = nextPosition;
-
-        if (!nextPosition) {
-          setHighlightedWord(currentPosition);
-          saveProgress({ mode: "normal", position: currentPosition });
-          setMode("normal");
-          return;
-        }
+      if (!playbackTempo) {
+        setMode("normal");
+        return;
       }
 
-      frameId = requestAnimationFrame(tick);
+      const word = getWordAtPosition(book, currentPosition);
+      if (!word) {
+        setMode("normal");
+        return;
+      }
+
+      const tickTime = performance.now();
+
+      setDisplayedWord(word);
+      setWordKey((prev) => prev + 1);
+      setPosition(currentPosition);
+
+      const nextPosition = getNextPosition(book, currentPosition);
+      positionRef.current = nextPosition;
+
+      if (!nextPosition) {
+        setHighlightedWord(currentPosition);
+        saveProgress({ mode: "normal", position: currentPosition });
+        setMode("normal");
+        return;
+      }
+
+      advancePlaybackTempoState({
+        state: playbackTempo,
+        book,
+        currentPosition,
+        currentWord: word,
+        nextPosition,
+        targetWpm: settings.wpm,
+        tempo: settings.speedReaderTempo,
+        frameTime: tickTime,
+      });
+
+      scheduleTick();
     };
 
-    frameId = requestAnimationFrame(tick);
+    scheduleTick();
 
     return () => {
-      cancelAnimationFrame(frameId);
+      cancelled = true;
+      clearScheduledTick();
     };
-  }, [book, isPaused, saveProgress, settings.wpm, setMode, setPosition, setHighlightedWord]);
+  }, [
+    book,
+    isPaused,
+    saveProgress,
+    setHighlightedWord,
+    setMode,
+    setPosition,
+    settings.speedReaderTempo,
+    settings.wpm,
+  ]);
 
   useEffect(() => {
     if (!showControls || isPaused) {
@@ -162,20 +222,10 @@ export default function SpeedReadingMode() {
     setIsPaused(false);
   };
 
-  const handleSwitchToNormalMode = () => {
-    saveProgress({ mode: "normal", position });
-    // Use position state (current displayed word) instead of positionRef (next position)
-    if (position) {
-      setHighlightedWord(position);
-    }
-    setMode("normal");
-  };
+
 
   const handleSpeedChange = (direction: "up" | "down") => {
-    const current = settings.wpm;
-    const factor = direction === "up" ? 1.1 : 0.9;
-    const raw = current * factor;
-    updateSettings({ wpm: normalizeWpm(raw) });
+    updateSettings({ wpm: stepReaderWpm(settings.wpm, direction) });
     setShowControls(true);
   };
 
@@ -316,81 +366,36 @@ export default function SpeedReadingMode() {
                 {!isPaused ? (
                   <motion.div
                     key="playing"
-                    className="flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.15 }}
                   >
-                    <button
-                      type="button"
-                      onClick={() => handleSpeedChange("down")}
-                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/6 text-sm font-medium text-neutral-400 transition-colors hover:border-amber-300/35 hover:bg-amber-300/15 hover:text-amber-200"
-                    >
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
-                      </svg>
-                    </button>
-                    <motion.span
-                      key={settings.wpm}
-                      initial={{ scale: 1.2, color: "#fcd34d" }}
-                      animate={{ scale: 1, color: "#e5e7eb" }}
-                      transition={{ duration: 0.24 }}
-                      className="min-w-[46px] text-center text-xs font-semibold tabular-nums"
-                    >
-                      {settings.wpm}
-                    </motion.span>
-                    <button
-                      type="button"
-                      onClick={() => handleSpeedChange("up")}
-                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/6 text-sm font-medium text-neutral-400 transition-colors hover:border-amber-300/35 hover:bg-amber-300/15 hover:text-amber-200"
-                    >
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePause}
-                      className="ml-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-500 text-neutral-950 shadow-[0_2px_12px_rgba(245,158,11,0.35)] transition-transform hover:scale-105 active:scale-95"
-                    >
-                      <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
-                        <rect x="6" y="5" width="4" height="14" rx="1" />
-                        <rect x="14" y="5" width="4" height="14" rx="1" />
-                      </svg>
-                    </button>
+                    <SpeedReaderWpmControls
+                      wpm={settings.wpm}
+                      isPaused={false}
+                      onDecrease={() => handleSpeedChange("down")}
+                      onIncrease={() => handleSpeedChange("up")}
+                      onPause={handlePause}
+                      onResume={handleResume}
+                    />
                   </motion.div>
                 ) : (
                   <motion.div
                     key="paused"
-                    className="flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.15 }}
                   >
-                    <button
-                      type="button"
-                      onClick={handleSwitchToNormalMode}
-                      className="flex h-9 items-center justify-center gap-1.5 rounded-full bg-white/6 px-4 text-[11px] font-semibold uppercase tracking-[0.04em] text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-200"
-                    >
-                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
-                      </svg>
-                      Read
-                    </button>
-                    <span className="px-1.5 text-[11px] font-semibold lowercase tracking-[0.04em] text-amber-300 tabular-nums">
-                      {settings.wpm} wpm
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleResume}
-                      className="ml-1 flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-500 text-neutral-950 shadow-[0_2px_12px_rgba(245,158,11,0.35)] transition-transform hover:scale-105 active:scale-95"
-                    >
-                      <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 24 24">
-                        <path d="M8 5.14v13.72a1 1 0 001.5.86l11-6.86a1 1 0 000-1.72l-11-6.86A1 1 0 008 5.14z" />
-                      </svg>
-                    </button>
+                    <SpeedReaderWpmControls
+                      wpm={settings.wpm}
+                      isPaused
+                      onDecrease={() => handleSpeedChange("down")}
+                      onIncrease={() => handleSpeedChange("up")}
+                      onPause={handlePause}
+                      onResume={handleResume}
+                    />
                   </motion.div>
                 )}
               </AnimatePresence>

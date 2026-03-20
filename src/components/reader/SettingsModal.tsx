@@ -4,18 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/contexts/SettingsContext";
 import { useSettings, PROGRESS_BAR_THEMES } from "@/contexts/SettingsContext";
 import {
-  clampWpm,
   normalizeTtsPlaybackRate,
   TTS_RATE_MAX,
   TTS_RATE_MIN,
   TTS_RATE_STEP,
-  WPM_MAX,
-  WPM_MIN,
-  WPM_STEP,
 } from "@/lib/constants";
 import { getNativeTtsVoices, type NativeTtsVoice } from "@/lib/nativeTts";
 import type { TtsHighlightStyle } from "@/types/reading";
 import type { Book } from "@/types/book";
+import Disclosure from "@/components/reader/Disclosure";
+import SpeedReaderTempoPanel from "@/components/reader/SpeedReaderTempoPanel";
+import SpeedReadingWpmSetting from "@/components/reader/SpeedReadingWpmSetting";
 import TtsRegexRulesModal from "@/components/reader/TtsRegexRulesModal";
 
 type SettingsModalProps = {
@@ -247,7 +246,7 @@ export default function SettingsModal(props: SettingsModalProps) {
               </div>
             </div>
 
-            <div className="px-5 sm:px-7 pt-3 pb-5 space-y-6 text-[13px]">
+            <div className="px-5 sm:px-7 pt-3 pb-5 space-y-4 text-[13px]">
               {/* Font Size */}
               <section>
                 <div className="flex items-center justify-between mb-2.5">
@@ -363,56 +362,6 @@ export default function SettingsModal(props: SettingsModalProps) {
                 </div>
               </section>
 
-              {/* WPM */}
-              <section>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="font-medium text-neutral-200">Speed reading WPM</span>
-                  <motion.span
-                    key={settings.wpm}
-                    initial={{ scale: 1.2, color: "#a78bfa" }}
-                    animate={{ scale: 1, color: "#a78bfa" }}
-                    className="text-xs text-violet-400 font-medium"
-                  >
-                    {settings.wpm} WPM
-                  </motion.span>
-                </div>
-                <div className="relative">
-                  <input
-                    type="range"
-                    min={WPM_MIN}
-                    max={WPM_MAX}
-                    step={WPM_STEP}
-                    value={settings.wpm}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      updateSettings({ wpm: clampWpm(value) });
-                    }}
-                    className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
-                      [&::-webkit-slider-thumb]:appearance-none
-                      [&::-webkit-slider-thumb]:w-4
-                      [&::-webkit-slider-thumb]:h-4
-                      [&::-webkit-slider-thumb]:rounded-full
-                      [&::-webkit-slider-thumb]:bg-violet-500
-                      [&::-webkit-slider-thumb]:shadow-lg
-                      [&::-webkit-slider-thumb]:shadow-violet-500/30
-                      [&::-webkit-slider-thumb]:transition-transform
-                      [&::-webkit-slider-thumb]:hover:scale-110
-                      [&::-moz-range-thumb]:w-4
-                      [&::-moz-range-thumb]:h-4
-                      [&::-moz-range-thumb]:rounded-full
-                      [&::-moz-range-thumb]:bg-violet-500
-                      [&::-moz-range-thumb]:border-0
-                      [&::-moz-range-thumb]:shadow-lg
-                      [&::-moz-range-thumb]:shadow-violet-500/30"
-                  />
-                  <div className="flex justify-between text-xs text-neutral-500 mt-2">
-                    <span>{WPM_MIN}</span>
-                    <span>{Math.round((WPM_MIN + WPM_MAX) / 2)}</span>
-                    <span>{WPM_MAX}</span>
-                  </div>
-                </div>
-              </section>
-
               {/* ORP Highlight Toggle */}
               <section>
                 <div className="flex items-center justify-between">
@@ -434,35 +383,140 @@ export default function SettingsModal(props: SettingsModalProps) {
                     />
                   </motion.button>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">
-                  Highlights the center letter of each word (ORP) for faster recognition.
-                </p>
+                <AnimatePresence>
+                  {settings.orpHighlight && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="mt-3 flex items-center gap-2">
+                        <label className="text-xs text-neutral-500">Highlight color</label>
+                        <input
+                          type="color"
+                          value={settings.orpHighlightColor}
+                          onChange={(event) => updateSettings({ orpHighlightColor: event.target.value })}
+                          className="w-7 h-7 rounded-full border border-neutral-700 bg-transparent cursor-pointer
+                            [&::-webkit-color-swatch-wrapper]:p-0
+                            [&::-webkit-color-swatch]:rounded-full
+                            [&::-webkit-color-swatch]:border-0"
+                        />
+                        <span className="text-xs text-neutral-500 ml-1">{settings.orpHighlightColor}</span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </section>
 
-              {/* Highlight Color */}
-              {settings.orpHighlight && (
+              <div className="border-t border-neutral-800/60" />
+
+              {/* ── Speed ── */}
+              <Disclosure
+                label="Speed"
+                accentColor="#a78bfa"
+                summary={
+                  <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-0.5 text-[11px] font-semibold text-violet-300">
+                    {settings.wpm} WPM
+                  </span>
+                }
+              >
+                <SpeedReadingWpmSetting
+                  wpm={settings.wpm}
+                  onChange={(wpm) => updateSettings({ wpm })}
+                />
+
+                <SpeedReaderTempoPanel
+                  baseWpm={settings.wpm}
+                  tempo={settings.speedReaderTempo}
+                  onChange={(speedReaderTempo) => updateSettings({ speedReaderTempo })}
+                />
+              </Disclosure>
+
+              {/* ── Colors ── */}
+              <Disclosure
+                label="Colors"
+                accentColor="#f472b6"
+                summary={
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-4 w-4 rounded-full border border-white/20" style={{ backgroundColor: settings.speedButtonColor }} />
+                    <div className="h-4 w-4 rounded-full border border-white/20" style={{ backgroundColor: settings.ttsButtonColor }} />
+                    {(() => {
+                      const t = PROGRESS_BAR_THEMES.find((th) => th.name === settings.progressBarTheme) ?? PROGRESS_BAR_THEMES[0];
+                      return (
+                        <div className="relative ml-1 h-4 w-12 rounded-full bg-neutral-800 overflow-hidden">
+                          <div
+                            className="absolute inset-0 rounded-full"
+                            style={{ background: `linear-gradient(to right, ${t.from}, ${t.via}, ${t.to})` }}
+                          />
+                        </div>
+                      );
+                    })()}
+                  </div>
+                }
+              >
+                {/* Progress Bar Theme */}
                 <section>
                   <div className="flex items-center justify-between mb-2.5">
-                    <span className="font-medium text-neutral-200">Highlight color</span>
+                    <span className="font-medium text-neutral-200">Progress bar style</span>
+                    <span className="text-xs text-neutral-400 font-medium">
+                      {PROGRESS_BAR_THEMES.find((t) => t.name === settings.progressBarTheme)?.label ?? "Cotton Candy"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PROGRESS_BAR_THEMES.map((theme) => (
+                      <motion.button
+                        key={theme.name}
+                        type="button"
+                        onClick={() => updateSettings({ progressBarTheme: theme.name })}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.97 }}
+                        className={`relative rounded-xl p-2.5 transition-all duration-200 ${
+                          settings.progressBarTheme === theme.name
+                            ? "border border-white/30 bg-neutral-800/80"
+                            : "border border-neutral-800 bg-neutral-900 hover:border-neutral-700"
+                        }`}
+                      >
+                        <span className="block text-[11px] text-neutral-300 mb-1.5 text-left">{theme.label}</span>
+                        <div className="relative w-full h-2 rounded-full bg-neutral-700 overflow-hidden">
+                          <div
+                            className="absolute top-0 left-0 h-full w-3/4 rounded-full"
+                            style={{ background: `linear-gradient(to right, ${theme.from}, ${theme.via}, ${theme.to})` }}
+                          />
+                          <div
+                            className="absolute top-0 h-full w-3 rounded-full blur-sm"
+                            style={{ left: "calc(75% - 6px)", backgroundColor: `${theme.glow}60` }}
+                          />
+                        </div>
+                      </motion.button>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Speed Button Color */}
+                <section>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="font-medium text-neutral-200">Speed button color</span>
                   </div>
                   <div className="flex items-center gap-2.5">
                     {[
-                      { color: "#10b981", label: "Emerald" },
-                      { color: "#f59e0b", label: "Amber" },
-                      { color: "#ef4444", label: "Red" },
-                      { color: "#3b82f6", label: "Blue" },
-                      { color: "#a855f7", label: "Purple" },
-                      { color: "#ec4899", label: "Pink" },
+                      { color: "#86efac", label: "Green" },
+                      { color: "#fbbf24", label: "Amber" },
+                      { color: "#f87171", label: "Red" },
+                      { color: "#60a5fa", label: "Blue" },
+                      { color: "#c084fc", label: "Purple" },
+                      { color: "#f472b6", label: "Pink" },
                     ].map((option) => (
                       <motion.button
                         key={option.color}
                         type="button"
-                        onClick={() => updateSettings({ orpHighlightColor: option.color })}
+                        onClick={() => updateSettings({ speedButtonColor: option.color })}
                         whileHover={{ scale: 1.15 }}
                         whileTap={{ scale: 0.9 }}
                         title={option.label}
                         className={`w-7 h-7 rounded-full border-2 transition-all duration-200 ${
-                          settings.orpHighlightColor === option.color
+                          settings.speedButtonColor === option.color
                             ? "border-white scale-110"
                             : "border-neutral-700 hover:border-neutral-500"
                         }`}
@@ -473,8 +527,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <label className="text-xs text-neutral-500">Custom</label>
                       <input
                         type="color"
-                        value={settings.orpHighlightColor}
-                        onChange={(event) => updateSettings({ orpHighlightColor: event.target.value })}
+                        value={settings.speedButtonColor}
+                        onChange={(event) => updateSettings({ speedButtonColor: event.target.value })}
                         className="w-7 h-7 rounded-full border border-neutral-700 bg-transparent cursor-pointer
                           [&::-webkit-color-swatch-wrapper]:p-0
                           [&::-webkit-color-swatch]:rounded-full
@@ -483,182 +537,194 @@ export default function SettingsModal(props: SettingsModalProps) {
                     </div>
                   </div>
                 </section>
-              )}
 
-              {/* Progress Bar Theme */}
-              <section>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="font-medium text-neutral-200">Progress bar style</span>
-                  <span className="text-xs text-neutral-400 font-medium">
-                    {PROGRESS_BAR_THEMES.find((t) => t.name === settings.progressBarTheme)?.label ?? "Cotton Candy"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {PROGRESS_BAR_THEMES.map((theme) => (
-                    <motion.button
-                      key={theme.name}
-                      type="button"
-                      onClick={() => updateSettings({ progressBarTheme: theme.name })}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.97 }}
-                      className={`relative rounded-xl p-2.5 transition-all duration-200 ${
-                        settings.progressBarTheme === theme.name
-                          ? "border border-white/30 bg-neutral-800/80"
-                          : "border border-neutral-800 bg-neutral-900 hover:border-neutral-700"
-                      }`}
-                    >
-                      <span className="block text-[11px] text-neutral-300 mb-1.5 text-left">{theme.label}</span>
-                      <div className="relative w-full h-2 rounded-full bg-neutral-700 overflow-hidden">
-                        <div
-                          className="absolute top-0 left-0 h-full w-3/4 rounded-full"
-                          style={{
-                            background: `linear-gradient(to right, ${theme.from}, ${theme.via}, ${theme.to})`,
-                          }}
-                        />
-                        <div
-                          className="absolute top-0 h-full w-3 rounded-full blur-sm"
-                          style={{
-                            left: "calc(75% - 6px)",
-                            backgroundColor: `${theme.glow}60`,
-                          }}
-                        />
-                      </div>
-                    </motion.button>
-                  ))}
-                </div>
-              </section>
-
-              {/* TTS Speed */}
-              <section>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="font-medium text-neutral-200">TTS speed</span>
-                  <motion.span
-                    key={settings.ttsPlaybackRate}
-                    initial={{ scale: 1.2, color: "#fbbf24" }}
-                    animate={{ scale: 1, color: "#fbbf24" }}
-                    className="text-xs font-medium"
-                  >
-                    {settings.ttsPlaybackRate.toFixed(1)}x
-                  </motion.span>
-                </div>
-                <div className="relative">
-                  <input
-                    type="range"
-                    min={TTS_RATE_MIN}
-                    max={TTS_RATE_MAX}
-                    step={TTS_RATE_STEP}
-                    value={settings.ttsPlaybackRate}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      updateSettings({ ttsPlaybackRate: normalizeTtsPlaybackRate(value) });
-                    }}
-                    className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
-                      [&::-webkit-slider-thumb]:appearance-none
-                      [&::-webkit-slider-thumb]:w-4
-                      [&::-webkit-slider-thumb]:h-4
-                      [&::-webkit-slider-thumb]:rounded-full
-                      [&::-webkit-slider-thumb]:bg-amber-400
-                      [&::-webkit-slider-thumb]:shadow-lg
-                      [&::-webkit-slider-thumb]:shadow-amber-400/20
-                      [&::-webkit-slider-thumb]:transition-transform
-                      [&::-webkit-slider-thumb]:hover:scale-110
-                      [&::-moz-range-thumb]:w-4
-                      [&::-moz-range-thumb]:h-4
-                      [&::-moz-range-thumb]:rounded-full
-                      [&::-moz-range-thumb]:bg-amber-400
-                      [&::-moz-range-thumb]:border-0
-                      [&::-moz-range-thumb]:shadow-lg
-                      [&::-moz-range-thumb]:shadow-amber-400/20"
-                  />
-                  <div className="flex justify-between text-xs text-neutral-500 mt-2">
-                    <span>{TTS_RATE_MIN.toFixed(1)}x</span>
-                    <span>{((TTS_RATE_MIN + TTS_RATE_MAX) / 2).toFixed(1)}x</span>
-                    <span>{TTS_RATE_MAX.toFixed(1)}x</span>
+                {/* TTS Button Color */}
+                <section>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="font-medium text-neutral-200">TTS button color</span>
                   </div>
-                </div>
-              </section>
+                  <div className="flex items-center gap-2.5">
+                    {[
+                      { color: "#86efac", label: "Green" },
+                      { color: "#fbbf24", label: "Amber" },
+                      { color: "#f87171", label: "Red" },
+                      { color: "#60a5fa", label: "Blue" },
+                      { color: "#c084fc", label: "Purple" },
+                      { color: "#f472b6", label: "Pink" },
+                    ].map((option) => (
+                      <motion.button
+                        key={option.color}
+                        type="button"
+                        onClick={() => updateSettings({ ttsButtonColor: option.color })}
+                        whileHover={{ scale: 1.15 }}
+                        whileTap={{ scale: 0.9 }}
+                        title={option.label}
+                        className={`w-7 h-7 rounded-full border-2 transition-all duration-200 ${
+                          settings.ttsButtonColor === option.color
+                            ? "border-white scale-110"
+                            : "border-neutral-700 hover:border-neutral-500"
+                        }`}
+                        style={{ backgroundColor: option.color }}
+                      />
+                    ))}
+                    <div className="ml-auto flex items-center gap-2">
+                      <label className="text-xs text-neutral-500">Custom</label>
+                      <input
+                        type="color"
+                        value={settings.ttsButtonColor}
+                        onChange={(event) => updateSettings({ ttsButtonColor: event.target.value })}
+                        className="w-7 h-7 rounded-full border border-neutral-700 bg-transparent cursor-pointer
+                          [&::-webkit-color-swatch-wrapper]:p-0
+                          [&::-webkit-color-swatch]:rounded-full
+                          [&::-webkit-color-swatch]:border-0"
+                      />
+                    </div>
+                  </div>
+                </section>
+              </Disclosure>
 
-              {/* TTS Highlight Style */}
-              <section>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="font-medium text-neutral-200">TTS highlight style</span>
-                  <span className="text-xs text-amber-400 font-medium">
-                    {TTS_HIGHLIGHT_STYLE_OPTIONS.find((o) => o.value === settings.ttsHighlightStyle)?.label ?? "Single word"}
+              {/* ── Text-to-Speech ── */}
+              <Disclosure
+                label="Text-to-Speech"
+                accentColor="#fbbf24"
+                summary={
+                  <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                    {settings.ttsPlaybackRate.toFixed(1)}x
                   </span>
-                </div>
-                <select
-                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200"
-                  value={settings.ttsHighlightStyle}
-                  onChange={(event) => {
-                    updateSettings({ ttsHighlightStyle: event.target.value as TtsHighlightStyle });
-                  }}
-                >
-                  {TTS_HIGHLIGHT_STYLE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-neutral-500 mt-2">How text is visually highlighted during TTS playback.</p>
-              </section>
+                }
+              >
+                {/* TTS Speed */}
+                <section>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="font-medium text-neutral-200">TTS speed</span>
+                    <motion.span
+                      key={settings.ttsPlaybackRate}
+                      initial={{ scale: 1.2, color: "#fbbf24" }}
+                      animate={{ scale: 1, color: "#fbbf24" }}
+                      className="text-xs font-medium"
+                    >
+                      {settings.ttsPlaybackRate.toFixed(1)}x
+                    </motion.span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="range"
+                      min={TTS_RATE_MIN}
+                      max={TTS_RATE_MAX}
+                      step={TTS_RATE_STEP}
+                      value={settings.ttsPlaybackRate}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        updateSettings({ ttsPlaybackRate: normalizeTtsPlaybackRate(value) });
+                      }}
+                      className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
+                        [&::-webkit-slider-thumb]:appearance-none
+                        [&::-webkit-slider-thumb]:w-4
+                        [&::-webkit-slider-thumb]:h-4
+                        [&::-webkit-slider-thumb]:rounded-full
+                        [&::-webkit-slider-thumb]:bg-amber-400
+                        [&::-webkit-slider-thumb]:shadow-lg
+                        [&::-webkit-slider-thumb]:shadow-amber-400/20
+                        [&::-webkit-slider-thumb]:transition-transform
+                        [&::-webkit-slider-thumb]:hover:scale-110
+                        [&::-moz-range-thumb]:w-4
+                        [&::-moz-range-thumb]:h-4
+                        [&::-moz-range-thumb]:rounded-full
+                        [&::-moz-range-thumb]:bg-amber-400
+                        [&::-moz-range-thumb]:border-0
+                        [&::-moz-range-thumb]:shadow-lg
+                        [&::-moz-range-thumb]:shadow-amber-400/20"
+                    />
+                    <div className="flex justify-between text-xs text-neutral-500 mt-2">
+                      <span>{TTS_RATE_MIN.toFixed(1)}x</span>
+                      <span>{((TTS_RATE_MIN + TTS_RATE_MAX) / 2).toFixed(1)}x</span>
+                      <span>{TTS_RATE_MAX.toFixed(1)}x</span>
+                    </div>
+                  </div>
+                </section>
 
-              {/* TTS Voice */}
-              <section>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="font-medium text-neutral-200">TTS voice</span>
-                  <span className="text-xs text-neutral-400 truncate max-w-[180px] text-right">{selectedVoiceLabel}</span>
-                </div>
-                <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-2.5">
-                  <label className="block text-xs text-neutral-500 mb-2">Voice profile</label>
+                {/* TTS Highlight Style */}
+                <section>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="font-medium text-neutral-200">TTS highlight style</span>
+                    <span className="text-xs text-amber-400 font-medium">
+                      {TTS_HIGHLIGHT_STYLE_OPTIONS.find((o) => o.value === settings.ttsHighlightStyle)?.label ?? "Single word"}
+                    </span>
+                  </div>
                   <select
                     className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200"
-                    value={settings.ttsVoiceIndex}
+                    value={settings.ttsHighlightStyle}
                     onChange={(event) => {
-                      const index = Number(event.target.value);
-                      if (index < 0) {
-                        updateSettings({ ttsVoiceIndex: -1, ttsLanguage: "en-US" });
-                        return;
-                      }
-                      const selected = voices[index];
-                      updateSettings({
-                        ttsVoiceIndex: index,
-                        ttsLanguage: selected?.lang || "en-US",
-                      });
+                      updateSettings({ ttsHighlightStyle: event.target.value as TtsHighlightStyle });
                     }}
                   >
-                    <option value={-1}>System default (en-US)</option>
-                    {voiceOptions.map(({ voice, index }) => (
-                      <option key={`${voice.voiceURI}-${index}`} value={index}>
-                        {labelForVoice(voice)}
+                    {TTS_HIGHLIGHT_STYLE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
                     ))}
                   </select>
-                  <p className="text-[11px] text-neutral-500 mt-2">
-                    {voicesLoading
-                      ? "Loading voices from Android…"
-                      : voiceOptions.length > 0
-                      ? `${voiceOptions.length} curated voices shown (${voices.length} installed on device).`
-                      : "No custom voices found. Using system default."}
-                  </p>
-                </div>
-              </section>
+                  <p className="text-xs text-neutral-500 mt-2">How text is visually highlighted during TTS playback.</p>
+                </section>
 
-              {/* TTS Pronunciation Rules */}
-              <section>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="font-medium text-neutral-200">Pronunciation rules</span>
-                </div>
-                <p className="text-xs text-neutral-500 mb-2.5">
-                  Regex-powered replacements applied live during TTS playback.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowRegexRules(true)}
-                  className="rounded-lg border border-amber-400/35 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/15 transition-colors"
-                >
-                  Open Rule Manager
-                </button>
-              </section>
+                {/* TTS Voice */}
+                <section>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="font-medium text-neutral-200">TTS voice</span>
+                    <span className="text-xs text-neutral-400 truncate max-w-[180px] text-right">{selectedVoiceLabel}</span>
+                  </div>
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-2.5">
+                    <label className="block text-xs text-neutral-500 mb-2">Voice profile</label>
+                    <select
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200"
+                      value={settings.ttsVoiceIndex}
+                      onChange={(event) => {
+                        const index = Number(event.target.value);
+                        if (index < 0) {
+                          updateSettings({ ttsVoiceIndex: -1, ttsLanguage: "en-US" });
+                          return;
+                        }
+                        const selected = voices[index];
+                        updateSettings({
+                          ttsVoiceIndex: index,
+                          ttsLanguage: selected?.lang || "en-US",
+                        });
+                      }}
+                    >
+                      <option value={-1}>System default (en-US)</option>
+                      {voiceOptions.map(({ voice, index }) => (
+                        <option key={`${voice.voiceURI}-${index}`} value={index}>
+                          {labelForVoice(voice)}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-neutral-500 mt-2">
+                      {voicesLoading
+                        ? "Loading voices from Android…"
+                        : voiceOptions.length > 0
+                        ? `${voiceOptions.length} curated voices shown (${voices.length} installed on device).`
+                        : "No custom voices found. Using system default."}
+                    </p>
+                  </div>
+                </section>
+
+                {/* TTS Pronunciation Rules */}
+                <section>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="font-medium text-neutral-200">Pronunciation rules</span>
+                  </div>
+                  <p className="text-xs text-neutral-500 mb-2.5">
+                    Regex-powered replacements applied live during TTS playback.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowRegexRules(true)}
+                    className="rounded-lg border border-amber-400/35 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/15 transition-colors"
+                  >
+                    Open Rule Manager
+                  </button>
+                </section>
+              </Disclosure>
             </div>
           </motion.div>
 

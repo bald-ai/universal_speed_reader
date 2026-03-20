@@ -8,6 +8,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  DEFAULT_SPEED_READER_TEMPO,
+  sanitizeSpeedReaderTempo,
+  type SpeedReaderTempoSettings,
+} from "@/lib/reader/speedReaderTempo";
 import type { TtsHighlightStyle } from "@/types/reading";
 import { TTS_RATE_DEFAULT, WPM_DEFAULT } from "@/lib/constants";
 import { getBookRepository } from "@/lib/storage/appRepository";
@@ -43,6 +48,7 @@ export const PROGRESS_BAR_THEMES: ProgressBarThemeConfig[] = [
 
 export type Settings = {
   wpm: number;
+  speedReaderTempo: SpeedReaderTempoSettings;
   ttsPlaybackRate: number;
   ttsVoiceIndex: number;
   ttsLanguage: string;
@@ -54,6 +60,8 @@ export type Settings = {
   orpHighlightColor: string;
   progressBarTheme: ProgressBarTheme;
   horizontalPadding: number;
+  speedButtonColor: string;
+  ttsButtonColor: string;
 };
 
 type SettingsContextValue = {
@@ -63,6 +71,7 @@ type SettingsContextValue = {
 
 const DEFAULT_SETTINGS: Settings = {
   wpm: WPM_DEFAULT,
+  speedReaderTempo: DEFAULT_SPEED_READER_TEMPO,
   ttsPlaybackRate: TTS_RATE_DEFAULT,
   ttsVoiceIndex: -1,
   ttsLanguage: "en-US",
@@ -74,6 +83,8 @@ const DEFAULT_SETTINGS: Settings = {
   orpHighlightColor: "#10b981",
   progressBarTheme: "cotton-candy",
   horizontalPadding: 24,
+  speedButtonColor: "#86efac",
+  ttsButtonColor: "#86efac",
 };
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
@@ -88,6 +99,8 @@ function sanitizeSettings(raw: unknown): Partial<Settings> {
   const out: Partial<Settings> = {};
 
   if (typeof raw.wpm === "number" && Number.isFinite(raw.wpm)) out.wpm = raw.wpm;
+  const speedReaderTempo = sanitizeSpeedReaderTempo(raw.speedReaderTempo);
+  if (speedReaderTempo) out.speedReaderTempo = speedReaderTempo;
   if (typeof raw.ttsPlaybackRate === "number" && Number.isFinite(raw.ttsPlaybackRate)) {
     out.ttsPlaybackRate = raw.ttsPlaybackRate;
   }
@@ -129,6 +142,9 @@ function sanitizeSettings(raw: unknown): Partial<Settings> {
   if (typeof raw.horizontalPadding === "number" && raw.horizontalPadding >= 0 && raw.horizontalPadding <= 64) {
     out.horizontalPadding = raw.horizontalPadding;
   }
+
+  if (typeof raw.speedButtonColor === "string") out.speedButtonColor = raw.speedButtonColor;
+  if (typeof raw.ttsButtonColor === "string") out.ttsButtonColor = raw.ttsButtonColor;
 
   return out;
 }

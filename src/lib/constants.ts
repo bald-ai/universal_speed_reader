@@ -6,6 +6,7 @@ export const TTS_RATE_DEFAULT = 1.0;
 export const WPM_MIN = 100;
 export const WPM_MAX = 600;
 export const WPM_STEP = 5;
+export const WPM_READER_STEP = 10;
 export const WPM_DEFAULT = 250;
 
 export function clampTtsPlaybackRate(rate: number): number {
@@ -26,4 +27,9 @@ export function clampWpm(wpm: number): number {
 export function normalizeWpm(wpm: number): number {
   const stepped = Math.round(wpm / WPM_STEP) * WPM_STEP;
   return Math.round(clampWpm(stepped));
+}
+
+export function stepReaderWpm(wpm: number, direction: "up" | "down"): number {
+  const delta = direction === "up" ? WPM_READER_STEP : -WPM_READER_STEP;
+  return clampWpm(clampWpm(wpm) + delta);
 }
