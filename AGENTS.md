@@ -38,7 +38,6 @@ act accordingly.
 - `src/pages/` — route-level page composition
 - `src/lib/` — pure utilities and platform integrations
 - `scripts/` — EPUB processing and build-time scripts
-- `Devnotes/` — personal task capture, ignore unless user explicitly asks
 
 ## Conventions
 - Types live in `src/types/`.
