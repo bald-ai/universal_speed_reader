@@ -9,14 +9,97 @@ import {
 } from "react";
 import { useLocation } from "wouter";
 import BookCard from "@/components/library/BookCard";
+import BulkImportReview from "@/components/library/BulkImportReview";
 import EditBookModal, { type EditBookModalSavePayload } from "@/components/library/EditBookModal";
 import MoodView from "@/components/library/MoodView";
 import { motion } from "framer-motion";
 import type { LibraryBook } from "@/types/book";
 import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
 import { getBookImportService } from "@/lib/import/bookImportService";
+import {
+  isNativeEpubFolderPickerAvailable,
+  pickNativeEpubFolder,
+  readNativeEpubFolderFile,
+  type NativeEpubFolderFile,
+} from "@/lib/nativeEpubFolderPicker";
 import { loadFolders, getFolderColorForBook } from "@/lib/moodStore";
 import type { MoodFolder } from "@/types/book";
+
+type PendingImportItem =
+  | {
+      kind: "file";
+      name: string;
+      size: number;
+      file: File;
+    }
+  | {
+      kind: "native-folder-file";
+      name: string;
+      size: number;
+      nativeFile: NativeEpubFolderFile;
+    };
+
+type BatchImportTiming = {
+  startedAtMs: number | null;
+  elapsedMs: number;
+  processedBytes: number;
+};
+
+type ImportTimingSummary = {
+  bookCount: number;
+  completedCount: number;
+  failedCount: number;
+  totalBytes: number;
+  elapsedMs: number;
+};
+
+type TrackedImportBook = {
+  bookId: string;
+  item: PendingImportItem;
+};
+
+function loadPendingImportFile(item: PendingImportItem): Promise<File> {
+  if (item.kind === "file") {
+    return Promise.resolve(item.file);
+  }
+  return readNativeEpubFolderFile(item.nativeFile);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function formatSummaryBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function formatSummaryDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) {
+    return `${seconds}s`;
+  }
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatSummaryRate(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds)) {
+    return "--";
+  }
+  if (milliseconds < 1000) {
+    return `${Math.max(1, Math.round(milliseconds))} ms`;
+  }
+  return `${(milliseconds / 1000).toFixed(1)} s`;
+}
 
 const BackgroundDecoration = memo(function BackgroundDecoration() {
   return (
@@ -39,6 +122,16 @@ export default function Home() {
   const [restoringBookId, setRestoringBookId] = useState<string | null>(null);
   const [editActionError, setEditActionError] = useState<string | null>(null);
   const [moodFolders, setMoodFolders] = useState<MoodFolder[]>([]);
+  const [pendingImportItems, setPendingImportItems] = useState<PendingImportItem[]>([]);
+  const [pendingImportDescription, setPendingImportDescription] = useState<string | null>(null);
+  const [isImportingBatch, setIsImportingBatch] = useState(false);
+  const [batchImportProgress, setBatchImportProgress] = useState({ completed: 0, failed: 0 });
+  const [batchImportTiming, setBatchImportTiming] = useState<BatchImportTiming>({
+    startedAtMs: null,
+    elapsedMs: 0,
+    processedBytes: 0,
+  });
+  const [lastImportSummary, setLastImportSummary] = useState<ImportTimingSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importRefreshTimeoutRef = useRef<number | null>(null);
   const importService = useMemo(() => getBookImportService(), []);
@@ -86,6 +179,28 @@ export default function Home() {
     };
   }, [importService, refreshLibrary, scheduleRefreshFromImport]);
 
+  useEffect(() => {
+    if (!isImportingBatch || batchImportTiming.startedAtMs === null) {
+      return undefined;
+    }
+
+    const timerId = window.setInterval(() => {
+      setBatchImportTiming((current) => {
+        if (current.startedAtMs === null) {
+          return current;
+        }
+        return {
+          ...current,
+          elapsedMs: Date.now() - current.startedAtMs,
+        };
+      });
+    }, 500);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [batchImportTiming.startedAtMs, isImportingBatch]);
+
   const entryById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
   const editingEntry = useMemo(
     () => (editingBookId ? entryById.get(editingBookId) ?? null : null),
@@ -115,32 +230,178 @@ export default function Home() {
     const selectedFiles = event.target.files;
     if (!selectedFiles || selectedFiles.length === 0) return;
     const files = Array.from(selectedFiles);
-    const failures: string[] = [];
+    event.target.value = "";
+    setPendingImportItems(files.map((file) => ({
+      kind: "file",
+      name: file.name,
+      size: file.size,
+      file,
+    })));
+    setPendingImportDescription("Android picked the files. Review the batch before adding it to your library.");
+    setBatchImportProgress({ completed: 0, failed: 0 });
+    setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
+    setLastImportSummary(null);
+    setImportError(null);
+    setView("library");
+  };
 
-    for (const file of files) {
-      try {
-        await importService.importFromFile(file);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Import failed";
-        failures.push(`${file.name}: ${message}`);
+  const handleImportFolder = useCallback(async () => {
+    if (isImportingBatch) return;
+    setImportError(null);
+
+    try {
+      const outcome = await pickNativeEpubFolder();
+      if (outcome.status === "unavailable") {
+        setImportError("Folder import is available in the Android app.");
+        return;
       }
+      if (outcome.status === "canceled") {
+        return;
+      }
+      if (outcome.files.length === 0) {
+        setPendingImportItems([]);
+        setPendingImportDescription(null);
+        setBatchImportProgress({ completed: 0, failed: 0 });
+        setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
+        setImportError("No EPUB files found in that folder.");
+        return;
+      }
+
+      setPendingImportItems(outcome.files.map((file) => ({
+        kind: "native-folder-file",
+        name: file.name,
+        size: file.size,
+        nativeFile: file,
+      })));
+      setPendingImportDescription("Android scanned the folder. Review the EPUBs before adding them to your library.");
+      setBatchImportProgress({ completed: 0, failed: 0 });
+      setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
+      setLastImportSummary(null);
+      setView("library");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not open that folder.");
+    }
+  }, [isImportingBatch]);
+
+  const handleCancelPendingImport = useCallback(() => {
+    if (isImportingBatch) return;
+    setPendingImportItems([]);
+    setPendingImportDescription(null);
+    setBatchImportProgress({ completed: 0, failed: 0 });
+    setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
+  }, [isImportingBatch]);
+
+  const handleStartPendingImport = useCallback(async () => {
+    if (pendingImportItems.length === 0 || isImportingBatch) return;
+    const totalPendingImports = pendingImportItems.length;
+    const totalBytes = pendingImportItems.reduce((sum, item) => sum + item.size, 0);
+    const startedAtMs = Date.now();
+    const immediateFailures: string[] = [];
+    const immediateFailedItems: PendingImportItem[] = [];
+    const trackedBooks: TrackedImportBook[] = [];
+    let completedCount = 0;
+    let failedCount = 0;
+    let processedBytes = 0;
+    setIsImportingBatch(true);
+    setBatchImportProgress({ completed: 0, failed: 0 });
+    setBatchImportTiming({ startedAtMs, elapsedMs: 0, processedBytes: 0 });
+
+    try {
+      for (const item of pendingImportItems) {
+        try {
+          const file = await loadPendingImportFile(item);
+          const bookId = await importService.importFromFile(file);
+          trackedBooks.push({ bookId, item });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Import failed";
+          immediateFailures.push(`${item.name}: ${message}`);
+          immediateFailedItems.push(item);
+        } finally {
+          setBatchImportTiming((current) => ({
+            ...current,
+            elapsedMs: Date.now() - startedAtMs,
+          }));
+        }
+      }
+
+      while (completedCount + failedCount < totalPendingImports) {
+        const snapshot = await importService.listImportSnapshot();
+        const statusByBookId = new Map(snapshot.map((row) => [row.bookId, row]));
+        const failedProcessingMessages: string[] = [];
+        let nextCompletedCount = 0;
+        let nextFailedCount = immediateFailedItems.length;
+        let nextProcessedBytes = immediateFailedItems.reduce((sum, item) => sum + item.size, 0);
+
+        for (const trackedBook of trackedBooks) {
+          const row = statusByBookId.get(trackedBook.bookId);
+          if (!row) continue;
+
+          if (row.status === "completed") {
+            nextCompletedCount += 1;
+            nextProcessedBytes += trackedBook.item.size;
+            continue;
+          }
+
+          if (row.status === "failed") {
+            nextFailedCount += 1;
+            nextProcessedBytes += trackedBook.item.size;
+            failedProcessingMessages.push(
+              `${trackedBook.item.name}: ${row.error ?? "Import failed during processing"}`
+            );
+          }
+        }
+
+        completedCount = nextCompletedCount;
+        failedCount = nextFailedCount;
+        processedBytes = nextProcessedBytes;
+        setBatchImportProgress({ completed: completedCount, failed: failedCount });
+        setBatchImportTiming((current) => ({
+          ...current,
+          elapsedMs: Date.now() - startedAtMs,
+          processedBytes,
+        }));
+
+        if (completedCount + failedCount >= totalPendingImports) {
+          immediateFailures.push(...failedProcessingMessages);
+          break;
+        }
+
+        await delay(1000);
+      }
+
+      await refreshLibrary({ showLoading: false });
+    } finally {
+      const elapsedMs = Date.now() - startedAtMs;
+      setIsImportingBatch(false);
+      setBatchImportTiming({
+        startedAtMs: null,
+        elapsedMs,
+        processedBytes,
+      });
+      setLastImportSummary({
+        bookCount: totalPendingImports,
+        completedCount,
+        failedCount,
+        totalBytes,
+        elapsedMs,
+      });
     }
 
-    event.target.value = "";
-    await refreshLibrary();
+    setPendingImportItems([]);
+    setPendingImportDescription(null);
 
-    if (failures.length === 0) {
+    if (immediateFailures.length === 0) {
       setImportError(null);
       return;
     }
 
-    if (failures.length === 1) {
-      setImportError(failures[0]);
+    if (immediateFailures.length === 1) {
+      setImportError(immediateFailures[0]);
       return;
     }
 
-    setImportError(`${failures.length} of ${files.length} imports failed. First error: ${failures[0]}`);
-  };
+    setImportError(`${immediateFailures.length} of ${totalPendingImports} imports failed. First error: ${immediateFailures[0]}`);
+  }, [importService, isImportingBatch, pendingImportItems, refreshLibrary]);
 
   const handleOpenOrRetry = useCallback(
     async (entry: LibraryEntry) => {
@@ -290,13 +551,26 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, delay: 0.35 }}
           >
-            <button
-              type="button"
-              onClick={triggerImportPicker}
-              className="rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors"
-            >
-              Import EPUB
-            </button>
+            <div className={`mx-auto grid gap-2 ${isNativeEpubFolderPickerAvailable() ? "grid-cols-2 max-w-sm" : "max-w-xs"}`}>
+              <button
+                type="button"
+                onClick={triggerImportPicker}
+                className="rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors"
+              >
+                Import EPUB
+              </button>
+              {isNativeEpubFolderPickerAvailable() ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleImportFolder();
+                  }}
+                  className="rounded-xl border border-cyan-400/35 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 transition-colors"
+                >
+                  Import folder
+                </button>
+              ) : null}
+            </div>
           </motion.div>
         </motion.header>
 
@@ -362,6 +636,54 @@ export default function Home() {
             </div>
           </div>
         </motion.div>
+
+        {lastImportSummary && pendingImportItems.length === 0 ? (
+          <section className="rounded-2xl border border-emerald-400/25 bg-neutral-900/75 p-4 shadow-xl shadow-black/20">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-neutral-100">Last import</h2>
+                <p className="mt-1 text-sm text-neutral-400">
+                  {lastImportSummary.completedCount} completed
+                  {lastImportSummary.failedCount > 0 ? `, ${lastImportSummary.failedCount} failed` : ""}
+                  {" "}from {formatSummaryBytes(lastImportSummary.totalBytes)}
+                </p>
+              </div>
+              <div className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-200">
+                {formatSummaryDuration(lastImportSummary.elapsedMs)}
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per book</div>
+                <div className="mt-1 text-sm font-semibold text-neutral-100">
+                  {formatSummaryRate(lastImportSummary.elapsedMs / Math.max(1, lastImportSummary.bookCount))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per MB</div>
+                <div className="mt-1 text-sm font-semibold text-neutral-100">
+                  {formatSummaryRate(lastImportSummary.elapsedMs / Math.max(0.001, lastImportSummary.totalBytes / (1024 * 1024)))}
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {pendingImportItems.length > 0 ? (
+          <BulkImportReview
+            files={pendingImportItems}
+            description={pendingImportDescription ?? undefined}
+            completedCount={batchImportProgress.completed}
+            failedCount={batchImportProgress.failed}
+            isImporting={isImportingBatch}
+            elapsedMs={batchImportTiming.elapsedMs}
+            processedBytes={batchImportTiming.processedBytes}
+            onStart={() => {
+              void handleStartPendingImport();
+            }}
+            onCancel={handleCancelPendingImport}
+          />
+        ) : null}
 
         {/* Book Section */}
         {view === "library" ? (
