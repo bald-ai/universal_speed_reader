@@ -104,6 +104,23 @@ Do not stop at the first SVG bug. Build a small taxonomy of image embedding patt
 | Reference | App model + current Pride and Prejudice look + this brief + `DOCUMENTATION.md` |
 | Language | **TypeScript** from day one (realistic on-phone import later) |
 | Integration | Standalone first; wire into app only if results are good enough |
+| Runtime | **This Mac only** — local scripts, local corpus, Desktop good/bad folders |
+
+Necessary parser dependencies are approved for the isolated lab package, including a
+TypeScript PDF parsing dependency such as `pdfjs-dist`. Keep lab-only dependencies
+isolated from the production app where practical, and add only dependencies that are
+needed for the experiment.
+
+### Hard boundary: do not touch the running app
+
+All parser-lab work stays on the Mac:
+
+- Do **not** install/upload APKs, use `adb`, unlock the phone, or drive the Android UI
+- Do **not** change production import/reader wiring to use the new parser
+- Do **not** clear or modify on-device library data
+- Do **not** treat “emulate the app” as part of this task
+
+Validate by running the standalone parser locally and writing results/report + Desktop folders. App integration is a later decision after you’re happy with the report.
 
 Reuse lessons, not legacy code:
 
@@ -119,7 +136,9 @@ Reuse lessons, not legacy code:
 - Goal is to learn **common fail reasons and how often**
 - Soft “best effort always” comes in **phase 2** after data exists
 - Spot-checked books should feel **about equal to Pride and Prejudice** (not “better than”)
-- Must collect a list of **at least 20 broken books** from **realistic** sources — no cheating by stocking the corpus with intentionally garbage files
+- Seek realistic difficult books and record every genuine failure, but do not manufacture
+  failures or bias the corpus toward intentionally broken files. If the run reaches 500
+  books with fewer than 20 failures, stop at 500 and report the actual failure count.
 
 ### Automatic PASS (phase 1)
 
@@ -128,7 +147,7 @@ Closer to real quality than bare smoke tests:
 - No crash / no timeout beyond agreed budget
 - Real text extracted; sequential paragraph IDs
 - Chapters look sane (not empty/nonsense-only)
-- Cover found when reasonably present
+- Cover found when reasonably present (missing cover is a **Cover missing** tally / warning, not an automatic full-book fail by itself)
 - Image anchors look sane when images exist
 - Output matches the target model
 
@@ -139,9 +158,39 @@ Closer to real quality than bare smoke tests:
 - Manual spot-check a sample, including hard/illustrated books
 - Pride and Prejudice = golden visual/reading reference
 
+### Pride and Prejudice golden reference
+
+Use the current app import of
+[`test-fixtures/epubs-with-covers/pride-and-prejudice.epub`](../test-fixtures/epubs-with-covers/pride-and-prejudice.epub)
+as the golden book. The following screenshots were supplied by the product owner and
+show the accepted reader state:
+
+- [`references/pride-and-prejudice/chapter-menu.png`](references/pride-and-prejudice/chapter-menu.png)
+- [`references/pride-and-prejudice/reader-front-matter.png`](references/pride-and-prejudice/reader-front-matter.png)
+- [`references/pride-and-prejudice/reader-colophon-image.png`](references/pride-and-prejudice/reader-colophon-image.png)
+- [`references/pride-and-prejudice/reader-illustrations.png`](references/pride-and-prejudice/reader-illustrations.png)
+- [`references/pride-and-prejudice/library-cover.png`](references/pride-and-prejudice/library-cover.png)
+
+Together these are the visual baseline for front matter, chapter navigation, readable
+text, illustration ordering and captions, and the materialized library cover. The lab
+does not need to reproduce the app UI; its preview must make it possible to compare the
+extracted content and ordering against these views.
+
 ### Speed
 
-Match **current app import feel**, scaled by size/type (e.g. illustrated Pride-class in seconds on device after pointer-based images — not multi-minute base64 import). Overnight laptop bulk should finish hundreds of books without pathological per-book cost.
+The current app imports the golden Pride and Prejudice EPUB in approximately **1.4
+seconds**. Match that import feel, scaled by size and type, after pointer-based images.
+
+- Target: under **5 seconds** for ordinary EPUBs
+- Target: under **10 seconds** for text PDFs when PDF processing is harder
+- Absolute upper limit: **30 seconds per book** for in-scope books
+
+A book exceeding 30 seconds is an automatic `Timeout / extreme slowness` failure. If
+realistic in-scope files reveal circumstances that make the 30-second ceiling
+unrealistic, do not silently relax it: preserve the timing evidence, explain the file
+characteristics and bottleneck in the report, and recommend a revised rule for a later
+decision. Overnight laptop bulk should finish hundreds of books without pathological
+per-book cost.
 
 ## Overnight corpus and evaluation
 
@@ -172,11 +221,12 @@ Use a short fixed list (add buckets later if new patterns dominate):
 3. **Desktop output folders** (required) — copy/symlink evaluated books into:
    - **Good books:** `/Users/michalkrsik/Desktop/good books`
    - **Bad books:** `/Users/michalkrsik/Desktop/bad books`  
-   Use those exact paths. “Good” ≈ equals Pride-quality / auto PASS and looks fine; “Bad” = failed or clearly not good enough (include the ≥20 realistically broken set here, plus any other failures). Keep filenames recognizable (title/id). Do not put corpus junk outside these two result folders on the Desktop.
+   Use those exact paths. “Good” ≈ equals Pride-quality / auto PASS and looks fine; “Bad” = failed or clearly not good enough (all genuine failures from the run). Keep filenames recognizable (title/id). Do not put corpus junk outside these two result folders on the Desktop.
 4. Report including:
    - pass rate
    - failure counts by bucket
-   - list of ≥20 realistically broken books
+   - list of realistically broken books (target ≥20; report the actual count if fewer
+     than 20 fail by the 500-book cap)
    - previews/links for failures
    - plain-English section: how it did, what went well, what went poorly, what to do next
 5. Notes from **research** on EPUB/PDF image and structure variants (even if not all are implemented yet)
@@ -184,6 +234,8 @@ Use a short fixed list (add buckets later if new patterns dominate):
 ## Explicit non-goals (phase 1)
 
 - App UI integration / replacing production import path
+- On-device testing, APK install, `adb`, or phone automation
+- Emulating or modifying the live Android app experience
 - OCR for scanned PDFs
 - Fixed-layout comics
 - Perfect CSS fidelity
