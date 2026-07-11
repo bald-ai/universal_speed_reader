@@ -128,14 +128,14 @@ async function loadPendingImportPayload(item: PendingImportItem): Promise<Import
   if (item.kind === "file") {
     return {
       fileName: item.file.name,
-      mimeType: item.file.type || "application/epub+zip",
+      mimeType: item.file.type || "application/octet-stream",
       bytes: new Uint8Array(await item.file.arrayBuffer()),
     };
   }
 
   return {
     fileName: item.nativeFile.name,
-    mimeType: item.nativeFile.type ?? "application/epub+zip",
+    mimeType: item.nativeFile.type ?? "application/octet-stream",
     bytes: await readNativeEpubFolderBytes(item.nativeFile),
   };
 }
@@ -383,7 +383,7 @@ export default function Home() {
         setPendingImportDescription(null);
         setBatchImportProgress({ completed: 0, failed: 0 });
         setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
-        setImportError("No EPUB files found in that folder.");
+        setImportError("No EPUB or PDF books found in that folder.");
         return;
       }
 
@@ -725,7 +725,7 @@ export default function Home() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".epub,application/epub+zip"
+        accept=".epub,.pdf,application/epub+zip,application/pdf"
         className="hidden"
         multiple
         onChange={(event) => {
@@ -933,7 +933,7 @@ export default function Home() {
                 onClick={triggerImportPicker}
                 className="w-full rounded-xl px-4 py-3 text-left text-sm font-semibold text-neutral-100 hover:bg-neutral-800 transition-colors"
               >
-                EPUB files
+                EPUB or PDF files
               </button>
               <button
                 type="button"

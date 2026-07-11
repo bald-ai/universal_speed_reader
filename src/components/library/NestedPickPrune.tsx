@@ -103,7 +103,7 @@ function TreeNode(props: {
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-neutral-100">{node.name}</div>
           <div className="truncate text-xs text-neutral-500">
-            {node.subtitle ?? (node.size !== undefined ? formatBytes(node.size) : "EPUB")}
+            {node.subtitle ?? (node.size !== undefined ? formatBytes(node.size) : "Book")}
           </div>
         </div>
         <button

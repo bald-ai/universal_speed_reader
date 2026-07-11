@@ -74,6 +74,9 @@ act accordingly.
 
 ## On-Device Control and Validation
 - The agent can control the Android app on a connected phone via USB or Wi-Fi using `adb` (install/update app, launch app, send input events, inspect UI hierarchy, and read logs).
+- This Mac runs ADB 37 with the login agent `com.michalkrsik.adb-wifi-keeper`. The keeper maintains the Nothing Phone's fixed Wi-Fi ADB endpoint on port `5555`, retries its last IP, and scans the current `en0` `/24` network when the phone's DHCP address changes.
+- Before asking the user for pairing details or an ADB port, run `"$ADB" devices -l` and allow up to 25 seconds for the keeper to reconnect. A healthy persistent connection appears as `model:A001` on port `5555`.
+- Public Wi-Fi commonly blocks mDNS, so the rotating TLS port may not be discoverable there. Prefer the fixed `:5555` connection maintained by the keeper; pairing is a recovery step, not the normal workflow.
 - If the user instructs on-device validation, the agent must validate changes using this control path before handoff.
 - After implementation is done, the agent should test its work on-device over Wi-Fi when available and report the validation result before handoff.
 - On-device validation should include: install the latest APK, execute the requested flow, capture evidence (for example `logcat` and UI dump state), and report pass/fail.

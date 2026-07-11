@@ -274,6 +274,21 @@ export class InMemoryBookRepository implements BookRepository {
     });
   }
 
+  async clearAllBooks(): Promise<void> {
+    await this.withLock(async () => {
+      this.state = {
+        ...this.state,
+        books: [],
+        book_chunks: [],
+        book_chapters: [],
+        book_images: [],
+        reading_progress: [],
+        import_jobs: [],
+      };
+      await this.persist();
+    });
+  }
+
   async replaceBookContent(bookId: string, replacement: BookContentReplacement): Promise<BookRow> {
     return this.withLock(async () => {
       const index = this.state.books.findIndex((entry) => entry.id === bookId);

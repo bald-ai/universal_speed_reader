@@ -40,6 +40,8 @@ export interface BookRepository {
     }
   ): Promise<void>;
   deleteBook(bookId: string): Promise<void>;
+  /** Deletes all library books and their book-specific data, preserving app preferences. */
+  clearAllBooks(): Promise<void>;
 
   replaceBookContent(bookId: string, replacement: BookContentReplacement): Promise<BookRow>;
   clearBookContent(bookId: string): Promise<void>;

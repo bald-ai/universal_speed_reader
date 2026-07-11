@@ -54,7 +54,7 @@ export async function readNativeEpubFolderFile(file: NativeEpubFolderFile): Prom
 
   const blob = await response.blob();
   return new File([blob], file.name, {
-    type: file.type ?? "application/epub+zip",
+    type: file.type ?? "application/octet-stream",
     lastModified: Date.now(),
   });
 }

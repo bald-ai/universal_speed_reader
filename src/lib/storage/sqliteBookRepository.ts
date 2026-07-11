@@ -477,6 +477,30 @@ export class SqliteBookRepository implements BookRepository {
     });
   }
 
+  async clearAllBooks(): Promise<void> {
+    await this.withLock(async () => {
+      const db = await this.getDb();
+      await db.beginTransaction();
+      try {
+        await db.execute(
+          `
+          DELETE FROM reading_progress;
+          DELETE FROM import_jobs;
+          DELETE FROM book_chunks;
+          DELETE FROM book_chapters;
+          DELETE FROM book_images;
+          DELETE FROM books;
+          `,
+          false
+        );
+        await db.commitTransaction();
+      } catch (error) {
+        await db.rollbackTransaction();
+        throw error;
+      }
+    });
+  }
+
   async replaceBookContent(bookId: string, replacement: BookContentReplacement): Promise<BookRow> {
     return this.withLock(async () => {
       const db = await this.getDb();

@@ -898,7 +898,7 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
   if (entries.length === 0) {
     return (
       <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-4 text-sm text-neutral-400">
-        No books yet. Import an EPUB to start reading.
+        No books yet. Import an EPUB or PDF to start reading.
       </div>
     );
   }

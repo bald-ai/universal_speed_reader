@@ -247,4 +247,36 @@ describe("book repository integration", () => {
     const second = await repository.getReadingProgress(secondBook);
     expect(second?.paragraph_id).toBe(7);
   });
+
+  it("clears every book-owned record while keeping app preferences", async () => {
+    const bookId = "book-fresh-start";
+    await repository.upsertBook(makeBook(bookId, "completed"));
+    await repository.insertImportJob({
+      book_id: bookId,
+      attempt: 1,
+      status: "completed",
+      error: null,
+      started_at: 10,
+      finished_at: 11,
+    });
+    await repository.saveReadingProgress({
+      book_id: bookId,
+      paragraph_id: 4,
+      word_index: 1,
+      mode: "normal",
+      updated_at: 12,
+    });
+    await repository.putAppSetting("theme", { value: "dark" });
+
+    await repository.clearAllBooks();
+
+    const snapshot = await repository.exportSnapshot();
+    expect(snapshot.books).toEqual([]);
+    expect(snapshot.book_chunks).toEqual([]);
+    expect(snapshot.book_chapters).toEqual([]);
+    expect(snapshot.book_images).toEqual([]);
+    expect(snapshot.reading_progress).toEqual([]);
+    expect(snapshot.import_jobs).toEqual([]);
+    expect(await repository.getAppSetting<{ value: string }>("theme")).toEqual({ value: "dark" });
+  });
 });

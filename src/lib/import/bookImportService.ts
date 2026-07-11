@@ -1,9 +1,9 @@
-import { parseEpubBytes } from "@/lib/epub/epubParser";
+import { BookParserError, parseBookBytes } from "@/lib/bookParser";
 import { removeBookReferences } from "@/lib/moodStore";
 import { removeBookFromLibraryLayout, updateLibraryLayout } from "@/lib/libraryLayoutStore";
 import { getBookRepository } from "@/lib/storage/appRepository";
 import type { BookRepository } from "@/lib/storage/bookRepository";
-import { deleteRawEpub, loadRawEpub, storeRawEpub, type RawEpubRecord } from "@/lib/import/rawEpubStore";
+import { deleteRawBook, loadRawBook, storeRawBook, type RawBookRecord } from "@/lib/import/rawEpubStore";
 import { removeBookRulesFromStore, TTS_REGEX_SETTINGS_KEY } from "@/lib/ttsRegex/storePersistence";
 import { clearBookTokenCache } from "@/lib/utils/tokenCache";
 import {
@@ -12,10 +12,9 @@ import {
   hasSequentialParagraphIds,
   normalizeChapters,
 } from "@/lib/import/normalization";
-import { mimeFromAssetPath } from "@/lib/import/epubAssetDataUrl";
 import { epubCoverDataUrl } from "@/lib/import/epubCoverDataUrl";
+import { createPdfCoverDataUrl } from "@/lib/import/pdfImageRenderer";
 import { clearBookImageSrcCache } from "@/lib/reader/resolveBookImageSrc";
-import { ZipArchive } from "@/lib/epub/zipArchive";
 import type {
   BookImageRow,
   BookRow,
@@ -23,7 +22,6 @@ import type {
   ImportJobRow,
   ProcessingStatus,
 } from "@/types/storage";
-import type { ParsedEpubImage } from "@/lib/epub/chapterExtraction";
 
 const MAX_IMPORT_SIZE_BYTES = 150 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 180_000;
@@ -66,7 +64,7 @@ class ImportFailure extends Error {
 }
 
 function fileNameToTitle(fileName: string): string {
-  const withoutExtension = fileName.replace(/\.epub$/i, "").trim();
+  const withoutExtension = fileName.replace(/\.(?:epub|pdf)$/i, "").trim();
   return withoutExtension.length > 0 ? withoutExtension : "Untitled";
 }
 
@@ -144,6 +142,9 @@ function formatFailure(error: ImportFailure): string {
 
 function classifyError(error: unknown): ImportFailure {
   if (error instanceof ImportFailure) return error;
+  if (error instanceof BookParserError) {
+    return new ImportFailure("Corrupted/Unreadable book", error.message);
+  }
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
 
@@ -159,7 +160,7 @@ function classifyError(error: unknown): ImportFailure {
   if (normalized.includes("too large")) {
     return new ImportFailure("File too large", message);
   }
-  return new ImportFailure("Corrupted/Unreadable EPUB", message);
+  return new ImportFailure("Corrupted/Unreadable book", message);
 }
 
 /**
@@ -170,37 +171,19 @@ function classifyError(error: unknown): ImportFailure {
  */
 function toBookImageRows(
   bookId: string,
-  epubBytes: Uint8Array,
-  parsedImages: ParsedEpubImage[]
+  parsedImages: Array<{ src: string; alt: string; afterParagraphId: number }>
 ): BookImageRow[] {
   if (parsedImages.length === 0) return [];
-
-  const zip = ZipArchive.fromBytes(epubBytes);
   const rows: BookImageRow[] = [];
 
   for (const image of parsedImages) {
-    const src = image.srcPath.trim();
+    const src = image.src.trim();
     if (!src) continue;
-
-    if (src.toLowerCase().startsWith("data:image/")) {
-      rows.push({
-        book_id: bookId,
-        image_index: rows.length,
-        after_paragraph_id: image.afterParagraphId,
-        alt: image.alt,
-        src,
-      });
-      continue;
-    }
-
-    // Skip unsupported or missing zip assets; soft-fail like before.
-    if (!mimeFromAssetPath(src) || !zip.has(src)) continue;
-
     rows.push({
       book_id: bookId,
       image_index: rows.length,
       after_paragraph_id: image.afterParagraphId,
-      alt: image.alt,
+      alt: image.alt.trim() || null,
       src,
     });
   }
@@ -211,8 +194,8 @@ function toBookImageRows(
 type ImportTask = {
   bookId: string;
   attempt: number;
-  source: Pick<RawEpubRecord, "fileName" | "mimeType" | "sizeBytes">;
-  inlineSource?: RawEpubRecord;
+  source: Pick<RawBookRecord, "fileName" | "mimeType" | "sizeBytes">;
+  inlineSource?: RawBookRecord;
   inlineReservationBytes?: number;
   persistSource?: Promise<RawSourcePersistResult>;
   clearProgressOnSuccess: boolean;
@@ -223,10 +206,10 @@ type RawSourcePersistResult =
   | { status: "stored" }
   | { status: "failed"; error: unknown };
 
-function validateSource(source: Pick<RawEpubRecord, "fileName" | "sizeBytes">): ImportFailure | null {
+function validateSource(source: Pick<RawBookRecord, "fileName" | "sizeBytes">): ImportFailure | null {
   const normalizedName = source.fileName.toLowerCase();
-  if (!normalizedName.endsWith(".epub")) {
-    return new ImportFailure("Unsupported format", "Unsupported format: only .epub files are allowed");
+  if (!normalizedName.endsWith(".epub") && !normalizedName.endsWith(".pdf")) {
+    return new ImportFailure("Unsupported format", "Unsupported format: only .epub and .pdf files are allowed");
   }
   if (source.sizeBytes > MAX_IMPORT_SIZE_BYTES) {
     return new ImportFailure("File too large", "File too large: maximum size is 150 MB");
@@ -235,8 +218,8 @@ function validateSource(source: Pick<RawEpubRecord, "fileName" | "sizeBytes">): 
 }
 
 type RawStoreAdapter = {
-  store: (record: RawEpubRecord) => Promise<void>;
-  load: (bookId: string) => Promise<RawEpubRecord | null>;
+  store: (record: RawBookRecord) => Promise<void>;
+  load: (bookId: string) => Promise<RawBookRecord | null>;
   remove: (bookId: string) => Promise<void>;
 };
 
@@ -256,9 +239,9 @@ export class BookImportService {
   constructor(repositoryPromise?: Promise<BookRepository>, rawStore?: RawStoreAdapter) {
     this.repositoryPromise = repositoryPromise ?? getBookRepository();
     this.rawStore = rawStore ?? {
-      store: storeRawEpub,
-      load: loadRawEpub,
-      remove: deleteRawEpub,
+      store: storeRawBook,
+      load: loadRawBook,
+      remove: deleteRawBook,
     };
   }
 
@@ -271,7 +254,7 @@ export class BookImportService {
     const bytes = new Uint8Array(await file.arrayBuffer());
     return this.importFromBytes({
       fileName: file.name,
-      mimeType: file.type || "application/epub+zip",
+      mimeType: file.type || "application/octet-stream",
       bytes,
     }, options);
   }
@@ -287,7 +270,7 @@ export class BookImportService {
       author: null,
       cover_path: null,
       language: null,
-      source_uri: `indexeddb://raw_epubs/${bookId}/${encodeURIComponent(payload.fileName)}`,
+      source_uri: `indexeddb://raw_books/${bookId}/${encodeURIComponent(payload.fileName)}`,
       size_bytes: payload.bytes.byteLength,
       processing_status: "queued",
       processing_error: null,
@@ -310,7 +293,7 @@ export class BookImportService {
     });
     this.emit();
 
-    const source: RawEpubRecord = {
+    const source: RawBookRecord = {
       bookId,
       fileName: payload.fileName,
       mimeType: payload.mimeType,
@@ -358,8 +341,8 @@ export class BookImportService {
         bookId,
         attempt,
         new ImportFailure(
-          "Corrupted/Unreadable EPUB",
-          `Corrupted/Unreadable EPUB: failed to persist source file for retry (${message})`
+          "Corrupted/Unreadable book",
+          `Corrupted/Unreadable book: failed to persist source file for retry (${message})`
         )
       );
       return bookId;
@@ -421,8 +404,8 @@ export class BookImportService {
           bookId,
           attempt,
           new ImportFailure(
-            "Corrupted/Unreadable EPUB",
-            "Corrupted/Unreadable EPUB: no stored source file available for retry"
+            "Corrupted/Unreadable book",
+            "Corrupted/Unreadable book: no stored source file available for retry"
           )
         );
         return;
@@ -532,8 +515,8 @@ export class BookImportService {
           bookId,
           attempt,
           new ImportFailure(
-            "Corrupted/Unreadable EPUB",
-            "Corrupted/Unreadable EPUB: no stored source file available for restore"
+            "Corrupted/Unreadable book",
+            "Corrupted/Unreadable book: no stored source file available for restore"
           )
         );
         return;
@@ -668,7 +651,7 @@ export class BookImportService {
     task.inlineReservationBytes = undefined;
   }
 
-  private persistRawSource(source: RawEpubRecord): Promise<RawSourcePersistResult> {
+  private persistRawSource(source: RawBookRecord): Promise<RawSourcePersistResult> {
     return Promise.resolve()
       .then(() => this.rawStore.store(source))
       .then(
@@ -739,7 +722,9 @@ export class BookImportService {
 
       const parsed = await withTimeout(
         (signal) =>
-          parseEpubBytes(storedSource.bytes, {
+          parseBookBytes({
+            sourceBytes: storedSource.bytes,
+            sourceName: storedSource.fileName,
             signal,
             onPhaseChange: async (phase) => {
               if (signal.aborted) return;
@@ -757,42 +742,56 @@ export class BookImportService {
         // Keep metadata stable when the persisted source changed between queue and execution.
         await ensureNotCancelled();
         await repository.patchBook(bookId, {
-          source_uri: `indexeddb://raw_epubs/${bookId}/${encodeURIComponent(storedSource.fileName)}`,
+          source_uri: `indexeddb://raw_books/${bookId}/${encodeURIComponent(storedSource.fileName)}`,
           size_bytes: storedSource.sizeBytes,
           updated_at: Date.now(),
         });
       }
 
-      if (parsed.paragraphs.length === 0) {
+      if (parsed.book.paragraphs.length === 0) {
         throw new ImportFailure(
-          "Corrupted/Unreadable EPUB",
-          "Corrupted/Unreadable EPUB: no readable paragraphs extracted"
+          "Corrupted/Unreadable book",
+          "Corrupted/Unreadable book: no readable paragraphs extracted"
         );
       }
-      if (!hasSequentialParagraphIds(parsed.paragraphs)) {
+      if (!hasSequentialParagraphIds(parsed.book.paragraphs)) {
         throw new ImportFailure(
-          "Corrupted/Unreadable EPUB",
-          "Corrupted/Unreadable EPUB: paragraph ids are not sequential"
+          "Corrupted/Unreadable book",
+          "Corrupted/Unreadable book: paragraph ids are not sequential"
         );
       }
 
-      if (parsed.chapters.length === 0) {
-        parsed.chapters = [{ title: "Full book", start_paragraph_id: 1 }];
+      const strictFailure = parsed.book.diagnostics.find((diagnostic) => diagnostic.severity === "failure");
+      if (strictFailure) {
+        throw new ImportFailure(
+          "Book content not reliable",
+          `Book content not reliable: ${strictFailure.message}`
+        );
       }
 
-      const chunkRows = chunkParagraphs(bookId, parsed.paragraphs);
-      const chapterRows = normalizeChapters(bookId, parsed.chapters);
+      const chunkRows = chunkParagraphs(bookId, parsed.book.paragraphs);
+      const chapterRows = normalizeChapters(
+        bookId,
+        parsed.book.chapters.map((chapter) => ({
+          title: chapter.title,
+          start_paragraph_id: chapter.startParagraphId,
+        }))
+      );
       await ensureNotCancelled();
-      const imageRows = toBookImageRows(bookId, storedSource.bytes, parsed.images ?? []);
-      const totalWords = parsed.totalWords > 0 ? parsed.totalWords : computeTotalWords(parsed.paragraphs);
+      const imageRows = toBookImageRows(bookId, parsed.book.images);
+      const totalWords = parsed.book.totals.words > 0
+        ? parsed.book.totals.words
+        : computeTotalWords(parsed.book.paragraphs);
       await ensureNotCancelled();
-      const coverDataUrl = await epubCoverDataUrl(storedSource.bytes, parsed.coverPath);
+      const coverDataUrl = parsed.book.format === "epub"
+        ? await epubCoverDataUrl(storedSource.bytes, parsed.book.cover?.src ?? null)
+        : await createPdfCoverDataUrl(storedSource.bytes);
       await ensureNotCancelled();
       await repository.patchBook(bookId, {
-        title: parsed.title || fileNameToTitle(storedSource.fileName),
-        author: parsed.author,
+        title: parsed.book.metadata.title || fileNameToTitle(storedSource.fileName),
+        author: parsed.book.metadata.authors.join(", ") || null,
         cover_path: coverDataUrl,
-        language: parsed.language,
+        language: parsed.book.metadata.language ?? null,
         size_bytes: storedSource.sizeBytes,
         updated_at: Date.now(),
       });
@@ -803,7 +802,7 @@ export class BookImportService {
         chapters: chapterRows,
         images: imageRows,
         total_chunks: chunkRows.length,
-        total_paragraphs: parsed.paragraphs.length,
+        total_paragraphs: parsed.book.paragraphs.length,
         total_words: totalWords,
       });
       if (clearProgressOnSuccess) {
@@ -825,7 +824,7 @@ export class BookImportService {
     }
   }
 
-  private async loadTaskSource(task: ImportTask): Promise<RawEpubRecord> {
+  private async loadTaskSource(task: ImportTask): Promise<RawBookRecord> {
     if (task.inlineSource) {
       return task.inlineSource;
     }
@@ -833,8 +832,8 @@ export class BookImportService {
     const storedSource = await this.rawStore.load(task.bookId);
     if (!storedSource) {
       throw new ImportFailure(
-        "Corrupted/Unreadable EPUB",
-        "Corrupted/Unreadable EPUB: no stored source file available for processing"
+        "Corrupted/Unreadable book",
+        "Corrupted/Unreadable book: no stored source file available for processing"
       );
     }
     return storedSource;
@@ -843,8 +842,8 @@ export class BookImportService {
   private formatPersistSourceFailure(error: unknown): ImportFailure {
     const message = error instanceof Error ? error.message : String(error);
     return new ImportFailure(
-      "Corrupted/Unreadable EPUB",
-      `Corrupted/Unreadable EPUB: failed to persist source file for retry (${message})`
+      "Corrupted/Unreadable book",
+      `Corrupted/Unreadable book: failed to persist source file for retry (${message})`
     );
   }
 

@@ -19,7 +19,7 @@ describe("BulkImportReview", () => {
       />
     );
 
-    expect(html).toContain("3 EPUBs selected");
+    expect(html).toContain("3 books selected");
     expect(html).toContain("first.epub");
     expect(html).toContain("second.epub");
     expect(html).toContain("Start import");

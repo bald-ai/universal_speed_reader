@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { deleteRawEpub, loadRawEpub, storeRawEpub, type RawEpubRecord } from "@/lib/import/rawEpubStore";
+import {
+  clearRawBooks,
+  deleteRawEpub,
+  loadRawBook,
+  loadRawEpub,
+  storeRawEpub,
+  type RawEpubRecord,
+} from "@/lib/import/rawEpubStore";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -57,5 +64,17 @@ describe("rawEpubStore", () => {
     await deleteRawEpub(bookId);
 
     expect(await loadRawEpub(bookId)).toBeNull();
+  });
+
+  it("clears every retained source book for the approved fresh start", async () => {
+    const first = `raw-clear-one-${Date.now()}`;
+    const second = `raw-clear-two-${Date.now()}`;
+    await storeRawEpub(makeRecord(first, "first", Date.now()));
+    await storeRawEpub(makeRecord(second, "second", Date.now()));
+
+    await clearRawBooks();
+
+    expect(await loadRawBook(first)).toBeNull();
+    expect(await loadRawBook(second)).toBeNull();
   });
 });

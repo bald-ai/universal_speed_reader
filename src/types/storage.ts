@@ -13,7 +13,8 @@ export type ProcessingStatus =
 export type ImportErrorBucket =
   | "Unsupported format"
   | "File too large"
-  | "Corrupted/Unreadable EPUB"
+  | "Corrupted/Unreadable book"
+  | "Book content not reliable"
   | "Processing timeout";
 
 export type StoredParagraph = {

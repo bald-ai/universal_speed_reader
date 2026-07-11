@@ -20,8 +20,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "EpubFolderPicker")
 public class EpubFolderPickerPlugin extends Plugin {
-    private static final int MAX_EPUB_FILES = 1000;
+    private static final int MAX_BOOK_FILES = 1000;
     private static final String EPUB_MIME_TYPE = "application/epub+zip";
+    private static final String PDF_MIME_TYPE = "application/pdf";
 
     @PluginMethod
     public void pickFolder(PluginCall call) {
@@ -65,7 +66,7 @@ public class EpubFolderPickerPlugin extends Plugin {
         try {
             String rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri);
             JSArray files = new JSArray();
-            collectEpubFiles(resolver, treeUri, rootDocumentId, "", files);
+            collectBookFiles(resolver, treeUri, rootDocumentId, "", files);
 
             JSObject response = new JSObject();
             response.put("canceled", false);
@@ -73,18 +74,18 @@ public class EpubFolderPickerPlugin extends Plugin {
             response.put("files", files);
             call.resolve(response);
         } catch (Exception error) {
-            call.reject("Could not read EPUBs from the selected folder", error);
+            call.reject("Could not read books from the selected folder", error);
         }
     }
 
-    private void collectEpubFiles(
+    private void collectBookFiles(
         ContentResolver resolver,
         Uri treeUri,
         String documentId,
         String parentPath,
         JSArray files
     ) {
-        if (files.length() >= MAX_EPUB_FILES) {
+        if (files.length() >= MAX_BOOK_FILES) {
             return;
         }
 
@@ -106,7 +107,7 @@ public class EpubFolderPickerPlugin extends Plugin {
             int mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
             int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
 
-            while (cursor.moveToNext() && files.length() < MAX_EPUB_FILES) {
+            while (cursor.moveToNext() && files.length() < MAX_BOOK_FILES) {
                 String childDocumentId = getString(cursor, idIndex);
                 String displayName = getString(cursor, nameIndex);
                 String mimeType = getString(cursor, mimeIndex);
@@ -115,11 +116,11 @@ public class EpubFolderPickerPlugin extends Plugin {
                 }
 
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType)) {
-                    collectEpubFiles(resolver, treeUri, childDocumentId, appendPath(parentPath, displayName), files);
+                    collectBookFiles(resolver, treeUri, childDocumentId, appendPath(parentPath, displayName), files);
                     continue;
                 }
 
-                if (!isEpub(displayName, mimeType)) {
+                if (!isSupportedBook(displayName, mimeType)) {
                     continue;
                 }
 
@@ -128,15 +129,19 @@ public class EpubFolderPickerPlugin extends Plugin {
                 file.put("name", displayName);
                 file.put("size", getLong(cursor, sizeIndex));
                 file.put("uri", documentUri.toString());
-                file.put("type", mimeType == null || mimeType.isEmpty() ? EPUB_MIME_TYPE : mimeType);
+                file.put("type", mimeType == null || mimeType.isEmpty() ? "application/octet-stream" : mimeType);
                 file.put("relativePath", appendPath(parentPath, displayName));
                 files.put(file);
             }
         }
     }
 
-    private boolean isEpub(String displayName, String mimeType) {
-        return EPUB_MIME_TYPE.equalsIgnoreCase(mimeType) || displayName.toLowerCase().endsWith(".epub");
+    private boolean isSupportedBook(String displayName, String mimeType) {
+        String lowerName = displayName.toLowerCase();
+        return EPUB_MIME_TYPE.equalsIgnoreCase(mimeType)
+            || PDF_MIME_TYPE.equalsIgnoreCase(mimeType)
+            || lowerName.endsWith(".epub")
+            || lowerName.endsWith(".pdf");
     }
 
     private String getDocumentName(ContentResolver resolver, Uri treeUri, String documentId) {

@@ -1,4 +1,5 @@
-export type RawEpubRecord = {
+/** Original source file retained for retries and on-demand media. Supports EPUB and PDF. */
+export type RawBookRecord = {
   bookId: string;
   fileName: string;
   mimeType: string;
@@ -7,11 +8,14 @@ export type RawEpubRecord = {
   storedAt: number;
 };
 
+/** Backward-compatible alias while the old EPUB-only call sites migrate. */
+export type RawEpubRecord = RawBookRecord;
+
 const DB_NAME = "universal_speed_reader_raw_epubs";
 const STORE_NAME = "raw_epubs";
 const MEMORY_CACHE_LIMIT = 2;
 
-function cloneRecord(record: RawEpubRecord): RawEpubRecord {
+function cloneRecord(record: RawBookRecord): RawBookRecord {
   return {
     ...record,
     bytes: new Uint8Array(record.bytes),
@@ -40,7 +44,7 @@ function toUint8Array(value: unknown): Uint8Array | null {
   return null;
 }
 
-function toRecord(value: unknown): RawEpubRecord | null {
+function toRecord(value: unknown): RawBookRecord | null {
   if (!isObject(value)) return null;
   const {
     bookId,
@@ -78,7 +82,7 @@ class IndexedDbRawStore {
   private readonly memory = new Map<string, RawEpubRecord>();
   private dbPromise: Promise<IDBDatabase> | null = null;
 
-  async put(record: RawEpubRecord): Promise<void> {
+  async put(record: RawBookRecord): Promise<void> {
     const cloned = cloneRecord(record);
     this.memory.set(cloned.bookId, cloned);
     this.pruneMemoryCache();
@@ -100,7 +104,7 @@ class IndexedDbRawStore {
     });
   }
 
-  async get(bookId: string): Promise<RawEpubRecord | null> {
+  async get(bookId: string): Promise<RawBookRecord | null> {
     const inMemory = this.memory.get(bookId);
     if (inMemory) return cloneRecord(inMemory);
 
@@ -139,6 +143,19 @@ class IndexedDbRawStore {
       const store = tx.objectStore(STORE_NAME);
       const request = store.delete(bookId);
       request.onerror = () => reject(request.error ?? new Error("Failed to delete raw EPUB"));
+      request.onsuccess = () => resolve();
+    });
+  }
+
+  async clear(): Promise<void> {
+    this.memory.clear();
+    if (!hasIndexedDb()) return;
+    const db = await this.getDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.clear();
+      request.onerror = () => reject(request.error ?? new Error("Failed to clear stored source books"));
       request.onsuccess = () => resolve();
     });
   }
@@ -185,4 +202,20 @@ export async function loadRawEpub(bookId: string): Promise<RawEpubRecord | null>
 
 export async function deleteRawEpub(bookId: string): Promise<void> {
   await singleton.delete(bookId);
+}
+
+export async function storeRawBook(record: RawBookRecord): Promise<void> {
+  await singleton.put(record);
+}
+
+export async function loadRawBook(bookId: string): Promise<RawBookRecord | null> {
+  return singleton.get(bookId);
+}
+
+export async function deleteRawBook(bookId: string): Promise<void> {
+  await singleton.delete(bookId);
+}
+
+export async function clearRawBooks(): Promise<void> {
+  await singleton.clear();
 }

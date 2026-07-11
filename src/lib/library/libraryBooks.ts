@@ -71,7 +71,7 @@ export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
         title: book.title,
         author: book.author ?? "Unknown author",
         coverUrl: book.cover_path ?? undefined,
-        genre: "EPUB",
+        genre: "Book",
         description: buildDescription(book),
         progressPercent,
       },

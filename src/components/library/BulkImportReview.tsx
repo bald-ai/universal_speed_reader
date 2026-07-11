@@ -88,7 +88,7 @@ export default function BulkImportReview(props: BulkImportReviewProps) {
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold text-neutral-100 leading-tight">
-              {files.length.toLocaleString()} EPUB{files.length === 1 ? "" : "s"} selected
+              {files.length.toLocaleString()} book{files.length === 1 ? "" : "s"} selected
             </h2>
             <p className="mt-1 text-sm text-neutral-400 leading-relaxed">
               {description ?? "Android picked the files. Review the batch before adding it to your library."}

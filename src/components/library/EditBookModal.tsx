@@ -96,7 +96,7 @@ export default function EditBookModal(props: EditBookModalProps) {
       typeof window === "undefined"
         ? true
         : window.confirm(
-            `Restore "${entry.title}" to the original uploaded EPUB?\n\nThis will replace title, author, cover, text content, and reset reading progress.`
+            `Restore "${entry.title}" from the original uploaded file?\n\nThis will replace title, author, cover, text content, and reset reading progress.`
           );
     if (!confirmed) return;
     await onRestore();
@@ -195,7 +195,7 @@ export default function EditBookModal(props: EditBookModalProps) {
 
         <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3">
           <p className="text-xs text-amber-200">
-            Restore to original will re-import from the uploaded EPUB and reset reading progress.
+            Restore to original will re-import from the uploaded file and reset reading progress.
           </p>
         </div>
 

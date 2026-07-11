@@ -146,8 +146,8 @@ function createValidEpubBytes(
     : "";
   const chapter = `<html><body>
     <h1>Chapter One</h1>
-    <p>Alpha beta gamma.</p>
-    <p>Delta epsilon zeta.</p>${inlineImageMarkup}
+    <p>Alpha beta gamma form a small but complete opening paragraph with enough ordinary readable words to exercise the import pipeline and its shared reading position model safely.</p>
+    <p>Delta epsilon zeta continue the fixture with additional ordinary prose so strict validation recognizes this compact example as a usable book for normal reading speed reading and speech.</p>${inlineImageMarkup}
   </body></html>`;
 
   const entries: ZipInputEntry[] = [
@@ -377,7 +377,7 @@ describe("book import service state machine", () => {
     expect(terminal).toBe("failed");
 
     const book = await repo.getBook(bookId);
-    expect(book?.processing_error).toContain("Corrupted/Unreadable EPUB");
+    expect(book?.processing_error).toContain("Corrupted/Unreadable book");
     expect(repo.transitions[repo.transitions.length - 1]?.status).toBe("failed");
   });
 
