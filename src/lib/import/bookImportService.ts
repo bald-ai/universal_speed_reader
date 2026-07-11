@@ -12,8 +12,9 @@ import {
   hasSequentialParagraphIds,
   normalizeChapters,
 } from "@/lib/import/normalization";
-import { epubAssetDataUrl } from "@/lib/import/epubAssetDataUrl";
+import { mimeFromAssetPath } from "@/lib/import/epubAssetDataUrl";
 import { epubCoverDataUrl } from "@/lib/import/epubCoverDataUrl";
+import { clearBookImageSrcCache } from "@/lib/reader/resolveBookImageSrc";
 import { ZipArchive } from "@/lib/epub/zipArchive";
 import type {
   BookImageRow,
@@ -161,34 +162,46 @@ function classifyError(error: unknown): ImportFailure {
   return new ImportFailure("Corrupted/Unreadable EPUB", message);
 }
 
-async function materializeBookImages(
+/**
+ * Persist image sidecar rows as cheap references:
+ * - inline `data:image/...` (e.g. serialized SVG) stored as-is
+ * - zip-relative paths stored as paths (loaded on demand while reading)
+ * Does not base64-materialize zip assets during import.
+ */
+function toBookImageRows(
   bookId: string,
   epubBytes: Uint8Array,
-  parsedImages: ParsedEpubImage[],
-  signal?: AbortSignal
-): Promise<BookImageRow[]> {
+  parsedImages: ParsedEpubImage[]
+): BookImageRow[] {
   if (parsedImages.length === 0) return [];
 
   const zip = ZipArchive.fromBytes(epubBytes);
   const rows: BookImageRow[] = [];
 
   for (const image of parsedImages) {
-    if (signal?.aborted) {
-      throw new ImportCancelledError();
+    const src = image.srcPath.trim();
+    if (!src) continue;
+
+    if (src.toLowerCase().startsWith("data:image/")) {
+      rows.push({
+        book_id: bookId,
+        image_index: rows.length,
+        after_paragraph_id: image.afterParagraphId,
+        alt: image.alt,
+        src,
+      });
+      continue;
     }
-    let dataUrl: string | null = null;
-    if (image.srcPath.toLowerCase().startsWith("data:image/")) {
-      dataUrl = image.srcPath;
-    } else {
-      dataUrl = await epubAssetDataUrl(epubBytes, image.srcPath, zip);
-    }
-    if (!dataUrl) continue;
+
+    // Skip unsupported or missing zip assets; soft-fail like before.
+    if (!mimeFromAssetPath(src) || !zip.has(src)) continue;
+
     rows.push({
       book_id: bookId,
       image_index: rows.length,
       after_paragraph_id: image.afterParagraphId,
       alt: image.alt,
-      src: dataUrl,
+      src,
     });
   }
 
@@ -572,6 +585,7 @@ export class BookImportService {
       await Promise.all(removedTasks.map((task) => task.persistSource?.then(() => undefined)));
       await this.rawStore.remove(bookId);
       clearBookTokenCache(bookId);
+      await clearBookImageSrcCache(bookId);
       await removeBookReferences(bookId, { repository });
       await updateLibraryLayout(
         (layout) => removeBookFromLibraryLayout(layout, bookId),
@@ -769,12 +783,7 @@ export class BookImportService {
       const chunkRows = chunkParagraphs(bookId, parsed.paragraphs);
       const chapterRows = normalizeChapters(bookId, parsed.chapters);
       await ensureNotCancelled();
-      const imageRows = await materializeBookImages(
-        bookId,
-        storedSource.bytes,
-        parsed.images ?? [],
-        cancelSignal
-      );
+      const imageRows = toBookImageRows(bookId, storedSource.bytes, parsed.images ?? []);
       const totalWords = parsed.totalWords > 0 ? parsed.totalWords : computeTotalWords(parsed.paragraphs);
       await ensureNotCancelled();
       const coverDataUrl = await epubCoverDataUrl(storedSource.bytes, parsed.coverPath);

@@ -23,6 +23,7 @@ import {
   buildNormalReadingDisplayRows,
   type NormalReadingDisplayRow,
 } from "@/lib/reader/buildNormalReadingDisplayRows";
+import { resolveBookImageSrc } from "@/lib/reader/resolveBookImageSrc";
 import type { BookImage, Chapter, Paragraph } from "@/types/book";
 import type { Position, TtsHighlightStyle } from "@/types/reading";
 
@@ -62,11 +63,50 @@ type ParagraphRowProps = {
   fontFamilyClass: string;
 };
 
-const ImageRow = memo(function ImageRow({ image }: { image: BookImage }) {
+const ImageRow = memo(function ImageRow({ bookId, image }: { bookId: string; image: BookImage }) {
+  const [displaySrc, setDisplaySrc] = useState<string | null>(() =>
+    image.src.trim().toLowerCase().startsWith("data:image/") ? image.src : null
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const src = image.src.trim();
+    if (src.toLowerCase().startsWith("data:image/")) {
+      setDisplaySrc(src);
+      return;
+    }
+
+    setDisplaySrc(null);
+    void resolveBookImageSrc(bookId, src).then((url) => {
+      if (!cancelled) setDisplaySrc(url);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, image.src]);
+
+  if (!displaySrc) {
+    return (
+      <figure
+        className="w-full"
+        data-testid="book-image-row"
+        data-image-id={image.id}
+        data-image-loading="true"
+        aria-busy="true"
+      >
+        <div className="mx-auto h-40 w-full max-w-2xl animate-pulse rounded-md bg-neutral-200/70" />
+        {image.alt ? (
+          <figcaption className="mt-2 text-center text-xs text-neutral-500">{image.alt}</figcaption>
+        ) : null}
+      </figure>
+    );
+  }
+
   return (
     <figure className="w-full" data-testid="book-image-row" data-image-id={image.id}>
       <img
-        src={image.src}
+        src={displaySrc}
         alt={image.alt ?? ""}
         loading="lazy"
         decoding="async"
@@ -801,7 +841,7 @@ export default function NormalReadingMode() {
               >
                 <div className="w-full max-w-2xl mx-auto">
                   {row.kind === "image" ? (
-                    <ImageRow image={row.image} />
+                    <ImageRow bookId={book.id} image={row.image} />
                   ) : (
                     (() => {
                       const paragraph = row.paragraph;

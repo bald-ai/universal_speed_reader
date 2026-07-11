@@ -47,10 +47,12 @@ The normalized book model can also store sidecar image blocks for normal reading
 - `afterParagraphId` anchors the image after a paragraph (`0` means before the first paragraph).
 - Images are shown only in normal reading, interleaved with paragraphs.
 - Speed reading and TTS stay on the existing `{ paragraphId, wordIndex }` text model and ignore images.
-- On import, zip-relative image paths are materialized to `data:image/...` strings and stored in `book_images`.
-- Supported raster formats: jpeg, png, webp, gif. SVG is also supported both as zip `.svg` assets and as inline `<svg>` markup (serialized to a data URL).
+- On import, zip-relative image paths are stored as-is in `book_images.src` (not base64-materialized).
+- While reading, the app loads each image on demand from the raw EPUB in IndexedDB and caches a `blob:` URL.
+- Inline `<svg>` markup is still serialized to a `data:image/svg+xml...` string at parse time and stored directly.
+- Supported raster formats: jpeg, png, webp, gif. SVG is supported both as zip `.svg` assets and as inline `<svg>` markup.
 - Missing or unsupported images soft-fail; they do not fail the whole import.
-- Books imported before this change need a retry/re-import to gain images. There is no automatic backfill.
+- Books imported before this change may still have materialized `data:image/...` rows; those keep working. New imports use path references.
 - SQLite schema version 2 adds the `book_images` table via a normal migration (`user_version`), not an ad-hoc create on every open.
 
 ## Library covers
@@ -62,3 +64,7 @@ Manual cover edits already store data URLs the same way. Books imported before t
 ## Deleting books during import
 
 Library delete is always available, including while a book shows Processing. Delete cancels the active/queued import for that book, removes its DB rows and raw EPUB, and ignores any late write from the cancelled worker.
+
+## Book parser lab (experimental)
+
+An experimental standalone parser effort lives under `book-parser-lab/`. Goals, scope, evaluation rules, and the quality bar are defined in [`book-parser-lab/EXPECTATIONS.md`](book-parser-lab/EXPECTATIONS.md). It is not wired into production import until results are good enough.

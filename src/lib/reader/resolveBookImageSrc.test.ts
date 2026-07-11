@@ -1,6 +1,9 @@
-import { describe, expect, it } from "bun:test";
-import { epubAssetDataUrl, epubAssetObjectUrl } from "@/lib/import/epubAssetDataUrl";
-import { ZipArchive } from "@/lib/epub/zipArchive";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { deleteRawEpub, storeRawEpub } from "@/lib/import/rawEpubStore";
+import {
+  clearBookImageSrcCache,
+  resolveBookImageSrc,
+} from "@/lib/reader/resolveBookImageSrc";
 
 const encoder = new TextEncoder();
 
@@ -89,45 +92,55 @@ function createStoredZip(entries: Array<{ name: string; data: string | Uint8Arra
   return concatBytes([localSection, centralDirectory, eocd]);
 }
 
-describe("epubAssetDataUrl", () => {
-  it("returns a data URL for a jpeg path in the zip", async () => {
-    const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9, 0x01, 0x02, 0x03]);
-    const epubBytes = createStoredZip([{ name: "OEBPS/images/figure.jpg", data: imageBytes }]);
+describe("resolveBookImageSrc", () => {
+  const bookId = "book-image-resolve-test";
 
-    const dataUrl = await epubAssetDataUrl(epubBytes, "OEBPS/images/figure.jpg");
-
-    expect(dataUrl).not.toBeNull();
-    expect(dataUrl?.startsWith("data:image/jpeg;base64,")).toBe(true);
+  beforeEach(async () => {
+    await deleteRawEpub(bookId);
+    await clearBookImageSrcCache(bookId);
   });
 
-  it("reuses an opened zip archive when provided", async () => {
-    const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const epubBytes = createStoredZip([{ name: "OEBPS/images/figure.png", data: imageBytes }]);
-    const zip = ZipArchive.fromBytes(epubBytes);
-
-    const dataUrl = await epubAssetDataUrl(epubBytes, "OEBPS/images/figure.png", zip);
-    expect(dataUrl?.startsWith("data:image/png;base64,")).toBe(true);
+  afterEach(async () => {
+    await clearBookImageSrcCache(bookId);
+    await deleteRawEpub(bookId);
   });
 
-  it("returns a data URL for an svg path in the zip", async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>';
-    const epubBytes = createStoredZip([{ name: "OEBPS/images/figure.svg", data: svg }]);
-
-    const dataUrl = await epubAssetDataUrl(epubBytes, "OEBPS/images/figure.svg");
-    expect(dataUrl?.startsWith("data:image/svg+xml;base64,")).toBe(true);
+  it("returns data:image sources unchanged", async () => {
+    const dataUrl = "data:image/png;base64,AAAA";
+    expect(await resolveBookImageSrc(bookId, dataUrl)).toBe(dataUrl);
   });
 
-  it("returns null for unsupported extensions", async () => {
-    const epubBytes = createStoredZip([{ name: "OEBPS/images/figure.bmp", data: "BM" }]);
-    expect(await epubAssetDataUrl(epubBytes, "OEBPS/images/figure.bmp")).toBeNull();
-  });
+  it("loads zip-relative paths from the raw EPUB as blob URLs", async () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const epubBytes = createStoredZip([{ name: "OEBPS/images/figure.png", data: pngBytes }]);
+    await storeRawEpub({
+      bookId,
+      fileName: "fixture.epub",
+      mimeType: "application/epub+zip",
+      sizeBytes: epubBytes.byteLength,
+      bytes: epubBytes,
+      storedAt: Date.now(),
+    });
 
-  it("returns a blob object URL for a zip image path", async () => {
-    const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9, 0x01, 0x02]);
-    const epubBytes = createStoredZip([{ name: "OEBPS/images/figure.jpg", data: imageBytes }]);
-    const url = await epubAssetObjectUrl(epubBytes, "OEBPS/images/figure.jpg");
+    const url = await resolveBookImageSrc(bookId, "OEBPS/images/figure.png");
     expect(url).not.toBeNull();
     expect(url?.startsWith("blob:")).toBe(true);
-    if (url) URL.revokeObjectURL(url);
+
+    const again = await resolveBookImageSrc(bookId, "OEBPS/images/figure.png");
+    expect(again).toBe(url);
+  });
+
+  it("soft-fails missing assets to null", async () => {
+    const epubBytes = createStoredZip([{ name: "OEBPS/text/chapter.xhtml", data: "<p>hi</p>" }]);
+    await storeRawEpub({
+      bookId,
+      fileName: "fixture.epub",
+      mimeType: "application/epub+zip",
+      sizeBytes: epubBytes.byteLength,
+      bytes: epubBytes,
+      storedAt: Date.now(),
+    });
+
+    expect(await resolveBookImageSrc(bookId, "OEBPS/images/missing.png")).toBeNull();
   });
 });

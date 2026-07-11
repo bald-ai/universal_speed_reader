@@ -276,7 +276,7 @@ describe("book import service state machine", () => {
     expect(book?.cover_path?.includes("OEBPS/")).toBe(false);
   });
 
-  it("stores in-book images as data URLs on import", async () => {
+  it("stores in-book images as zip-relative paths on import", async () => {
     const bytes = createValidEpubBytes("Inline Image Fixture", { withInlineImage: true });
     const bookId = await service.importFromBytes({
       fileName: "inline-image-fixture.epub",
@@ -287,7 +287,8 @@ describe("book import service state machine", () => {
     expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
     const readable = await repo.getReadableBook(bookId);
     expect(readable?.book.images.length).toBeGreaterThan(0);
-    expect(readable?.book.images[0]?.src.startsWith("data:image/png;base64,")).toBe(true);
+    expect(readable?.book.images[0]?.src).toBe("OEBPS/images/figure.png");
+    expect(readable?.book.images[0]?.src.startsWith("data:")).toBe(false);
     expect(readable?.book.images[0]?.alt).toBe("Inline figure");
     expect(readable?.book.images[0]?.afterParagraphId).toBeGreaterThan(0);
   });
