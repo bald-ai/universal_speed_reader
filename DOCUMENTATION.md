@@ -68,3 +68,8 @@ Library delete is always available, including while a book shows Processing. Del
 ## Book parser lab (experimental)
 
 An experimental standalone parser effort lives under `book-parser-lab/`. Goals, scope, evaluation rules, and the quality bar are defined in [`book-parser-lab/EXPECTATIONS.md`](book-parser-lab/EXPECTATIONS.md). It is not wired into production import until results are good enough.
+
+The lab extractor preserves mixed nested-container prose and DOM-order media,
+including images referenced by inline, embedded, and linked CSS. Complex SVG
+assets with unresolved external dependencies fail strict lab validation rather
+than producing pointers that would render blank through the app's blob loader.

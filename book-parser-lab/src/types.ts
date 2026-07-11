@@ -1,0 +1,127 @@
+export type BookFormat = "epub" | "pdf";
+
+export const FAILURE_BUCKETS = [
+  "Crash",
+  "No / unusable text",
+  "Bad paragraph IDs",
+  "Weak / missing / nonsense chapters",
+  "Cover missing",
+  "Images missing / blank / badly placed",
+  "Timeout / extreme slowness",
+  "Other",
+] as const;
+
+export type FailureBucket = (typeof FAILURE_BUCKETS)[number];
+
+export interface Paragraph {
+  id: number;
+  text: string;
+}
+
+export interface Chapter {
+  title: string;
+  startParagraphId: number;
+}
+
+export interface BookImage {
+  afterParagraphId: number;
+  alt: string;
+  src: string;
+  mediaType?: string;
+}
+
+export interface Cover {
+  src: string;
+  mediaType?: string;
+}
+
+export interface BookMetadata {
+  title: string;
+  authors: string[];
+  language?: string;
+  identifier?: string;
+}
+
+export interface BookTotals {
+  words: number;
+  paragraphs: number;
+  chapters: number;
+  images: number;
+}
+
+export interface ParserDiagnostic {
+  bucket: FailureBucket;
+  severity: "warning" | "failure";
+  message: string;
+  details?: Record<string, string | number | boolean>;
+}
+
+export interface ParserTimings {
+  totalMs: number;
+  openMs?: number;
+  structureMs?: number;
+  contentMs?: number;
+}
+
+export interface ParsedBook {
+  schemaVersion: 1;
+  format: BookFormat;
+  metadata: BookMetadata;
+  paragraphs: Paragraph[];
+  chapters: Chapter[];
+  images: BookImage[];
+  cover: Cover | null;
+  totals: BookTotals;
+  diagnostics: ParserDiagnostic[];
+  timings: ParserTimings;
+}
+
+export interface ParseOptions {
+  sourcePath: string;
+  timeoutMs?: number;
+}
+
+export interface ParseInternals {
+  sourceDocumentCount?: number;
+  textPageCount?: number;
+  totalPageCount?: number;
+  declaredImageCount?: number;
+  extractedImageCount?: number;
+}
+
+export interface ParserOutput {
+  book: ParsedBook;
+  internals: ParseInternals;
+}
+
+export interface EvaluationRecord {
+  id: string;
+  sourcePath: string;
+  sourceUrl?: string;
+  sourceName?: string;
+  format: BookFormat;
+  title: string;
+  pass: boolean;
+  elapsedMs: number;
+  diagnostics: ParserDiagnostic[];
+  outputPath?: string;
+  previewPath?: string;
+}
+
+export interface EvaluationSummary {
+  schemaVersion: 1;
+  startedAt: string;
+  completedAt: string;
+  corpusPath: string;
+  resultPath: string;
+  total: number;
+  passed: number;
+  failed: number;
+  passRate: number;
+  byFormat: Record<BookFormat, { total: number; passed: number; failed: number }>;
+  /** Books with any diagnostic in the bucket (warning or failure). */
+  bucketCounts: Record<FailureBucket, number>;
+  failureBucketCounts: Record<FailureBucket, number>;
+  warningBucketCounts: Record<FailureBucket, number>;
+  records: EvaluationRecord[];
+}
