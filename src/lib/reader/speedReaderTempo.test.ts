@@ -30,6 +30,7 @@ function makeBook(): Book {
       { index: 0, title: "One", startParagraphId: 1 },
       { index: 1, title: "Two", startParagraphId: 3 },
     ],
+    images: [],
   };
 }
 

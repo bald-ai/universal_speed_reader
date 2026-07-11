@@ -10,6 +10,7 @@ export type NativeEpubFolderFile = {
 
 type NativeEpubFolderPickerResult = {
   canceled?: boolean;
+  folderName?: string;
   files: NativeEpubFolderFile[];
 };
 
@@ -20,7 +21,7 @@ type NativeEpubFolderPickerPlugin = {
 export type NativeEpubFolderPickOutcome =
   | { status: "unavailable" }
   | { status: "canceled" }
-  | { status: "selected"; files: NativeEpubFolderFile[] };
+  | { status: "selected"; folderName: string; files: NativeEpubFolderFile[] };
 
 const EpubFolderPicker = registerPlugin<NativeEpubFolderPickerPlugin>("EpubFolderPicker");
 
@@ -38,7 +39,11 @@ export async function pickNativeEpubFolder(): Promise<NativeEpubFolderPickOutcom
     return { status: "canceled" };
   }
 
-  return { status: "selected", files: result.files };
+  return {
+    status: "selected",
+    folderName: result.folderName?.trim() || "Selected folder",
+    files: result.files,
+  };
 }
 
 export async function readNativeEpubFolderFile(file: NativeEpubFolderFile): Promise<File> {
@@ -52,4 +57,13 @@ export async function readNativeEpubFolderFile(file: NativeEpubFolderFile): Prom
     type: file.type ?? "application/epub+zip",
     lastModified: Date.now(),
   });
+}
+
+export async function readNativeEpubFolderBytes(file: NativeEpubFolderFile): Promise<Uint8Array> {
+  const response = await fetch(Capacitor.convertFileSrc(file.uri));
+  if (!response.ok) {
+    throw new Error(`Could not read ${file.name}`);
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
 }

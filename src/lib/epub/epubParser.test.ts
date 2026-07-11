@@ -260,6 +260,46 @@ describe("epub parser internals", () => {
     ]);
   });
 
+  it("extracts ordered paragraph and image blocks with document order", () => {
+    const html = `
+      <p>Before image</p>
+      <img src="../images/figure.png" alt="A figure" />
+      <p>After image</p>
+      <div><img src="nested.jpg" /></div>
+    `;
+    const blocks = __epubParserInternals.extractBlocksFromChapter(html);
+    expect(blocks).toEqual([
+      { kind: "paragraph", text: "Before image", anchors: [] },
+      { kind: "image", src: "../images/figure.png", alt: "A figure" },
+      { kind: "paragraph", text: "After image", anchors: [] },
+      { kind: "image", src: "nested.jpg", alt: null },
+    ]);
+  });
+
+  it("extracts inline svg figures as image data URLs without leaking svg text", () => {
+    const html = `
+      <p>Before svg</p>
+      <svg aria-label="Star mark" viewBox="0 0 10 10">
+        <title>Star mark</title>
+        <text>ignore me</text>
+        <circle cx="5" cy="5" r="4" />
+      </svg>
+      <p>After svg</p>
+    `;
+    const blocks = __epubParserInternals.extractBlocksFromChapter(html);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toEqual({ kind: "paragraph", text: "Before svg", anchors: [] });
+    expect(blocks[1]?.kind).toBe("image");
+    if (blocks[1]?.kind === "image") {
+      expect(blocks[1].src.startsWith("data:image/svg+xml")).toBe(true);
+      expect(blocks[1].alt).toBe("Star mark");
+    }
+    expect(blocks[2]).toEqual({ kind: "paragraph", text: "After svg", anchors: [] });
+    expect(blocks.some((block) => block.kind === "paragraph" && block.text.includes("ignore me"))).toBe(
+      false
+    );
+  });
+
   it("text-title fallback matcher handles exact and chapter-numbered variants", () => {
     expect(__epubParserInternals.textMatchesTitle("Chapter 1", "1. Chapter 1")).toBe(true);
     expect(__epubParserInternals.textMatchesTitle("The Beginning", "The Beginning")).toBe(true);
@@ -311,6 +351,59 @@ describe("epub parser internals", () => {
 });
 
 describe("parseEpubBytes TOC handling", () => {
+  it("anchors mid-chapter images to the previous paragraph id", async () => {
+    const bytes = createStoredZip([
+      { name: "mimetype", data: "application/epub+zip" },
+      {
+        name: "META-INF/container.xml",
+        data: `<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`,
+      },
+      {
+        name: "OEBPS/content.opf",
+        data: `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Image Fixture</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+    <item id="img1" href="images/figure.png" media-type="image/png" />
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>`,
+      },
+      {
+        name: "OEBPS/Text/ch1.xhtml",
+        data: `<html><body>
+  <p>First paragraph text.</p>
+  <img src="../images/figure.png" alt="Mid figure" />
+  <p>Second paragraph text.</p>
+</body></html>`,
+      },
+      {
+        name: "OEBPS/images/figure.png",
+        data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      },
+    ]);
+
+    const parsed = await parseEpubBytes(bytes);
+    expect(parsed.paragraphs.map((paragraph) => paragraph.id)).toEqual([1, 2]);
+    expect(parsed.images).toEqual([
+      {
+        srcPath: "OEBPS/images/figure.png",
+        alt: "Mid figure",
+        afterParagraphId: 1,
+      },
+    ]);
+  });
+
   it("prefers EPUB3 nav when both nav and ncx are present", async () => {
     const bytes = createTestEpub({ includeNav: true, includeNcx: true });
     const parsed = await parseEpubBytes(bytes);

@@ -79,6 +79,14 @@ act accordingly.
 - On-device validation should include: install the latest APK, execute the requested flow, capture evidence (for example `logcat` and UI dump state), and report pass/fail.
 - If device control is blocked (for example no authorized device), report the blocker and what is needed to proceed.
 
+### Pairing the Nothing Phone over Wi-Fi
+1. Set the ADB binary: `ADB="/Users/michalkrsik/Library/Android/sdk/platform-tools/adb"`.
+2. On the Nothing Phone, open **Settings -> System -> Developer options -> Wireless debugging** and enable it.
+3. Tap **Pair device with pairing code**. Keep that screen open; it shows a pairing IP/port and a temporary pairing code.
+4. On the Mac, run `"$ADB" pair <pairing-ip>:<pairing-port>` and enter the temporary pairing code shown on the phone.
+5. Back on the main **Wireless debugging** screen, note the separate device IP/port and run `"$ADB" connect <device-ip>:<device-port>` if the phone does not appear automatically through mDNS.
+6. Confirm the Nothing A001/Galaga phone is listed as `device` with `"$ADB" devices -l`. Pairing and connection ports can differ and can change when Wireless debugging restarts.
+
 ### Android unlock flow (Nothing A001 test setup)
 - Use this exact flow when the device stays on `NotificationShade`/lockscreen and plain swipe does not open PIN entry.
 - Test PIN for this setup is: `123456`
@@ -106,8 +114,11 @@ Fallback (if `input text` fails on bouncer):
   - `"$ADB" shell input keyevent KEYCODE_ENTER`
 
 ### Screenshot storage (Nothing A001)
+- When the user says they **took a screenshot on the phone**, interpret that as an existing screenshot in the Nothing Phone's Essential Space folder. Look for the newest relevant image there; do not take a new ADB `screencap` unless requested.
 - Primary screenshot folder on this device: `/storage/emulated/0/Pictures/EssentialSpace/`
-- Legacy/older screenshots may still exist in: `/storage/emulated/0/Pictures/Screenshots/`
+- Find and retrieve the newest Essential Space screenshot:
+  - `"$ADB" shell ls -lt /storage/emulated/0/Pictures/EssentialSpace/`
+  - `"$ADB" pull <remote-path> <local-path>`
 - If screenshot location is unclear, query Android media index:
   - `"$ADB" shell "content query --uri content://media/external/images/media --projection _id:_display_name:_data:relative_path:date_added --sort 'date_added DESC' | head -n 40"`
 

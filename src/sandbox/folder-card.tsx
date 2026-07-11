@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
-import type { LibraryBook, MoodFolder } from "@/types/book";
+import type { LibraryBook, Mood } from "@/types/book";
 import { getBookCoverPlaceholder } from "@/lib/library/coverPlaceholders";
 
 /* ── colour palette ── */
@@ -28,7 +28,7 @@ const FOLDER_COLORS = [
   { key: "violet", gradient: "from-violet-500/20 via-indigo-900/15 to-transparent", border: "border-violet-500/25", hoverBorder: "hover:border-violet-400/50", glow: "bg-violet-500/30" },
 ] as const;
 const DEFAULT_FOLDER_COLOR = "violet";
-const folderTheme = (folder: MoodFolder) => {
+const folderTheme = (folder: Mood) => {
   const colorKey = folder.color ?? DEFAULT_FOLDER_COLOR;
   const palette = FOLDER_COLORS.find((c) => c.key === colorKey) ?? FOLDER_COLORS[0];
   return { ...palette, emoji: "📚" };
@@ -213,7 +213,7 @@ function SearchableBookList(props: {
    swaps the displayed book.
    ────────────────────────────────────────────── */
 function FolderCard({ folder, books, onOpenBook }: {
-  folder: MoodFolder;
+  folder: Mood;
   books: LibraryBook[];
   onOpenBook: (bookId: string) => void;
 }) {
@@ -314,7 +314,7 @@ const MOCK_BOOKS: LibraryBook[] = [
   { id: "b19", title: "Piranesi", author: "Susanna Clarke", genre: "Fantasy", description: "", progressPercent: 81 },
   { id: "b20", title: "Normal People", author: "Sally Rooney", genre: "Romance", description: "", progressPercent: 29 },
 ];
-const MOCK_FOLDER: MoodFolder = { id: "sandbox-folder", label: "Evening Reads", color: "violet", bookIds: MOCK_BOOKS.map((b) => b.id) };
+const MOCK_FOLDER: Mood = { id: "sandbox-folder", label: "Evening Reads", color: "violet", bookIds: MOCK_BOOKS.map((b) => b.id) };
 
 /* ── Sandbox wrapper (for sandbox.html only) ── */
 export default function SandboxFolderCard() {

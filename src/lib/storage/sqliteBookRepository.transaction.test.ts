@@ -139,7 +139,7 @@ describe("sqlite repository transaction guard", () => {
     expect(db.beginCount).toBe(1);
     expect(db.commitCount).toBe(1);
     expect(db.rollbackCount).toBe(0);
-    expect(db.runTransactions.length).toBe(3);
+    expect(db.runTransactions.length).toBe(4);
     expect(db.runTransactions.every((transaction) => transaction === false)).toBe(true);
   });
 
@@ -159,6 +159,15 @@ describe("sqlite repository transaction guard", () => {
           chapter_index: 0,
           title: "Chapter 1",
           start_paragraph_id: 1,
+        },
+      ],
+      images: [
+        {
+          book_id: "book-replace",
+          image_index: 0,
+          after_paragraph_id: 1,
+          alt: null,
+          src: "data:image/png;base64,abc",
         },
       ],
       total_chunks: 1,

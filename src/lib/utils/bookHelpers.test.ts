@@ -21,6 +21,7 @@ function makeBook(partial?: Partial<Book>): Book {
       { index: 0, title: "Ch 1", startParagraphId: 1 },
       { index: 1, title: "Ch 2", startParagraphId: 3 },
     ],
+    images: [],
     totalWords: 5,
     ...partial,
   };

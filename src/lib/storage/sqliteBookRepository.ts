@@ -5,7 +5,7 @@ import {
   type capSQLiteSet,
 } from "@capacitor-community/sqlite";
 import type { BookRepository, ListBooksOptions } from "@/lib/storage/bookRepository";
-import type { Book, Chapter, Paragraph } from "@/types/book";
+import type { Book, BookImage, Chapter, Paragraph } from "@/types/book";
 import type { Mode } from "@/types/reading";
 import type {
   AppSettingRow,
@@ -13,6 +13,7 @@ import type {
   BookChapterRow,
   BookChunkRow,
   BookContentReplacement,
+  BookImageRow,
   BookRow,
   ImportJobPatch,
   ImportJobRow,
@@ -24,7 +25,7 @@ import type {
 } from "@/types/storage";
 
 const DB_NAME = "universal_speed_reader";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const SCHEMA_V1_SQL = `
   CREATE TABLE IF NOT EXISTS books (
     id TEXT PRIMARY KEY NOT NULL,
@@ -82,6 +83,18 @@ const SCHEMA_V1_SQL = `
     started_at INTEGER NOT NULL,
     finished_at INTEGER,
     PRIMARY KEY (book_id, attempt),
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+  );
+`;
+
+const SCHEMA_V2_SQL = `
+  CREATE TABLE IF NOT EXISTS book_images (
+    book_id TEXT NOT NULL,
+    image_index INTEGER NOT NULL,
+    after_paragraph_id INTEGER NOT NULL,
+    alt TEXT,
+    src TEXT NOT NULL,
+    PRIMARY KEY (book_id, image_index),
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
   );
 `;
@@ -196,6 +209,25 @@ function toBookChapterRow(row: SqlRow): BookChapterRow {
     title: readRequiredString(row, "title"),
     start_paragraph_id: readRequiredNumber(row, "start_paragraph_id"),
   };
+}
+
+function toBookImageRow(row: SqlRow): BookImageRow {
+  return {
+    book_id: readRequiredString(row, "book_id"),
+    image_index: readRequiredNumber(row, "image_index"),
+    after_paragraph_id: readRequiredNumber(row, "after_paragraph_id"),
+    alt: readNullableString(row, "alt"),
+    src: readRequiredString(row, "src"),
+  };
+}
+
+function toBookImages(rows: BookImageRow[]): BookImage[] {
+  return rows.map((row) => ({
+    id: `${row.book_id}-img-${row.image_index}`,
+    afterParagraphId: row.after_paragraph_id,
+    alt: row.alt,
+    src: row.src,
+  }));
 }
 
 function toReadingProgressRow(row: SqlRow): ReadingProgressRow {
@@ -452,6 +484,7 @@ export class SqliteBookRepository implements BookRepository {
       try {
         await db.run("DELETE FROM book_chunks WHERE book_id = ?", [bookId], false);
         await db.run("DELETE FROM book_chapters WHERE book_id = ?", [bookId], false);
+        await db.run("DELETE FROM book_images WHERE book_id = ?", [bookId], false);
 
         if (replacement.chunks.length > 0) {
           const inserts: capSQLiteSet[] = replacement.chunks.map((chunk, chunkIndex) => ({
@@ -469,6 +502,15 @@ export class SqliteBookRepository implements BookRepository {
             values: [bookId, chapterIndex, chapter.title, chapter.start_paragraph_id],
           }));
           await db.executeSet(chapterInserts, false);
+        }
+
+        if ((replacement.images ?? []).length > 0) {
+          const imageInserts: capSQLiteSet[] = (replacement.images ?? []).map((image, imageIndex) => ({
+            statement:
+              "INSERT INTO book_images (book_id, image_index, after_paragraph_id, alt, src) VALUES (?, ?, ?, ?, ?)",
+            values: [bookId, imageIndex, image.after_paragraph_id, image.alt, image.src],
+          }));
+          await db.executeSet(imageInserts, false);
         }
 
         await db.run(
@@ -508,6 +550,7 @@ export class SqliteBookRepository implements BookRepository {
       try {
         await db.run("DELETE FROM book_chunks WHERE book_id = ?", [bookId], false);
         await db.run("DELETE FROM book_chapters WHERE book_id = ?", [bookId], false);
+        await db.run("DELETE FROM book_images WHERE book_id = ?", [bookId], false);
         await db.run(
           `
           UPDATE books
@@ -541,11 +584,17 @@ export class SqliteBookRepository implements BookRepository {
         "SELECT * FROM book_chunks WHERE book_id = ? ORDER BY chunk_index ASC",
         [bookId]
       );
+      const imageRows = await this.queryRows(
+        db,
+        "SELECT * FROM book_images WHERE book_id = ? ORDER BY image_index ASC",
+        [bookId]
+      );
 
       return {
         book: toBookRow(bookRows[0]),
         chapters: chapterRows.map(toBookChapterRow),
         chunks: chunkRows.map(toBookChunkRow),
+        images: imageRows.map(toBookImageRow),
       };
     });
   }
@@ -568,6 +617,11 @@ export class SqliteBookRepository implements BookRepository {
         "SELECT * FROM book_chunks WHERE book_id = ? ORDER BY chunk_index ASC",
         [bookId]
       );
+      const imageRows = await this.queryRows(
+        db,
+        "SELECT * FROM book_images WHERE book_id = ? ORDER BY image_index ASC",
+        [bookId]
+      );
 
       const paragraphs: Paragraph[] = chunkRows.map(toBookChunkRow).flatMap((chunk) => chunk.paragraphs_json);
       const chapters: Chapter[] = chapterRows.map(toBookChapterRow).map((chapter) => ({
@@ -575,6 +629,7 @@ export class SqliteBookRepository implements BookRepository {
           title: chapter.title,
           startParagraphId: chapter.start_paragraph_id,
         }));
+      const images = toBookImages(imageRows.map(toBookImageRow));
 
       const book: Book = {
         id: metadata.id,
@@ -583,6 +638,7 @@ export class SqliteBookRepository implements BookRepository {
         coverUrl: metadata.cover_path ?? undefined,
         paragraphs,
         chapters,
+        images,
         totalWords: metadata.total_words,
       };
 
@@ -761,6 +817,9 @@ export class SqliteBookRepository implements BookRepository {
       const bookChapters = (
         await this.queryRows(db, "SELECT * FROM book_chapters ORDER BY book_id ASC, chapter_index ASC")
       ).map(toBookChapterRow);
+      const bookImages = (
+        await this.queryRows(db, "SELECT * FROM book_images ORDER BY book_id ASC, image_index ASC")
+      ).map(toBookImageRow);
       const readingProgress = (
         await this.queryRows(db, "SELECT * FROM reading_progress ORDER BY book_id ASC")
       ).map(toReadingProgressRow);
@@ -775,6 +834,7 @@ export class SqliteBookRepository implements BookRepository {
         books,
         book_chunks: bookChunks,
         book_chapters: bookChapters,
+        book_images: bookImages,
         reading_progress: readingProgress,
         app_settings: appSettings,
         import_jobs: importJobs,
@@ -794,6 +854,7 @@ export class SqliteBookRepository implements BookRepository {
           DELETE FROM import_jobs;
           DELETE FROM book_chunks;
           DELETE FROM book_chapters;
+          DELETE FROM book_images;
           DELETE FROM books;
           `,
           false
@@ -846,6 +907,23 @@ export class SqliteBookRepository implements BookRepository {
                 chapter.chapter_index,
                 chapter.title,
                 chapter.start_paragraph_id,
+              ],
+            })),
+            false
+          );
+        }
+
+        if ((snapshot.book_images ?? []).length > 0) {
+          await db.executeSet(
+            snapshot.book_images.map((image) => ({
+              statement:
+                "INSERT INTO book_images (book_id, image_index, after_paragraph_id, alt, src) VALUES (?, ?, ?, ?, ?)",
+              values: [
+                image.book_id,
+                image.image_index,
+                image.after_paragraph_id,
+                image.alt,
+                image.src,
               ],
             })),
             false
@@ -961,6 +1039,8 @@ export class SqliteBookRepository implements BookRepository {
     for (let version = currentVersion + 1; version <= DB_VERSION; version += 1) {
       if (version === 1) {
         await db.execute(SCHEMA_V1_SQL);
+      } else if (version === 2) {
+        await db.execute(SCHEMA_V2_SQL);
       } else {
         throw new Error(`No SQLite migration defined for schema version ${version}`);
       }

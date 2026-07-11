@@ -1,18 +1,19 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { LibraryBook, MoodFolder } from "../types/book";
+import type { LibraryBook, Mood } from "../types/book";
 import {
   __resetMoodStoreForTests,
+  addBookIdsToMood,
   getUnassignedBooks,
-  loadFolders,
+  loadMoods,
   loadRecent,
   MOOD_STORE_STORAGE_KEY,
   removeBookReferences,
-  saveFolders,
+  saveMoods,
   saveRecent,
   setRecent,
 } from "./moodStore";
 
-const BASE_FOLDERS: MoodFolder[] = [
+const BASE_FOLDERS: Mood[] = [
   { id: "f-1", label: "Focus", bookIds: ["b-1"] },
   { id: "f-2", label: "Chill", bookIds: [] },
 ];
@@ -96,39 +97,54 @@ describe("moodStore", () => {
   });
 
   beforeEach(async () => {
-    await saveFolders(BASE_FOLDERS);
+    await saveMoods(BASE_FOLDERS);
     await saveRecent({});
   });
 
-  it("returns deep-cloned folders from loadFolders", async () => {
-    const first = await loadFolders();
+  it("returns deep-cloned moods from loadMoods", async () => {
+    const first = await loadMoods();
     first[0].label = "Mutated";
     first[0].bookIds.push("b-3");
 
-    const second = await loadFolders();
+    const second = await loadMoods();
     expect(second[0].label).toBe("Focus");
     expect(second[0].bookIds).toEqual(["b-1"]);
   });
 
-  it("copies input on saveFolders so later caller mutation does not leak", async () => {
-    const input: MoodFolder[] = [{ id: "x", label: "X", bookIds: ["b-2"] }];
-    await saveFolders(input);
+  it("copies input on saveMoods so later caller mutation does not leak", async () => {
+    const input: Mood[] = [{ id: "x", label: "X", bookIds: ["b-2"] }];
+    await saveMoods(input);
 
     input[0].label = "Changed";
     input[0].bookIds.push("b-3");
 
-    const loaded = await loadFolders();
+    const loaded = await loadMoods();
     expect(loaded).toEqual([{ id: "x", label: "X", bookIds: ["b-2"] }]);
   });
 
-  it("finds unassigned books across all folders", () => {
-    const folders: MoodFolder[] = [
+  it("finds unassigned books across all moods", () => {
+    const folders: Mood[] = [
       { id: "f1", label: "A", bookIds: ["b-1", "b-2"] },
       { id: "f2", label: "B", bookIds: ["b-2"] },
     ];
 
     const unassigned = getUnassignedBooks(folders, ALL_BOOKS);
     expect(unassigned.map((b) => b.id)).toEqual(["b-3"]);
+  });
+
+  it("adds unique book ids to one mood without touching other moods", () => {
+    const updated = addBookIdsToMood(BASE_FOLDERS, "f-1", ["b-1", "b-2", "b-2"]);
+
+    expect(updated).toEqual([
+      { id: "f-1", label: "Focus", bookIds: ["b-1", "b-2"] },
+      { id: "f-2", label: "Chill", bookIds: [] },
+    ]);
+  });
+
+  it("returns the same mood array when no assignment changes", () => {
+    expect(addBookIdsToMood(BASE_FOLDERS, "missing", ["b-2"])).toBe(BASE_FOLDERS);
+    expect(addBookIdsToMood(BASE_FOLDERS, "f-1", ["b-1"])).toBe(BASE_FOLDERS);
+    expect(addBookIdsToMood(BASE_FOLDERS, "f-1", [])).toBe(BASE_FOLDERS);
   });
 
   it("loadRecent/saveRecent use copy semantics", async () => {
@@ -151,8 +167,8 @@ describe("moodStore", () => {
     });
   });
 
-  it("removeBookReferences clears book ids from folders and recent map", async () => {
-    await saveFolders([
+  it("removeBookReferences clears book ids from moods and recent map", async () => {
+    await saveMoods([
       { id: "f-1", label: "Focus", bookIds: ["b-1", "b-2"] },
       { id: "f-2", label: "Chill", bookIds: ["b-1"] },
     ]);
@@ -163,7 +179,7 @@ describe("moodStore", () => {
 
     await removeBookReferences("b-1");
 
-    expect(await loadFolders()).toEqual([
+    expect(await loadMoods()).toEqual([
       { id: "f-1", label: "Focus", bookIds: ["b-2"] },
       { id: "f-2", label: "Chill", bookIds: [] },
     ]);
@@ -172,7 +188,7 @@ describe("moodStore", () => {
     });
   });
 
-  it("hydrates folders and recents from localStorage once", async () => {
+  it("hydrates moods and recents from localStorage once", async () => {
     const persisted = {
       version: 1,
       folders: [{ id: "persisted-folder", label: "Persisted", icon: "sparkles", color: "amber", bookIds: ["b-2"] }],
@@ -183,7 +199,7 @@ describe("moodStore", () => {
     });
 
     __resetMoodStoreForTests();
-    expect(await loadFolders()).toEqual(persisted.folders);
+    expect(await loadMoods()).toEqual(persisted.folders);
     expect(await loadRecent()).toEqual(persisted.recent);
     restore();
   });
@@ -194,16 +210,16 @@ describe("moodStore", () => {
     });
 
     __resetMoodStoreForTests();
-    expect(await loadFolders()).toEqual(BASE_FOLDERS);
+    expect(await loadMoods()).toEqual(BASE_FOLDERS);
     expect(await loadRecent()).toEqual({});
     restore();
   });
 
-  it("persists updates to localStorage on folder/recent changes", async () => {
+  it("persists updates to localStorage on mood/recent changes", async () => {
     const { data, restore } = installLocalStorageMock();
     __resetMoodStoreForTests();
 
-    await saveFolders([{ id: "f-persist", label: "Persist Me", bookIds: ["b-3"] }]);
+    await saveMoods([{ id: "f-persist", label: "Persist Me", bookIds: ["b-3"] }]);
     await setRecent("f-persist", "b-3");
 
     const raw = data[MOOD_STORE_STORAGE_KEY];
@@ -218,7 +234,7 @@ describe("moodStore", () => {
     const { data, restore } = installLocalStorageMock();
     __resetMoodStoreForTests();
 
-    await saveFolders([
+    await saveMoods([
       { id: "f-1", label: "Focus", bookIds: ["b-1", "b-2"] },
       { id: "f-2", label: "Chill", bookIds: ["b-1"] },
     ]);

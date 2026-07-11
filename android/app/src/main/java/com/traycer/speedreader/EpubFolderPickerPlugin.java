@@ -69,6 +69,7 @@ public class EpubFolderPickerPlugin extends Plugin {
 
             JSObject response = new JSObject();
             response.put("canceled", false);
+            response.put("folderName", getDocumentName(resolver, treeUri, rootDocumentId));
             response.put("files", files);
             call.resolve(response);
         } catch (Exception error) {
@@ -136,6 +137,18 @@ public class EpubFolderPickerPlugin extends Plugin {
 
     private boolean isEpub(String displayName, String mimeType) {
         return EPUB_MIME_TYPE.equalsIgnoreCase(mimeType) || displayName.toLowerCase().endsWith(".epub");
+    }
+
+    private String getDocumentName(ContentResolver resolver, Uri treeUri, String documentId) {
+        Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+        String[] projection = new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME };
+        try (Cursor cursor = resolver.query(documentUri, projection, null, null, null)) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                return "Selected folder";
+            }
+            String displayName = getString(cursor, cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME));
+            return displayName == null || displayName.isEmpty() ? "Selected folder" : displayName;
+        }
     }
 
     private String appendPath(String parentPath, String name) {

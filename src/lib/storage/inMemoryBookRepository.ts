@@ -4,6 +4,7 @@ import type {
   BookChapterRow,
   BookChunkRow,
   BookContentReplacement,
+  BookImageRow,
   BookRow,
   ImportJobPatch,
   ImportJobRow,
@@ -15,7 +16,7 @@ import type {
   StoredChapter,
   StoredParagraph,
 } from "@/types/storage";
-import type { Book, Chapter, Paragraph } from "@/types/book";
+import type { Book, BookImage, Chapter, Paragraph } from "@/types/book";
 import type { BookRepository, ListBooksOptions } from "@/lib/storage/bookRepository";
 
 const STORAGE_VERSION = 1;
@@ -31,6 +32,7 @@ const EMPTY_SNAPSHOT: StorageSnapshot = {
   books: [],
   book_chunks: [],
   book_chapters: [],
+  book_images: [],
   reading_progress: [],
   app_settings: [],
   import_jobs: [],
@@ -58,10 +60,18 @@ function isStorageSnapshot(value: unknown): value is StorageSnapshot {
     Array.isArray(value.books) &&
     Array.isArray(value.book_chunks) &&
     Array.isArray(value.book_chapters) &&
+    (value.book_images === undefined || Array.isArray(value.book_images)) &&
     Array.isArray(value.reading_progress) &&
     Array.isArray(value.app_settings) &&
     Array.isArray(value.import_jobs)
   );
+}
+
+function normalizeSnapshot(snapshot: StorageSnapshot): StorageSnapshot {
+  return {
+    ...snapshot,
+    book_images: snapshot.book_images ?? [],
+  };
 }
 
 function migratePersistedEnvelope(raw: unknown): StorageSnapshot | null {
@@ -72,7 +82,7 @@ function migratePersistedEnvelope(raw: unknown): StorageSnapshot | null {
   // transform older snapshots instead of silently dropping user data.
   switch (envelope.version) {
     case STORAGE_VERSION:
-      return isStorageSnapshot(envelope.data) ? envelope.data : null;
+      return isStorageSnapshot(envelope.data) ? normalizeSnapshot(envelope.data) : null;
     default:
       if (envelope.version < STORAGE_VERSION) {
         console.warn(
@@ -108,6 +118,15 @@ function toChapters(rows: StoredChapter[]): Chapter[] {
     index: c.index,
     title: c.title,
     startParagraphId: c.start_paragraph_id,
+  }));
+}
+
+function toBookImages(rows: BookImageRow[]): BookImage[] {
+  return rows.map((row) => ({
+    id: `${row.book_id}-img-${row.image_index}`,
+    afterParagraphId: row.after_paragraph_id,
+    alt: row.alt,
+    src: row.src,
   }));
 }
 
@@ -246,6 +265,7 @@ export class InMemoryBookRepository implements BookRepository {
       this.state.book_chapters = this.state.book_chapters.filter(
         (chapter) => chapter.book_id !== bookId
       );
+      this.state.book_images = this.state.book_images.filter((image) => image.book_id !== bookId);
       this.state.reading_progress = this.state.reading_progress.filter(
         (progress) => progress.book_id !== bookId
       );
@@ -287,12 +307,27 @@ export class InMemoryBookRepository implements BookRepository {
         (chapter) => chapter.chapter_index
       );
 
+      const normalizedImages: BookImageRow[] = sortByNumberAsc(
+        (replacement.images ?? [])
+          .filter((image) => image.book_id === bookId)
+          .map((image, imageIndex) => ({
+            book_id: image.book_id,
+            image_index: imageIndex,
+            after_paragraph_id: image.after_paragraph_id,
+            alt: image.alt,
+            src: image.src,
+          })),
+        (image) => image.image_index
+      );
+
       this.state.book_chunks = this.state.book_chunks.filter((chunk) => chunk.book_id !== bookId);
       this.state.book_chapters = this.state.book_chapters.filter(
         (chapter) => chapter.book_id !== bookId
       );
+      this.state.book_images = this.state.book_images.filter((image) => image.book_id !== bookId);
       this.state.book_chunks.push(...normalizedChunks);
       this.state.book_chapters.push(...normalizedChapters);
+      this.state.book_images.push(...normalizedImages);
 
       const current = this.state.books[index];
       const updated: BookRow = {
@@ -314,6 +349,7 @@ export class InMemoryBookRepository implements BookRepository {
       this.state.book_chapters = this.state.book_chapters.filter(
         (chapter) => chapter.book_id !== bookId
       );
+      this.state.book_images = this.state.book_images.filter((image) => image.book_id !== bookId);
       const index = this.state.books.findIndex((book) => book.id === bookId);
       if (index !== -1) {
         this.state.books[index] = {
@@ -341,11 +377,16 @@ export class InMemoryBookRepository implements BookRepository {
         this.state.book_chunks.filter((entry) => entry.book_id === bookId),
         (entry) => entry.chunk_index
       );
+      const images = sortByNumberAsc(
+        this.state.book_images.filter((entry) => entry.book_id === bookId),
+        (entry) => entry.image_index
+      );
 
       return clone({
         book,
         chapters,
         chunks,
+        images,
       });
     });
   }
@@ -363,6 +404,10 @@ export class InMemoryBookRepository implements BookRepository {
       const chaptersRows = sortByNumberAsc(
         this.state.book_chapters.filter((entry) => entry.book_id === bookId),
         (entry) => entry.chapter_index
+      );
+      const imageRows = sortByNumberAsc(
+        this.state.book_images.filter((entry) => entry.book_id === bookId),
+        (entry) => entry.image_index
       );
 
       const allParagraphs = chunks
@@ -387,6 +432,7 @@ export class InMemoryBookRepository implements BookRepository {
         coverUrl: book.cover_path ?? undefined,
         paragraphs: toParagraphs(allParagraphs),
         chapters,
+        images: toBookImages(imageRows),
         totalWords: book.total_words,
       };
 
@@ -511,7 +557,7 @@ export class InMemoryBookRepository implements BookRepository {
 
   async importSnapshot(snapshot: StorageSnapshot): Promise<void> {
     await this.withLock(async () => {
-      this.state = clone(snapshot);
+      this.state = clone(normalizeSnapshot(snapshot));
       await this.persist();
     });
   }

@@ -36,6 +36,7 @@ function makeBook(paragraphTexts: string[], totalWords = paragraphTexts.join(" "
       text,
     })),
     chapters: [{ index: 0, title: "Full book", startParagraphId: 1 }],
+    images: [],
     totalWords,
   };
 }

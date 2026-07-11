@@ -31,6 +31,12 @@ type ParsedChapter = {
   start_paragraph_id: number;
 };
 
+type ParsedEpubImage = {
+  srcPath: string;
+  alt: string | null;
+  afterParagraphId: number;
+};
+
 type ParsedEpubResult = {
   title: string;
   author: string | null;
@@ -38,6 +44,7 @@ type ParsedEpubResult = {
   coverPath: string | null;
   paragraphs: StoredParagraph[];
   chapters: ParsedChapter[];
+  images: ParsedEpubImage[];
   totalWords: number;
   tocEntries: number;
 };
@@ -70,6 +77,10 @@ type ExtractedParagraph = {
   text: string;
   anchors: string[];
 };
+
+type ExtractedBlock =
+  | ({ kind: "paragraph" } & ExtractedParagraph)
+  | { kind: "image"; src: string; alt: string | null };
 
 type StructuralReference = {
   file: string;
@@ -606,11 +617,100 @@ function extractHeadingFromChapter($: CheerioAPI): string | null {
   return candidate ?? null;
 }
 
-function extractParagraphsFromChapter(html: string): ExtractedParagraph[] {
+function buildDocumentOrderMap($: CheerioAPI): Map<AnyNode, number> {
+  const orderByNode = new Map<AnyNode, number>();
+  let nextOrder = 0;
+
+  const walk = (nodes: AnyNode[]) => {
+    for (const node of nodes) {
+      orderByNode.set(node, nextOrder);
+      nextOrder += 1;
+      if ("children" in node && Array.isArray(node.children)) {
+        walk(node.children as AnyNode[]);
+      }
+    }
+  };
+
+  const root = $.root()[0];
+  if (root && "children" in root && Array.isArray(root.children)) {
+    walk(root.children as AnyNode[]);
+  }
+  return orderByNode;
+}
+
+function serializeInlineSvg($: CheerioAPI, node: AnyNode): string | null {
+  const element = $(node);
+  if (!element.is("svg")) return null;
+
+  // Ensure standalone SVG data URLs render when used as <img src>.
+  if (!element.attr("xmlns")) {
+    element.attr("xmlns", "http://www.w3.org/2000/svg");
+  }
+
+  const markup = $.html(element)?.trim();
+  if (!markup) return null;
+
+  try {
+    if (typeof btoa === "function") {
+      const bytes = new TextEncoder().encode(markup);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 1) {
+        binary += String.fromCharCode(bytes[i]!);
+      }
+      return `data:image/svg+xml;base64,${btoa(binary)}`;
+    }
+  } catch {
+    // Fall through to URL-encoded form.
+  }
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+}
+
+function extractBlocksFromChapter(html: string): ExtractedBlock[] {
   const $ = loadHtml(html, { xmlMode: false });
-  $("script, style, noscript, svg, title").remove();
-  const cleaned: ExtractedParagraph[] = [];
+  $("script, style, noscript, title").remove();
+  const documentOrder = buildDocumentOrderMap($);
   const seenIds = new Set<string>();
+
+  type OrderedBlock = { order: number; block: ExtractedBlock };
+  const ordered: OrderedBlock[] = [];
+
+  $("img").each((_, node) => {
+    const element = $(node);
+    const src = (element.attr("src") ?? "").trim();
+    if (!src) return;
+    const altRaw = (element.attr("alt") ?? "").trim();
+    ordered.push({
+      order: documentOrder.get(node) ?? ordered.length,
+      block: {
+        kind: "image",
+        src,
+        alt: altRaw.length > 0 ? altRaw : null,
+      },
+    });
+  });
+
+  // Top-level SVG figures only (skip nested svg inside another svg).
+  $("svg").each((_, node) => {
+    const element = $(node);
+    if (element.parents("svg").length > 0) return;
+    const src = serializeInlineSvg($, node);
+    if (!src) return;
+    const title = element.find("title").first().text().replace(/\s+/g, " ").trim();
+    const ariaLabel = (element.attr("aria-label") ?? "").trim();
+    const alt = title || ariaLabel || null;
+    ordered.push({
+      order: documentOrder.get(node) ?? ordered.length,
+      block: {
+        kind: "image",
+        src,
+        alt,
+      },
+    });
+  });
+
+  // Remove SVGs before paragraph extraction so decorative SVG text does not leak.
+  $("svg").remove();
 
   $("p, div, li, h1, h2, h3, h4, h5, h6").each((_, node) => {
     const element = $(node);
@@ -618,20 +718,35 @@ function extractParagraphsFromChapter(html: string): ExtractedParagraph[] {
     if (normalized.length < 2) return;
     if (normalized.includes("{") && normalized.includes("}")) return;
     if (element.find("p, div, li").length > 0 && element.is("div")) return;
-    cleaned.push({
-      text: normalized,
-      anchors: collectAnchors($, node, seenIds),
+    ordered.push({
+      order: documentOrder.get(node) ?? ordered.length,
+      block: {
+        kind: "paragraph",
+        text: normalized,
+        anchors: collectAnchors($, node, seenIds),
+      },
     });
   });
 
-  if (cleaned.length === 0) {
+  ordered.sort((a, b) => a.order - b.order);
+
+  if (ordered.every((entry) => entry.block.kind !== "paragraph")) {
     const rootText = $.root().text().replace(/\s+/g, " ").trim();
     if (rootText.length >= 2) {
-      cleaned.push({ text: rootText, anchors: [] });
+      ordered.unshift({
+        order: -1,
+        block: { kind: "paragraph", text: rootText, anchors: [] },
+      });
     }
   }
 
-  return cleaned;
+  return ordered.map((entry) => entry.block);
+}
+
+function extractParagraphsFromChapter(html: string): ExtractedParagraph[] {
+  return extractBlocksFromChapter(html)
+    .filter((block): block is ExtractedParagraph & { kind: "paragraph" } => block.kind === "paragraph")
+    .map(({ text, anchors }) => ({ text, anchors }));
 }
 
 function buildReferenceTypeIndex(references: StructuralReference[]) {
@@ -1570,6 +1685,7 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
   const normalizedDuplicatedBookTitle = normalizeForDedup(`${opf.title}${opf.title}`);
   const paragraphs: StoredParagraph[] = [];
   const paragraphContexts: ParagraphContext[] = [];
+  const images: ParsedEpubImage[] = [];
   const firstParagraphIdByFile = new Map<string, number>();
   const tocChapterCandidates: TocChapterCandidate[] = [];
   const seenTocEntries = new Set<string>();
@@ -1609,8 +1725,8 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
     if (!zip.has(spinePath)) continue;
 
     const chapterHtml = await zip.readEntryText(spinePath);
-    const extractedParagraphs = extractParagraphsFromChapter(chapterHtml);
-    if (extractedParagraphs.length === 0) continue;
+    const extractedBlocks = extractBlocksFromChapter(chapterHtml);
+    if (extractedBlocks.length === 0) continue;
 
     const normalizedEntryFile = normalizePath(spinePath);
     const entryFilename = getFilename(spinePath);
@@ -1626,9 +1742,26 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
 
     let firstParagraphIdInFile: number | null = null;
     let pendingChapterEntries: TocEntry[] = [];
+    let lastParagraphIdForImages = paragraphs.length > 0 ? paragraphs[paragraphs.length - 1]!.id : 0;
 
-    for (const extracted of extractedParagraphs) {
+    for (const extracted of extractedBlocks) {
       throwIfAborted(options?.signal);
+
+      if (extracted.kind === "image") {
+        const rawSrc = extracted.src.trim();
+        if (!rawSrc || /^https?:\/\//i.test(rawSrc)) continue;
+        const resolvedSrc = rawSrc.toLowerCase().startsWith("data:image/")
+          ? rawSrc
+          : resolveRelativePath(spinePath, rawSrc);
+        if (!resolvedSrc) continue;
+        images.push({
+          srcPath: resolvedSrc,
+          alt: extracted.alt,
+          afterParagraphId: lastParagraphIdForImages,
+        });
+        continue;
+      }
+
       const normalizedParagraphText = normalizeForDedup(extracted.text);
       if (IGNORED_HEADINGS.has(normalizedParagraphText)) continue;
 
@@ -1667,6 +1800,7 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
         file: normalizedEntryFile,
         spineIndex,
       });
+      lastParagraphIdForImages = paragraphId;
       if (firstParagraphIdInFile === null) {
         firstParagraphIdInFile = paragraphId;
         firstParagraphIdByFile.set(normalizedEntryFile, paragraphId);
@@ -1779,6 +1913,7 @@ export async function parseEpubBytes(bytes: Uint8Array, options?: ParseEpubOptio
       title: chapter.title,
       start_paragraph_id: chapter.start_paragraph_id,
     })),
+    images,
     totalWords,
     tocEntries: tocEntries.length,
   };
@@ -1793,9 +1928,10 @@ export const __epubParserInternals = {
   normalizePath,
   textMatchesTitle,
   extractParagraphsFromChapter,
+  extractBlocksFromChapter,
   resolveRelativePath,
   classifyTocEntry,
   selectPrimaryTocChapters,
 };
 
-export type { ParseEpubOptions, ParsedChapter, ParsedEpubResult, ParsePhase };
+export type { ParseEpubOptions, ParsedChapter, ParsedEpubImage, ParsedEpubResult, ParsePhase };

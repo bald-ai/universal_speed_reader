@@ -1,5 +1,6 @@
 import { parseEpubBytes } from "@/lib/epub/epubParser";
 import { removeBookReferences } from "@/lib/moodStore";
+import { removeBookFromLibraryLayout, updateLibraryLayout } from "@/lib/libraryLayoutStore";
 import { getBookRepository } from "@/lib/storage/appRepository";
 import type { BookRepository } from "@/lib/storage/bookRepository";
 import { deleteRawEpub, loadRawEpub, storeRawEpub, type RawEpubRecord } from "@/lib/import/rawEpubStore";
@@ -11,22 +12,33 @@ import {
   hasSequentialParagraphIds,
   normalizeChapters,
 } from "@/lib/import/normalization";
+import { epubAssetDataUrl } from "@/lib/import/epubAssetDataUrl";
+import { epubCoverDataUrl } from "@/lib/import/epubCoverDataUrl";
+import { ZipArchive } from "@/lib/epub/zipArchive";
 import type {
+  BookImageRow,
   BookRow,
   ImportErrorBucket,
   ImportJobRow,
   ProcessingStatus,
 } from "@/types/storage";
+import type { ParsedEpubImage } from "@/lib/epub/chapterExtraction";
 
 const MAX_IMPORT_SIZE_BYTES = 150 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 180_000;
 const MAX_TITLE_LENGTH = 160;
 const MAX_AUTHOR_LENGTH = 160;
+const INLINE_BATCH_MAX_BYTES = 96 * 1024 * 1024;
+const INLINE_BATCH_MAX_TASKS = 4;
 
-type ImportPayload = {
+export type ImportPayload = {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
+};
+
+type ImportOptions = {
+  inlineSourceMode?: "idle" | "bounded";
 };
 
 type ImportSnapshotRow = {
@@ -64,7 +76,18 @@ function createBookId(): string {
   return `book-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+class ImportCancelledError extends Error {
+  constructor() {
+    super("Import cancelled");
+    this.name = "ImportCancelledError";
+  }
+}
+
+function withTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const controller = new AbortController();
     let settled = false;
@@ -73,6 +96,7 @@ function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: nu
       if (settled) return;
       settled = true;
       clearTimeout(timeoutId);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
       resolve(value);
     };
 
@@ -80,7 +104,13 @@ function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: nu
       if (settled) return;
       settled = true;
       clearTimeout(timeoutId);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
       reject(error);
+    };
+
+    const onExternalAbort = () => {
+      controller.abort();
+      settleReject(new ImportCancelledError());
     };
 
     const timeoutId = setTimeout(() => {
@@ -89,6 +119,14 @@ function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: nu
         new ImportFailure("Processing timeout", "Processing timeout: import exceeded 180 seconds")
       );
     }, timeoutMs);
+
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        onExternalAbort();
+        return;
+      }
+      externalSignal.addEventListener("abort", onExternalAbort);
+    }
 
     work(controller.signal).then(settleResolve, settleReject);
   });
@@ -123,12 +161,54 @@ function classifyError(error: unknown): ImportFailure {
   return new ImportFailure("Corrupted/Unreadable EPUB", message);
 }
 
+async function materializeBookImages(
+  bookId: string,
+  epubBytes: Uint8Array,
+  parsedImages: ParsedEpubImage[],
+  signal?: AbortSignal
+): Promise<BookImageRow[]> {
+  if (parsedImages.length === 0) return [];
+
+  const zip = ZipArchive.fromBytes(epubBytes);
+  const rows: BookImageRow[] = [];
+
+  for (const image of parsedImages) {
+    if (signal?.aborted) {
+      throw new ImportCancelledError();
+    }
+    let dataUrl: string | null = null;
+    if (image.srcPath.toLowerCase().startsWith("data:image/")) {
+      dataUrl = image.srcPath;
+    } else {
+      dataUrl = await epubAssetDataUrl(epubBytes, image.srcPath, zip);
+    }
+    if (!dataUrl) continue;
+    rows.push({
+      book_id: bookId,
+      image_index: rows.length,
+      after_paragraph_id: image.afterParagraphId,
+      alt: image.alt,
+      src: dataUrl,
+    });
+  }
+
+  return rows;
+}
+
 type ImportTask = {
   bookId: string;
   attempt: number;
   source: Pick<RawEpubRecord, "fileName" | "mimeType" | "sizeBytes">;
+  inlineSource?: RawEpubRecord;
+  inlineReservationBytes?: number;
+  persistSource?: Promise<RawSourcePersistResult>;
   clearProgressOnSuccess: boolean;
+  clearExistingContentBeforeParse: boolean;
 };
+
+type RawSourcePersistResult =
+  | { status: "stored" }
+  | { status: "failed"; error: unknown };
 
 function validateSource(source: Pick<RawEpubRecord, "fileName" | "sizeBytes">): ImportFailure | null {
   const normalizedName = source.fileName.toLowerCase();
@@ -150,11 +230,15 @@ type RawStoreAdapter = {
 export class BookImportService {
   private readonly listeners = new Set<() => void>();
   private readonly queue: ImportTask[] = [];
+  private readonly cancelledBookIds = new Set<string>();
   private activeBookId: string | null = null;
+  private activeAbortController: AbortController | null = null;
   private isRunning = false;
   private readonly repositoryPromise: Promise<BookRepository>;
   private readonly rawStore: RawStoreAdapter;
   private enqueueLock: Promise<void> = Promise.resolve();
+  private inlineBatchBytes = 0;
+  private inlineBatchTasks = 0;
 
   constructor(repositoryPromise?: Promise<BookRepository>, rawStore?: RawStoreAdapter) {
     this.repositoryPromise = repositoryPromise ?? getBookRepository();
@@ -170,16 +254,16 @@ export class BookImportService {
     return () => this.listeners.delete(listener);
   }
 
-  async importFromFile(file: File): Promise<string> {
+  async importFromFile(file: File, options?: ImportOptions): Promise<string> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     return this.importFromBytes({
       fileName: file.name,
       mimeType: file.type || "application/epub+zip",
       bytes,
-    });
+    }, options);
   }
 
-  async importFromBytes(payload: ImportPayload): Promise<string> {
+  async importFromBytes(payload: ImportPayload, options?: ImportOptions): Promise<string> {
     const repository = await this.repositoryPromise;
     const now = Date.now();
     const bookId = createBookId();
@@ -228,6 +312,30 @@ export class BookImportService {
       return bookId;
     }
 
+    const inlineReservationBytes = this.reserveInlineSource(
+      source.sizeBytes,
+      options?.inlineSourceMode ?? "idle"
+    );
+    if (inlineReservationBytes !== null) {
+      this.queue.push({
+        bookId,
+        attempt,
+        source: {
+          fileName: source.fileName,
+          mimeType: source.mimeType,
+          sizeBytes: source.sizeBytes,
+        },
+        inlineSource: source,
+        inlineReservationBytes,
+        persistSource: this.persistRawSource(source),
+        clearProgressOnSuccess: false,
+        clearExistingContentBeforeParse: false,
+      });
+      this.emit();
+      void this.runQueue();
+      return bookId;
+    }
+
     try {
       await this.rawStore.store(source);
     } catch (error) {
@@ -253,6 +361,7 @@ export class BookImportService {
         sizeBytes: source.sizeBytes,
       },
       clearProgressOnSuccess: false,
+      clearExistingContentBeforeParse: false,
     });
     this.emit();
     void this.runQueue();
@@ -315,6 +424,7 @@ export class BookImportService {
           sizeBytes: source.sizeBytes,
         },
         clearProgressOnSuccess: false,
+        clearExistingContentBeforeParse: true,
       });
       this.emit();
       void this.runQueue();
@@ -425,6 +535,7 @@ export class BookImportService {
           sizeBytes: source.sizeBytes,
         },
         clearProgressOnSuccess: true,
+        clearExistingContentBeforeParse: true,
       });
       this.emit();
       void this.runQueue();
@@ -440,21 +551,32 @@ export class BookImportService {
 
   async deleteBook(bookId: string): Promise<void> {
     await this.withEnqueueLock(async () => {
+      // Allow delete during processing: cancel the active/queued import, then remove rows.
+      this.cancelledBookIds.add(bookId);
       if (this.activeBookId === bookId) {
-        throw new Error("Book is currently processing and cannot be deleted");
+        this.activeAbortController?.abort();
       }
 
+      const removedTasks: ImportTask[] = [];
       for (let index = this.queue.length - 1; index >= 0; index -= 1) {
-        if (this.queue[index]?.bookId === bookId) {
-          this.queue.splice(index, 1);
+        if (this.queue[index]?.bookId !== bookId) continue;
+        const [removedTask] = this.queue.splice(index, 1);
+        if (removedTask) {
+          removedTasks.push(removedTask);
+          this.releaseInlineSource(removedTask);
         }
       }
 
       const repository = await this.repositoryPromise;
       await repository.deleteBook(bookId);
+      await Promise.all(removedTasks.map((task) => task.persistSource?.then(() => undefined)));
       await this.rawStore.remove(bookId);
       clearBookTokenCache(bookId);
       await removeBookReferences(bookId, { repository });
+      await updateLibraryLayout(
+        (layout) => removeBookFromLibraryLayout(layout, bookId),
+        { repository }
+      );
       await this.removeDeletedBookTtsRules(repository, bookId);
       this.emit();
     });
@@ -478,21 +600,67 @@ export class BookImportService {
       while (this.queue.length > 0) {
         const task = this.queue.shift();
         if (!task) break;
+        if (this.cancelledBookIds.has(task.bookId)) {
+          this.releaseInlineSource(task);
+          this.cancelledBookIds.delete(task.bookId);
+          continue;
+        }
         const repository = await this.repositoryPromise;
         this.activeBookId = task.bookId;
+        this.activeAbortController = new AbortController();
         try {
-          await this.executeTask(repository, task);
+          await this.executeTask(repository, task, this.activeAbortController.signal);
         } finally {
+          this.releaseInlineSource(task);
           if (this.activeBookId === task.bookId) {
             this.activeBookId = null;
           }
+          this.activeAbortController = null;
+          this.cancelledBookIds.delete(task.bookId);
         }
       }
     } finally {
       this.activeBookId = null;
+      this.activeAbortController = null;
       this.isRunning = false;
       this.emit();
     }
+  }
+
+  private canProcessInline(): boolean {
+    return !this.isRunning && this.queue.length === 0;
+  }
+
+  private reserveInlineSource(sizeBytes: number, mode: ImportOptions["inlineSourceMode"]): number | null {
+    if (mode === "idle") {
+      if (!this.canProcessInline()) return null;
+      this.inlineBatchBytes += sizeBytes;
+      this.inlineBatchTasks += 1;
+      return sizeBytes;
+    }
+
+    if (this.inlineBatchTasks >= INLINE_BATCH_MAX_TASKS) return null;
+    if (this.inlineBatchBytes + sizeBytes > INLINE_BATCH_MAX_BYTES) return null;
+
+    this.inlineBatchBytes += sizeBytes;
+    this.inlineBatchTasks += 1;
+    return sizeBytes;
+  }
+
+  private releaseInlineSource(task: ImportTask): void {
+    if (task.inlineReservationBytes === undefined) return;
+    this.inlineBatchBytes = Math.max(0, this.inlineBatchBytes - task.inlineReservationBytes);
+    this.inlineBatchTasks = Math.max(0, this.inlineBatchTasks - 1);
+    task.inlineReservationBytes = undefined;
+  }
+
+  private persistRawSource(source: RawEpubRecord): Promise<RawSourcePersistResult> {
+    return Promise.resolve()
+      .then(() => this.rawStore.store(source))
+      .then(
+        () => ({ status: "stored" as const }),
+        (error: unknown) => ({ status: "failed" as const, error })
+      );
   }
 
   private async removeDeletedBookTtsRules(
@@ -505,8 +673,26 @@ export class BookImportService {
     await repository.putAppSetting(TTS_REGEX_SETTINGS_KEY, store);
   }
 
-  private async executeTask(repository: BookRepository, task: ImportTask): Promise<void> {
-    const { bookId, attempt, source, clearProgressOnSuccess } = task;
+  private async executeTask(
+    repository: BookRepository,
+    task: ImportTask,
+    cancelSignal?: AbortSignal
+  ): Promise<void> {
+    const {
+      bookId,
+      attempt,
+      source,
+      clearProgressOnSuccess,
+      clearExistingContentBeforeParse,
+    } = task;
+    const ensureNotCancelled = async () => {
+      if (this.cancelledBookIds.has(bookId) || cancelSignal?.aborted) {
+        throw new ImportCancelledError();
+      }
+      if (!(await repository.getBook(bookId))) {
+        throw new ImportCancelledError();
+      }
+    };
     const markStatus = async (
       status: ProcessingStatus,
       patch?: {
@@ -514,6 +700,7 @@ export class BookImportService {
         finishedAt?: number | null;
       }
     ) => {
+      await ensureNotCancelled();
       await repository.setBookAndImportStatus(bookId, attempt, status, {
         processing_error: patch?.error ?? null,
         updated_at: Date.now(),
@@ -529,15 +716,12 @@ export class BookImportService {
         throw validationFailure;
       }
 
-      const storedSource = await this.rawStore.load(bookId);
-      if (!storedSource) {
-        throw new ImportFailure(
-          "Corrupted/Unreadable EPUB",
-          "Corrupted/Unreadable EPUB: no stored source file available for processing"
-        );
-      }
+      const storedSource = await this.loadTaskSource(task);
 
-      await repository.clearBookContent(bookId);
+      if (clearExistingContentBeforeParse) {
+        await ensureNotCancelled();
+        await repository.clearBookContent(bookId);
+      }
 
       const parsed = await withTimeout(
         (signal) =>
@@ -548,11 +732,16 @@ export class BookImportService {
               await markStatus(phase);
             },
           }),
-        IMPORT_TIMEOUT_MS
+        IMPORT_TIMEOUT_MS,
+        cancelSignal
       );
+
+      await ensureNotCancelled();
+      await this.ensureTaskSourcePersisted(task);
 
       if (storedSource.sizeBytes !== source.sizeBytes || storedSource.fileName !== source.fileName) {
         // Keep metadata stable when the persisted source changed between queue and execution.
+        await ensureNotCancelled();
         await repository.patchBook(bookId, {
           source_uri: `indexeddb://raw_epubs/${bookId}/${encodeURIComponent(storedSource.fileName)}`,
           size_bytes: storedSource.sizeBytes,
@@ -579,32 +768,93 @@ export class BookImportService {
 
       const chunkRows = chunkParagraphs(bookId, parsed.paragraphs);
       const chapterRows = normalizeChapters(bookId, parsed.chapters);
+      await ensureNotCancelled();
+      const imageRows = await materializeBookImages(
+        bookId,
+        storedSource.bytes,
+        parsed.images ?? [],
+        cancelSignal
+      );
       const totalWords = parsed.totalWords > 0 ? parsed.totalWords : computeTotalWords(parsed.paragraphs);
+      await ensureNotCancelled();
+      const coverDataUrl = await epubCoverDataUrl(storedSource.bytes, parsed.coverPath);
+      await ensureNotCancelled();
       await repository.patchBook(bookId, {
         title: parsed.title || fileNameToTitle(storedSource.fileName),
         author: parsed.author,
-        cover_path: parsed.coverPath,
+        cover_path: coverDataUrl,
         language: parsed.language,
         size_bytes: storedSource.sizeBytes,
         updated_at: Date.now(),
       });
       clearBookTokenCache(bookId);
+      await ensureNotCancelled();
       await repository.replaceBookContent(bookId, {
         chunks: chunkRows,
         chapters: chapterRows,
+        images: imageRows,
         total_chunks: chunkRows.length,
         total_paragraphs: parsed.paragraphs.length,
         total_words: totalWords,
       });
       if (clearProgressOnSuccess) {
+        await ensureNotCancelled();
         await repository.deleteReadingProgress(bookId);
       }
 
       await markStatus("completed", { finishedAt: Date.now(), error: null });
     } catch (unknownError) {
-      const failure = classifyError(unknownError);
+      if (
+        unknownError instanceof ImportCancelledError ||
+        this.cancelledBookIds.has(bookId) ||
+        !(await repository.getBook(bookId))
+      ) {
+        return;
+      }
+      const failure = await this.resolveTaskFailure(task, unknownError);
       await this.failImport(repository, bookId, attempt, failure);
     }
+  }
+
+  private async loadTaskSource(task: ImportTask): Promise<RawEpubRecord> {
+    if (task.inlineSource) {
+      return task.inlineSource;
+    }
+
+    const storedSource = await this.rawStore.load(task.bookId);
+    if (!storedSource) {
+      throw new ImportFailure(
+        "Corrupted/Unreadable EPUB",
+        "Corrupted/Unreadable EPUB: no stored source file available for processing"
+      );
+    }
+    return storedSource;
+  }
+
+  private formatPersistSourceFailure(error: unknown): ImportFailure {
+    const message = error instanceof Error ? error.message : String(error);
+    return new ImportFailure(
+      "Corrupted/Unreadable EPUB",
+      `Corrupted/Unreadable EPUB: failed to persist source file for retry (${message})`
+    );
+  }
+
+  private async getPersistSourceFailure(task: ImportTask): Promise<ImportFailure | null> {
+    if (!task.persistSource) return null;
+    const result = await task.persistSource;
+    if (result.status === "stored") return null;
+    return this.formatPersistSourceFailure(result.error);
+  }
+
+  private async ensureTaskSourcePersisted(task: ImportTask): Promise<void> {
+    const persistenceFailure = await this.getPersistSourceFailure(task);
+    if (persistenceFailure) {
+      throw persistenceFailure;
+    }
+  }
+
+  private async resolveTaskFailure(task: ImportTask, error: unknown): Promise<ImportFailure> {
+    return (await this.getPersistSourceFailure(task)) ?? classifyError(error);
   }
 
   private async failImport(

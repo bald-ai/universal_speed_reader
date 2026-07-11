@@ -8,7 +8,6 @@ type BookCardProps = {
   genre?: string;
   description?: string;
   coverUrl?: string;
-  isMock?: boolean;
   statusBadge?: string;
   readLabel?: string;
   readDisabled?: boolean;
@@ -29,7 +28,6 @@ export default function BookCard(props: BookCardProps) {
     title,
     author,
     coverUrl,
-    isMock,
     statusBadge,
     readDisabled,
     editLabel,
@@ -117,11 +115,6 @@ export default function BookCard(props: BookCardProps) {
             <h2 className="text-[15px] font-semibold text-neutral-100 truncate leading-tight">
               {title}
             </h2>
-            {isMock ? (
-              <span className="shrink-0 rounded-full bg-neutral-800 px-1.5 py-px text-[9px] font-medium tracking-wide text-neutral-500 uppercase">
-                Mock
-              </span>
-            ) : null}
           </div>
           <p className="mt-0.5 text-[13px] text-neutral-500 truncate">{author}</p>
           {statusBadge ? (

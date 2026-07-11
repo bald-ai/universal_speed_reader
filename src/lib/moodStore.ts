@@ -1,6 +1,6 @@
 import { getBookRepository } from "@/lib/storage/appRepository";
 import type { BookRepository } from "@/lib/storage/bookRepository";
-import type { LibraryBook, MoodFolder } from "@/types/book";
+import type { LibraryBook, Mood } from "@/types/book";
 
 type RecentMap = Record<string, string>;
 
@@ -9,7 +9,7 @@ const MOOD_STORE_SETTING_KEY = "mood_store.v1";
 
 type PersistedMoodStoreV1 = {
   version: 1;
-  folders: MoodFolder[];
+  folders: Mood[];
   recent: RecentMap;
 };
 
@@ -18,13 +18,20 @@ type MoodStoreOptions = {
   repository?: MoodStoreRepository;
 };
 
-let foldersState: MoodFolder[] | null = null;
+let foldersState: Mood[] | null = null;
 let recentState: RecentMap = {};
 let hasHydrated = false;
 let hydratePromise: Promise<void> | null = null;
 
-function cloneFolders(folders: MoodFolder[]): MoodFolder[] {
-  return folders.map((f) => ({ ...f, bookIds: [...f.bookIds] }));
+function cloneFolders(folders: Mood[]): Mood[] {
+  return folders.map((folder) => ({
+    id: folder.id,
+    label: folder.label,
+    icon: folder.icon,
+    color: folder.color,
+    imageUrl: folder.imageUrl,
+    bookIds: [...folder.bookIds],
+  }));
 }
 
 function getLocalStorageSafe(): Storage | null {
@@ -40,16 +47,15 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
-function isMoodFolder(value: unknown): value is MoodFolder {
+function isMood(value: unknown): value is Mood {
   if (!value || typeof value !== "object") return false;
-  const folder = value as Partial<MoodFolder>;
+  const folder = value as Partial<Mood>;
   if (typeof folder.id !== "string") return false;
   if (typeof folder.label !== "string") return false;
   if (!isStringArray(folder.bookIds)) return false;
   if (folder.icon !== undefined && typeof folder.icon !== "string") return false;
   if (folder.color !== undefined && typeof folder.color !== "string") return false;
   if (folder.imageUrl !== undefined && typeof folder.imageUrl !== "string") return false;
-  if (folder.isMock !== undefined && typeof folder.isMock !== "boolean") return false;
   return true;
 }
 
@@ -64,7 +70,7 @@ function parsePersistedState(raw: unknown): PersistedMoodStoreV1 | null {
     if (!parsed || typeof parsed !== "object") return null;
     const record = parsed as Partial<PersistedMoodStoreV1>;
     if (record.version !== 1) return null;
-    if (!Array.isArray(record.folders) || !record.folders.every(isMoodFolder)) return null;
+    if (!Array.isArray(record.folders) || !record.folders.every(isMood)) return null;
     if (!isRecentMap(record.recent)) return null;
     return {
       version: 1,
@@ -181,7 +187,7 @@ async function persistState(options?: MoodStoreOptions): Promise<void> {
   await persistToRepository(payload, options?.repository);
 }
 
-export async function loadFolders(options?: MoodStoreOptions): Promise<MoodFolder[]> {
+export async function loadMoods(options?: MoodStoreOptions): Promise<Mood[]> {
   await hydrateOnce(options);
   if (!foldersState) {
     foldersState = [];
@@ -189,13 +195,13 @@ export async function loadFolders(options?: MoodStoreOptions): Promise<MoodFolde
   return cloneFolders(foldersState);
 }
 
-export async function saveFolders(folders: MoodFolder[], options?: MoodStoreOptions): Promise<void> {
+export async function saveMoods(folders: Mood[], options?: MoodStoreOptions): Promise<void> {
   await hydrateOnce(options);
   foldersState = cloneFolders(folders);
   await persistState(options);
 }
 
-export function getUnassignedBooks(folders: MoodFolder[], allBooks: LibraryBook[]): LibraryBook[] {
+export function getUnassignedBooks(folders: Mood[], allBooks: LibraryBook[]): LibraryBook[] {
   const assigned = new Set<string>();
   for (const folder of folders) {
     for (const id of folder.bookIds) assigned.add(id);
@@ -203,13 +209,29 @@ export function getUnassignedBooks(folders: MoodFolder[], allBooks: LibraryBook[
   return allBooks.filter((book) => !assigned.has(book.id));
 }
 
-export function getFolderColorForBook(folders: MoodFolder[], bookId: string): string | undefined {
+export function getMoodColorForBook(folders: Mood[], bookId: string): string | undefined {
   for (const folder of folders) {
     if (folder.bookIds.includes(bookId)) {
       return folder.color ?? "violet";
     }
   }
   return undefined;
+}
+
+export function addBookIdsToMood(folders: Mood[], folderId: string, bookIds: string[]): Mood[] {
+  const uniqueBookIds = Array.from(new Set(bookIds.filter((bookId) => bookId.trim())));
+  if (uniqueBookIds.length === 0) return folders;
+
+  let changed = false;
+  const next = folders.map((folder) => {
+    if (folder.id !== folderId) return folder;
+    const merged = Array.from(new Set([...folder.bookIds, ...uniqueBookIds]));
+    if (merged.length === folder.bookIds.length) return folder;
+    changed = true;
+    return { ...folder, bookIds: merged };
+  });
+
+  return changed ? next : folders;
 }
 
 export async function loadRecent(options?: MoodStoreOptions): Promise<RecentMap> {
@@ -234,12 +256,12 @@ export async function setRecent(
 }
 
 export async function removeBookReferences(bookId: string, options?: MoodStoreOptions): Promise<void> {
-  const folders = await loadFolders(options);
+  const folders = await loadMoods(options);
   const cleanedFolders = folders.map((folder) => ({
     ...folder,
     bookIds: folder.bookIds.filter((id) => id !== bookId),
   }));
-  await saveFolders(cleanedFolders, options);
+  await saveMoods(cleanedFolders, options);
 
   const recent = await loadRecent(options);
   let changed = false;

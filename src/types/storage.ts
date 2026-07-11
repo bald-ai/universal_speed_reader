@@ -59,6 +59,14 @@ export type BookChapterRow = {
   start_paragraph_id: number;
 };
 
+export type BookImageRow = {
+  book_id: string;
+  image_index: number;
+  after_paragraph_id: number;
+  alt: string | null;
+  src: string;
+};
+
 export type ReadingProgressRow = {
   book_id: string;
   paragraph_id: number;
@@ -87,6 +95,7 @@ export type StorageSnapshot = {
   books: BookRow[];
   book_chunks: BookChunkRow[];
   book_chapters: BookChapterRow[];
+  book_images: BookImageRow[];
   reading_progress: ReadingProgressRow[];
   app_settings: AppSettingRow[];
   import_jobs: ImportJobRow[];
@@ -95,6 +104,7 @@ export type StorageSnapshot = {
 export type BookContentReplacement = {
   chunks: BookChunkRow[];
   chapters: BookChapterRow[];
+  images: BookImageRow[];
   total_paragraphs: number;
   total_words: number;
   total_chunks: number;
@@ -104,6 +114,7 @@ export type StoredBookAggregate = {
   book: BookRow;
   chapters: BookChapterRow[];
   chunks: BookChunkRow[];
+  images: BookImageRow[];
 };
 
 export type ReadableBookBundle = {

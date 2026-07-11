@@ -19,7 +19,11 @@ import { speakNativeText, isNativeTtsAvailable } from "@/lib/nativeTts";
 import { createSimpleWordPattern } from "@/lib/ttsRegex/simpleRule";
 import { getTokensForParagraph } from "@/lib/utils/tokenCache";
 import { calculateChapterPercentComplete, findChapterForParagraph } from "@/lib/utils/bookHelpers";
-import type { Chapter, Paragraph } from "@/types/book";
+import {
+  buildNormalReadingDisplayRows,
+  type NormalReadingDisplayRow,
+} from "@/lib/reader/buildNormalReadingDisplayRows";
+import type { BookImage, Chapter, Paragraph } from "@/types/book";
 import type { Position, TtsHighlightStyle } from "@/types/reading";
 
 // ── sentence boundary helper ──
@@ -57,6 +61,23 @@ type ParagraphRowProps = {
   fontSizeClass: string;
   fontFamilyClass: string;
 };
+
+const ImageRow = memo(function ImageRow({ image }: { image: BookImage }) {
+  return (
+    <figure className="w-full" data-testid="book-image-row" data-image-id={image.id}>
+      <img
+        src={image.src}
+        alt={image.alt ?? ""}
+        loading="lazy"
+        decoding="async"
+        className="mx-auto h-auto w-full max-w-2xl rounded-md object-contain"
+      />
+      {image.alt ? (
+        <figcaption className="mt-2 text-center text-xs text-neutral-500">{image.alt}</figcaption>
+      ) : null}
+    </figure>
+  );
+});
 
 const ParagraphRow = memo(function ParagraphRow({
   paragraph,
@@ -232,6 +253,21 @@ export default function NormalReadingMode() {
     return map;
   }, [book]);
 
+  const displayRows = useMemo((): NormalReadingDisplayRow[] => {
+    if (!book) return [];
+    return buildNormalReadingDisplayRows(book);
+  }, [book]);
+
+  const displayRowIndexByParagraphId = useMemo(() => {
+    const map = new Map<number, number>();
+    displayRows.forEach((row, index) => {
+      if (row.kind === "paragraph") {
+        map.set(row.paragraph.id, index);
+      }
+    });
+    return map;
+  }, [displayRows]);
+
   const highlightedWordText = useMemo(() => {
     if (!book || !highlightedWord) return "";
     const paragraphIndex = paragraphIndexById.get(highlightedWord.paragraphId);
@@ -274,9 +310,9 @@ export default function NormalReadingMode() {
   }, [book, position]);
 
   const rowVirtualizer = useVirtualizer({
-    count: book?.paragraphs.length ?? 0,
+    count: displayRows.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 80,
+    estimateSize: (index) => (displayRows[index]?.kind === "image" ? 220 : 80),
     overscan: 10,
   });
 
@@ -304,7 +340,7 @@ export default function NormalReadingMode() {
       wordEl.scrollIntoView({ block: "center", behavior: "auto" });
     } else {
       // If not found, ensure paragraph is in view first
-      const index = paragraphIndexById.get(target.paragraphId);
+      const index = displayRowIndexByParagraphId.get(target.paragraphId);
       if (index !== undefined && attempt === 0) {
         // Only scroll virtualizer on first attempt to avoid fighting
         // Use auto behavior to ensure immediate rendering
@@ -317,11 +353,11 @@ export default function NormalReadingMode() {
         findAndScrollToWord(target, attempt + 1);
       }, 50 + (attempt * 20));
     }
-  }, [paragraphIndexById, rowVirtualizer]);
+  }, [displayRowIndexByParagraphId, rowVirtualizer]);
 
   const scrollToPosition = useCallback((pos: Position, smooth = false) => {
     if (!book) return;
-    const index = paragraphIndexById.get(pos.paragraphId);
+    const index = displayRowIndexByParagraphId.get(pos.paragraphId);
     if (index === undefined) return;
     
     rowVirtualizer.scrollToIndex(index, { align: "start", behavior: smooth ? "smooth" : "auto" });
@@ -330,7 +366,7 @@ export default function NormalReadingMode() {
       // Use the robust finder for the word
       findAndScrollToWord(pos);
     }
-  }, [book, paragraphIndexById, rowVirtualizer, findAndScrollToWord]);
+  }, [book, displayRowIndexByParagraphId, rowVirtualizer, findAndScrollToWord]);
 
   useEffect(() => {
     hasScrolledToInitialPosition.current = false;
@@ -463,14 +499,32 @@ export default function NormalReadingMode() {
     const closestItem = virtualItems.find((item) => probeOffset >= item.start && probeOffset < item.end)
       ?? virtualItems[virtualItems.length - 1];
 
-    const paragraph = book.paragraphs[closestItem.index];
-    if (paragraph && paragraph.id !== position.paragraphId) {
+    // Map image rows back to the nearest preceding paragraph for progress.
+    let nearestParagraph: Paragraph | null = null;
+    for (let i = closestItem.index; i >= 0; i -= 1) {
+      const row = displayRows[i];
+      if (row?.kind === "paragraph") {
+        nearestParagraph = row.paragraph;
+        break;
+      }
+    }
+    if (!nearestParagraph) {
+      for (let i = closestItem.index + 1; i < displayRows.length; i += 1) {
+        const row = displayRows[i];
+        if (row?.kind === "paragraph") {
+          nearestParagraph = row.paragraph;
+          break;
+        }
+      }
+    }
+
+    if (nearestParagraph && nearestParagraph.id !== position.paragraphId) {
       setPosition({
-        paragraphId: paragraph.id,
+        paragraphId: nearestParagraph.id,
         wordIndex: 0
       });
     }
-  }, [book, position.paragraphId, progressLoaded, rowVirtualizer, setPosition]);
+  }, [book, displayRows, position.paragraphId, progressLoaded, rowVirtualizer, setPosition]);
 
   const handleWordClick = useCallback((paragraphId: number, wordIndex: number) => {
     // When TTS is playing, don't allow changing the current word via clicks.
@@ -614,7 +668,7 @@ export default function NormalReadingMode() {
   const handleChapterSelect = useCallback((chapter: Chapter) => {
     if (!book) return;
     
-    const index = paragraphIndexById.get(chapter.startParagraphId);
+    const index = displayRowIndexByParagraphId.get(chapter.startParagraphId);
     if (index !== undefined) {
       suppressPositionSync(POSITION_SYNC_SUPPRESS_MS);
       rowVirtualizer.scrollToIndex(index, { align: "start", behavior: "auto" });
@@ -632,7 +686,7 @@ export default function NormalReadingMode() {
       });
     }
     setShowChapterMenu(false);
-  }, [book, paragraphIndexById, rowVirtualizer, setPosition, suppressPositionSync]);
+  }, [book, displayRowIndexByParagraphId, rowVirtualizer, setPosition, suppressPositionSync]);
 
   const handleBack = useCallback(() => {
     tts.stop();
@@ -728,15 +782,8 @@ export default function NormalReadingMode() {
           }}
         >
           {virtualItems.map((virtualItem) => {
-            const paragraph = book.paragraphs[virtualItem.index];
-            if (!paragraph) return null;
-
-            const words = getTokensForParagraph(book, paragraph);
-            const showChapterSeparator = chapterSeparatorStarts.has(paragraph.id);
-            const highlightedWordIndex =
-              highlightedWord?.paragraphId === paragraph.id
-                ? highlightedWord.wordIndex
-                : null;
+            const row = displayRows[virtualItem.index];
+            if (!row) return null;
 
             return (
               <div
@@ -753,32 +800,50 @@ export default function NormalReadingMode() {
                 className="pb-4"
               >
                 <div className="w-full max-w-2xl mx-auto">
-                  {showChapterSeparator ? (
-                    <div
-                      aria-hidden="true"
-                      data-testid="chapter-separator"
-                      className="relative flex items-center justify-center py-16"
-                    >
-                      <div
-                        className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(26,26,42,0.10)_30%,rgba(26,26,42,0.18)_50%,rgba(26,26,42,0.10)_70%,transparent_100%)]"
-                      />
-                      <div className="relative flex flex-col items-center gap-3">
-                        <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
-                        <div className="h-2 w-2 rotate-45 bg-neutral-500/80" />
-                        <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
-                      </div>
-                    </div>
-                  ) : null}
-                  <ParagraphRow
-                    paragraph={paragraph}
-                    words={words}
-                    highlightedWordIndex={highlightedWordIndex}
-                    highlightStyle={settings.ttsHighlightStyle}
-                    onWordClick={handleWordClick}
-                    wordClicksDisabled={tts.status === "playing"}
-                    fontSizeClass={fontSizeClass}
-                    fontFamilyClass={fontFamilyClass}
-                  />
+                  {row.kind === "image" ? (
+                    <ImageRow image={row.image} />
+                  ) : (
+                    (() => {
+                      const paragraph = row.paragraph;
+                      const words = getTokensForParagraph(book, paragraph);
+                      const showChapterSeparator = chapterSeparatorStarts.has(paragraph.id);
+                      const highlightedWordIndex =
+                        highlightedWord?.paragraphId === paragraph.id
+                          ? highlightedWord.wordIndex
+                          : null;
+
+                      return (
+                        <>
+                          {showChapterSeparator ? (
+                            <div
+                              aria-hidden="true"
+                              data-testid="chapter-separator"
+                              className="relative flex items-center justify-center py-16"
+                            >
+                              <div
+                                className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(26,26,42,0.10)_30%,rgba(26,26,42,0.18)_50%,rgba(26,26,42,0.10)_70%,transparent_100%)]"
+                              />
+                              <div className="relative flex flex-col items-center gap-3">
+                                <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                                <div className="h-2 w-2 rotate-45 bg-neutral-500/80" />
+                                <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
+                              </div>
+                            </div>
+                          ) : null}
+                          <ParagraphRow
+                            paragraph={paragraph}
+                            words={words}
+                            highlightedWordIndex={highlightedWordIndex}
+                            highlightStyle={settings.ttsHighlightStyle}
+                            onWordClick={handleWordClick}
+                            wordClicksDisabled={tts.status === "playing"}
+                            fontSizeClass={fontSizeClass}
+                            fontFamilyClass={fontFamilyClass}
+                          />
+                        </>
+                      );
+                    })()
+                  )}
                 </div>
               </div>
             );

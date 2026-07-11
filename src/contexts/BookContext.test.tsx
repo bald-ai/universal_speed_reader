@@ -42,6 +42,7 @@ function makeReadableBundle(id: string): ReadableBookBundle {
       chapters: [
         { index: 0, title: "Chapter 1", startParagraphId: 1 },
       ],
+      images: [],
       totalWords: metadata.total_words,
     },
   };

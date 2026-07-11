@@ -8,22 +8,36 @@ import {
   type ChangeEvent,
 } from "react";
 import { useLocation } from "wouter";
-import BookCard from "@/components/library/BookCard";
 import BulkImportReview from "@/components/library/BulkImportReview";
 import EditBookModal, { type EditBookModalSavePayload } from "@/components/library/EditBookModal";
+import LibraryTreeView from "@/components/library/LibraryTreeView";
 import MoodView from "@/components/library/MoodView";
+import NestedPickPrune from "@/components/library/NestedPickPrune";
 import { motion } from "framer-motion";
 import type { LibraryBook } from "@/types/book";
+import type { LibraryLayout } from "@/types/libraryLayout";
 import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
-import { getBookImportService } from "@/lib/import/bookImportService";
+import { getBookImportService, type ImportPayload } from "@/lib/import/bookImportService";
+import {
+  buildFolderImportPreview,
+  flattenFolderImportBooks,
+  type FolderImportBookNode,
+  type FolderImportPreview,
+} from "@/lib/import/folderImportTree";
 import {
   isNativeEpubFolderPickerAvailable,
   pickNativeEpubFolder,
-  readNativeEpubFolderFile,
+  readNativeEpubFolderBytes,
   type NativeEpubFolderFile,
 } from "@/lib/nativeEpubFolderPicker";
-import { loadFolders, getFolderColorForBook } from "@/lib/moodStore";
-import type { MoodFolder } from "@/types/book";
+import {
+  addLibraryFolder,
+  deleteLibraryFolderOnly,
+  deleteLibraryFolderWithContents,
+  loadLibraryLayout,
+  moveBookToFolder,
+  saveLibraryLayout,
+} from "@/lib/libraryLayoutStore";
 
 type PendingImportItem =
   | {
@@ -53,16 +67,96 @@ type ImportTimingSummary = {
   elapsedMs: number;
 };
 
+type PendingFolderImport = {
+  sourceFolderName: string;
+  items: PendingImportItem[];
+  preview: FolderImportPreview;
+};
+
 type TrackedImportBook = {
   bookId: string;
   item: PendingImportItem;
 };
 
-function loadPendingImportFile(item: PendingImportItem): Promise<File> {
-  if (item.kind === "file") {
-    return Promise.resolve(item.file);
+const EMPTY_LIBRARY_LAYOUT: LibraryLayout = {
+  folders: [],
+  placements: [],
+};
+const BATCH_IMPORT_READ_CONCURRENCY = 2;
+
+type PreparedFolderImportLayout = {
+  layout: LibraryLayout;
+  folderIdByPath: Map<string, string>;
+};
+
+function folderPathKey(path: string[]): string {
+  return path.join("\u0000");
+}
+
+function prepareFolderImportLayout(
+  baseLayout: LibraryLayout,
+  sourceFolderName: string,
+  books: FolderImportBookNode[]
+): PreparedFolderImportLayout {
+  const rootFolder = addLibraryFolder(baseLayout, { label: sourceFolderName });
+  let layout = rootFolder.layout;
+  const folderIdByPath = new Map<string, string>([[folderPathKey([]), rootFolder.folder.id]]);
+
+  for (const book of books) {
+    let parentId = rootFolder.folder.id;
+    const currentPath: string[] = [];
+    for (const segment of book.folderPath) {
+      currentPath.push(segment);
+      const key = folderPathKey(currentPath);
+      const existingId = folderIdByPath.get(key);
+      if (existingId) {
+        parentId = existingId;
+        continue;
+      }
+
+      const created = addLibraryFolder(layout, { label: segment, parentId });
+      layout = created.layout;
+      folderIdByPath.set(key, created.folder.id);
+      parentId = created.folder.id;
+    }
   }
-  return readNativeEpubFolderFile(item.nativeFile);
+
+  return { layout, folderIdByPath };
+}
+
+async function loadPendingImportPayload(item: PendingImportItem): Promise<ImportPayload> {
+  if (item.kind === "file") {
+    return {
+      fileName: item.file.name,
+      mimeType: item.file.type || "application/epub+zip",
+      bytes: new Uint8Array(await item.file.arrayBuffer()),
+    };
+  }
+
+  return {
+    fileName: item.nativeFile.name,
+    mimeType: item.nativeFile.type ?? "application/epub+zip",
+    bytes: await readNativeEpubFolderBytes(item.nativeFile),
+  };
+}
+
+async function runWithLimitedConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+  const runners = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      if (item !== undefined) {
+        await worker(item);
+      }
+    }
+  });
+  await Promise.all(runners);
 }
 
 function delay(ms: number): Promise<void> {
@@ -121,9 +215,11 @@ export default function Home() {
   const [savingBookId, setSavingBookId] = useState<string | null>(null);
   const [restoringBookId, setRestoringBookId] = useState<string | null>(null);
   const [editActionError, setEditActionError] = useState<string | null>(null);
-  const [moodFolders, setMoodFolders] = useState<MoodFolder[]>([]);
+  const [libraryLayout, setLibraryLayout] = useState<LibraryLayout>(EMPTY_LIBRARY_LAYOUT);
   const [pendingImportItems, setPendingImportItems] = useState<PendingImportItem[]>([]);
+  const [pendingFolderImport, setPendingFolderImport] = useState<PendingFolderImport | null>(null);
   const [pendingImportDescription, setPendingImportDescription] = useState<string | null>(null);
+  const [isImportChooserOpen, setIsImportChooserOpen] = useState(false);
   const [isImportingBatch, setIsImportingBatch] = useState(false);
   const [batchImportProgress, setBatchImportProgress] = useState({ completed: 0, failed: 0 });
   const [batchImportTiming, setBatchImportTiming] = useState<BatchImportTiming>({
@@ -142,9 +238,12 @@ export default function Home() {
       setIsLoading(true);
     }
     try {
-      const [loaded, folders] = await Promise.all([loadLibraryEntries(), loadFolders()]);
+      const [loaded, loadedLayout] = await Promise.all([
+        loadLibraryEntries(),
+        loadLibraryLayout(),
+      ]);
       setEntries(loaded);
-      setMoodFolders(folders);
+      setLibraryLayout(loadedLayout);
       setImportError(null);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Failed to load library");
@@ -206,12 +305,20 @@ export default function Home() {
     () => (editingBookId ? entryById.get(editingBookId) ?? null : null),
     [editingBookId, entryById]
   );
+  const busyBookIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (savingBookId) ids.add(savingBookId);
+    if (restoringBookId) ids.add(restoringBookId);
+    return ids;
+  }, [restoringBookId, savingBookId]);
   const libraryBooks: LibraryBook[] = useMemo(
     () =>
-      entries.map((entry) => ({
-        ...entry.libraryBook,
-        progressPercent: entry.progressPercent,
-      })),
+      entries
+        .filter((entry) => entry.processingStatus === "completed")
+        .map((entry) => ({
+          ...entry.libraryBook,
+          progressPercent: entry.progressPercent,
+        })),
     [entries]
   );
 
@@ -223,7 +330,17 @@ export default function Home() {
   }, [editingBookId, entryById]);
 
   const triggerImportPicker = () => {
+    setIsImportChooserOpen(false);
     fileInputRef.current?.click();
+  };
+
+  const openImportChooser = () => {
+    if (isImportingBatch) return;
+    if (!isNativeEpubFolderPickerAvailable()) {
+      triggerImportPicker();
+      return;
+    }
+    setIsImportChooserOpen(true);
   };
 
   const handleImportFiles = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -231,6 +348,7 @@ export default function Home() {
     if (!selectedFiles || selectedFiles.length === 0) return;
     const files = Array.from(selectedFiles);
     event.target.value = "";
+    setPendingFolderImport(null);
     setPendingImportItems(files.map((file) => ({
       kind: "file",
       name: file.name,
@@ -247,6 +365,7 @@ export default function Home() {
 
   const handleImportFolder = useCallback(async () => {
     if (isImportingBatch) return;
+    setIsImportChooserOpen(false);
     setImportError(null);
 
     try {
@@ -260,6 +379,7 @@ export default function Home() {
       }
       if (outcome.files.length === 0) {
         setPendingImportItems([]);
+        setPendingFolderImport(null);
         setPendingImportDescription(null);
         setBatchImportProgress({ completed: 0, failed: 0 });
         setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
@@ -267,13 +387,19 @@ export default function Home() {
         return;
       }
 
-      setPendingImportItems(outcome.files.map((file) => ({
+      const items: PendingImportItem[] = outcome.files.map((file) => ({
         kind: "native-folder-file",
         name: file.name,
         size: file.size,
         nativeFile: file,
-      })));
-      setPendingImportDescription("Android scanned the folder. Review the EPUBs before adding them to your library.");
+      }));
+      setPendingImportItems([]);
+      setPendingFolderImport({
+        sourceFolderName: outcome.folderName,
+        items,
+        preview: buildFolderImportPreview(outcome.files, outcome.folderName),
+      });
+      setPendingImportDescription(null);
       setBatchImportProgress({ completed: 0, failed: 0 });
       setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
       setLastImportSummary(null);
@@ -286,15 +412,22 @@ export default function Home() {
   const handleCancelPendingImport = useCallback(() => {
     if (isImportingBatch) return;
     setPendingImportItems([]);
+    setPendingFolderImport(null);
     setPendingImportDescription(null);
     setBatchImportProgress({ completed: 0, failed: 0 });
     setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
   }, [isImportingBatch]);
 
-  const handleStartPendingImport = useCallback(async () => {
-    if (pendingImportItems.length === 0 || isImportingBatch) return;
-    const totalPendingImports = pendingImportItems.length;
-    const totalBytes = pendingImportItems.reduce((sum, item) => sum + item.size, 0);
+  const runImportBatch = useCallback(async (
+    items: PendingImportItem[],
+    options?: {
+      onBookImported?: (bookId: string, item: PendingImportItem) => void | Promise<void>;
+      onBeforeRefresh?: () => void | Promise<void>;
+    }
+  ) => {
+    if (items.length === 0 || isImportingBatch) return;
+    const totalPendingImports = items.length;
+    const totalBytes = items.reduce((sum, item) => sum + item.size, 0);
     const startedAtMs = Date.now();
     const immediateFailures: string[] = [];
     const immediateFailedItems: PendingImportItem[] = [];
@@ -307,10 +440,13 @@ export default function Home() {
     setBatchImportTiming({ startedAtMs, elapsedMs: 0, processedBytes: 0 });
 
     try {
-      for (const item of pendingImportItems) {
+      await runWithLimitedConcurrency(items, BATCH_IMPORT_READ_CONCURRENCY, async (item) => {
         try {
-          const file = await loadPendingImportFile(item);
-          const bookId = await importService.importFromFile(file);
+          const payload = await loadPendingImportPayload(item);
+          const bookId = await importService.importFromBytes(payload, {
+            inlineSourceMode: "bounded",
+          });
+          await options?.onBookImported?.(bookId, item);
           trackedBooks.push({ bookId, item });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Import failed";
@@ -322,7 +458,7 @@ export default function Home() {
             elapsedMs: Date.now() - startedAtMs,
           }));
         }
-      }
+      });
 
       while (completedCount + failedCount < totalPendingImports) {
         const snapshot = await importService.listImportSnapshot();
@@ -369,6 +505,7 @@ export default function Home() {
         await delay(1000);
       }
 
+      await options?.onBeforeRefresh?.();
       await refreshLibrary({ showLoading: false });
     } finally {
       const elapsedMs = Date.now() - startedAtMs;
@@ -387,9 +524,6 @@ export default function Home() {
       });
     }
 
-    setPendingImportItems([]);
-    setPendingImportDescription(null);
-
     if (immediateFailures.length === 0) {
       setImportError(null);
       return;
@@ -401,7 +535,65 @@ export default function Home() {
     }
 
     setImportError(`${immediateFailures.length} of ${totalPendingImports} imports failed. First error: ${immediateFailures[0]}`);
-  }, [importService, isImportingBatch, pendingImportItems, refreshLibrary]);
+  }, [importService, isImportingBatch, refreshLibrary]);
+
+  const handleStartPendingImport = useCallback(async () => {
+    if (pendingImportItems.length === 0 || isImportingBatch) return;
+    try {
+      await runImportBatch(pendingImportItems);
+      setPendingImportItems([]);
+      setPendingImportDescription(null);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Import failed");
+    }
+  }, [isImportingBatch, pendingImportItems, runImportBatch]);
+
+  const handleStartFolderImport = useCallback(async (keptBookIds: string[]) => {
+    if (!pendingFolderImport || isImportingBatch) return;
+    const selectedIdSet = new Set(keptBookIds);
+    const keptBooks = flattenFolderImportBooks(pendingFolderImport.preview.root).filter((book) =>
+      selectedIdSet.has(book.id)
+    );
+    if (keptBooks.length === 0) return;
+
+    const selectedItems: PendingImportItem[] = [];
+    for (const book of keptBooks) {
+      const item = pendingFolderImport.items[book.sourceIndex];
+      if (item) {
+        selectedItems.push(item);
+      }
+    }
+    const baseLayout = await loadLibraryLayout();
+    const prepared = prepareFolderImportLayout(
+      baseLayout,
+      pendingFolderImport.sourceFolderName,
+      keptBooks
+    );
+    let nextLayout = prepared.layout;
+    const folderIdByItem = new Map<PendingImportItem, string>();
+    for (const book of keptBooks) {
+      const item = pendingFolderImport.items[book.sourceIndex];
+      if (!item) continue;
+      folderIdByItem.set(
+        item,
+        prepared.folderIdByPath.get(folderPathKey(book.folderPath)) ?? prepared.folderIdByPath.get(folderPathKey([]))!
+      );
+    }
+
+    try {
+      await runImportBatch(selectedItems, {
+        onBookImported: (bookId, item) => {
+          nextLayout = moveBookToFolder(nextLayout, bookId, folderIdByItem.get(item) ?? null);
+        },
+        onBeforeRefresh: async () => {
+          await saveLibraryLayout(nextLayout);
+        },
+      });
+      setPendingFolderImport(null);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Folder import failed");
+    }
+  }, [isImportingBatch, pendingFolderImport, runImportBatch]);
 
   const handleOpenOrRetry = useCallback(
     async (entry: LibraryEntry) => {
@@ -488,6 +680,45 @@ export default function Home() {
     }
   }, [editingBookId, importService, refreshLibrary]);
 
+  const handleLibraryLayoutChange = useCallback(async (nextLayout: LibraryLayout) => {
+    setLibraryLayout(nextLayout);
+    try {
+      await saveLibraryLayout(nextLayout);
+      setImportError(null);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Failed to save library folders");
+      await refreshLibrary({ showLoading: false });
+    }
+  }, [refreshLibrary]);
+
+  const handleCreateLibraryFolder = useCallback((parentId: string | null) => {
+    const created = addLibraryFolder(libraryLayout, {
+      label: "New folder",
+      parentId,
+      color: "cyan",
+      insertAt: "top",
+    });
+    void handleLibraryLayoutChange(created.layout);
+  }, [handleLibraryLayoutChange, libraryLayout]);
+
+  const handleDeleteLibraryFolderOnly = useCallback((folderId: string) => {
+    void handleLibraryLayoutChange(deleteLibraryFolderOnly(libraryLayout, folderId));
+  }, [handleLibraryLayoutChange, libraryLayout]);
+
+  const handleDeleteLibraryFolderWithContents = useCallback(async (folderId: string) => {
+    const result = deleteLibraryFolderWithContents(libraryLayout, folderId);
+    try {
+      for (const bookId of result.removedBookIds) {
+        await importService.deleteBook(bookId);
+      }
+      await handleLibraryLayoutChange(result.layout);
+      await refreshLibrary({ showLoading: false });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Failed to delete folder contents");
+      await refreshLibrary({ showLoading: false });
+    }
+  }, [handleLibraryLayoutChange, importService, libraryLayout, refreshLibrary]);
+
   return (
     <main className="min-h-screen flex flex-col items-center px-4 py-8 bg-neutral-950 text-neutral-100 relative overflow-hidden">
       <BackgroundDecoration />
@@ -551,25 +782,14 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, delay: 0.35 }}
           >
-            <div className={`mx-auto grid gap-2 ${isNativeEpubFolderPickerAvailable() ? "grid-cols-2 max-w-sm" : "max-w-xs"}`}>
+            <div className="mx-auto max-w-xs">
               <button
                 type="button"
-                onClick={triggerImportPicker}
-                className="rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors"
+                onClick={openImportChooser}
+                className="w-full rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors"
               >
-                Import EPUB
+                Import
               </button>
-              {isNativeEpubFolderPickerAvailable() ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleImportFolder();
-                  }}
-                  className="rounded-xl border border-cyan-400/35 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 transition-colors"
-                >
-                  Import folder
-                </button>
-              ) : null}
             </div>
           </motion.div>
         </motion.header>
@@ -605,7 +825,7 @@ export default function Home() {
                     view === "mood" ? "text-neutral-900" : "text-neutral-400"
                   }`}
                 >
-                  Mood
+                  Moods
                 </span>
               </button>
               <button
@@ -637,7 +857,7 @@ export default function Home() {
           </div>
         </motion.div>
 
-        {lastImportSummary && pendingImportItems.length === 0 ? (
+        {lastImportSummary && pendingImportItems.length === 0 && !pendingFolderImport ? (
           <section className="rounded-2xl border border-emerald-400/25 bg-neutral-900/75 p-4 shadow-xl shadow-black/20">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -685,6 +905,56 @@ export default function Home() {
           />
         ) : null}
 
+        {pendingFolderImport ? (
+          <NestedPickPrune
+            root={pendingFolderImport.preview.root}
+            title={`Review ${pendingFolderImport.sourceFolderName}`}
+            description="Everything is selected. Remove books or folders you do not want before importing."
+            confirmLabel="Import selected"
+            isBusy={isImportingBatch}
+            onCancel={handleCancelPendingImport}
+            onConfirm={(keptBookIds) => {
+              void handleStartFolderImport(keptBookIds);
+            }}
+          />
+        ) : null}
+
+        {isImportChooserOpen ? (
+          <div className="fixed inset-0 z-50 flex items-end bg-black/55 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+            <button
+              type="button"
+              aria-label="Close import chooser"
+              className="absolute inset-0"
+              onClick={() => setIsImportChooserOpen(false)}
+            />
+            <div className="relative w-full rounded-2xl border border-neutral-800 bg-neutral-900 p-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] shadow-2xl shadow-black/60">
+              <button
+                type="button"
+                onClick={triggerImportPicker}
+                className="w-full rounded-xl px-4 py-3 text-left text-sm font-semibold text-neutral-100 hover:bg-neutral-800 transition-colors"
+              >
+                EPUB files
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleImportFolder();
+                }}
+                className="mt-1 w-full rounded-xl px-4 py-3 text-left text-sm font-semibold text-neutral-100 hover:bg-neutral-800 transition-colors"
+              >
+                Folder
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsImportChooserOpen(false)}
+                className="mt-2 w-full rounded-xl border border-neutral-700 px-4 py-2.5 text-sm font-semibold text-neutral-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {/* Book Section */}
         {view === "library" ? (
           <motion.section
@@ -704,81 +974,32 @@ export default function Home() {
               Your Library
             </motion.h2>
 
-            <div className="space-y-4">
-              {isLoading ? (
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 text-sm text-neutral-400">
-                  Loading library…
-                </div>
-              ) : entries.length === 0 ? (
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-4 text-sm text-neutral-400">
-                  No books yet. Import an EPUB to start reading.
-                </div>
-              ) : (
-                entries.map((entry, index) => {
-                  const canDelete =
-                    entry.processingStatus === "completed" || entry.processingStatus === "failed";
-                  const canEdit =
-                    entry.processingStatus === "completed" || entry.processingStatus === "failed";
-                  const isDeleting = deletingBookId === entry.id;
-                  const isEditingBusy =
-                    savingBookId === entry.id || restoringBookId === entry.id;
-                  return (
-                    <BookCard
-                      key={entry.id}
-                      title={entry.title}
-                      author={entry.author}
-                      genre={entry.libraryBook.genre}
-                      description={entry.libraryBook.description}
-                      coverUrl={entry.coverUrl}
-                      readLabel={
-                        entry.processingStatus === "completed"
-                          ? entry.progressPercent > 0
-                            ? "Resume"
-                            : "Read"
-                          : entry.processingStatus === "failed"
-                          ? "Retry import"
-                          : entry.processingStatusLabel
-                      }
-                      readDisabled={
-                        (entry.processingStatus !== "completed" && entry.processingStatus !== "failed") ||
-                        isDeleting ||
-                        isEditingBusy
-                      }
-                      editLabel={isEditingBusy ? "Working..." : "Edit"}
-                      editDisabled={isDeleting || isEditingBusy}
-                      onEdit={
-                        canEdit
-                          ? () => {
-                              handleOpenEdit(entry);
-                            }
-                          : undefined
-                      }
-                      deleteLabel={isDeleting ? "Deleting..." : "Delete"}
-                      deleteDisabled={isDeleting || isEditingBusy}
-                      onDelete={
-                        canDelete
-                          ? () => {
-                              void handleDelete(entry);
-                            }
-                          : undefined
-                      }
-                      statusBadge={entry.processingStatus !== "completed" ? entry.processingStatusLabel : undefined}
-                      progress={entry.progressPercent}
-                      folderColor={getFolderColorForBook(moodFolders, entry.id)}
-                      onRead={() => {
-                        void handleOpenOrRetry(entry);
-                      }}
-                      index={index}
-                    />
-                  );
-                })
-              )}
-            </div>
+            <LibraryTreeView
+              entries={entries}
+              layout={libraryLayout}
+              isLoading={isLoading}
+              deletingBookId={deletingBookId}
+              busyBookIds={busyBookIds}
+              onLayoutChange={handleLibraryLayoutChange}
+              onCreateFolder={handleCreateLibraryFolder}
+              onDeleteFolderOnly={handleDeleteLibraryFolderOnly}
+              onDeleteFolderWithContents={(folderId) => {
+                void handleDeleteLibraryFolderWithContents(folderId);
+              }}
+              onOpenBook={(entry) => {
+                void handleOpenOrRetry(entry);
+              }}
+              onEditBook={handleOpenEdit}
+              onDeleteBook={(entry) => {
+                void handleDelete(entry);
+              }}
+            />
           </motion.section>
         ) : (
           <section id="home-panel-mood" role="tabpanel" aria-labelledby="home-tab-mood">
             <MoodView
               books={libraryBooks}
+              libraryLayout={libraryLayout}
               onOpenBook={(bookId) => {
                 const entry = entryById.get(bookId);
                 if (!entry) return;

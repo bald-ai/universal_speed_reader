@@ -6,4 +6,10 @@
   without touching callers.
 */
 export { __epubParserInternals, parseEpubBytes } from "./extractor";
-export type { ParseEpubOptions, ParsedChapter, ParsedEpubResult, ParsePhase } from "./extractor";
+export type {
+  ParseEpubOptions,
+  ParsedChapter,
+  ParsedEpubImage,
+  ParsedEpubResult,
+  ParsePhase,
+} from "./extractor";

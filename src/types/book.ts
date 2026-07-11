@@ -10,6 +10,14 @@ export type Chapter = {
   startParagraphId: number;
 };
 
+/** Sidecar image block for normal reading; anchored after a paragraph (0 = before first). */
+export type BookImage = {
+  id: string;
+  afterParagraphId: number;
+  alt: string | null;
+  src: string;
+};
+
 export type Book = {
   id: string;
   title: string;
@@ -17,6 +25,7 @@ export type Book = {
   coverUrl?: string;
   paragraphs: Paragraph[];
   chapters: Chapter[];
+  images: BookImage[];
   totalWords: number;
 };
 
@@ -26,15 +35,13 @@ export type LibraryBook = Pick<Book, "id" | "title" | "author" | "coverUrl"> & {
   genre: string;
   description: string;
   progressPercent: number;
-  isMock?: boolean;
 };
 
-export type MoodFolder = {
+export type Mood = {
   id: string;
   label: string;
   icon?: string;
   color?: string;
   imageUrl?: string;
   bookIds: string[];
-  isMock?: boolean;
 };

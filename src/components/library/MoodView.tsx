@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
+import AddLibraryFolderToMoodSheet from "@/components/library/AddLibraryFolderToMoodSheet";
 import {
   DndContext,
   closestCenter,
@@ -15,13 +16,15 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { LibraryBook, MoodFolder } from "@/types/book";
-import { getUnassignedBooks, loadFolders, loadRecent, saveFolders, setRecent } from "@/lib/moodStore";
+import type { LibraryBook, Mood } from "@/types/book";
+import type { LibraryLayout } from "@/types/libraryLayout";
+import { addBookIdsToMood, loadMoods, loadRecent, saveMoods, setRecent } from "@/lib/moodStore";
 import { MOOD_ICONS, getIconEmoji } from "@/lib/moodIcons";
 import { getBookCoverPlaceholder } from "@/lib/library/coverPlaceholders";
 
 type MoodViewProps = {
   books: LibraryBook[];
+  libraryLayout: LibraryLayout;
   onOpenBook: (bookId: string) => void;
 };
 
@@ -40,7 +43,7 @@ const FOLDER_COLORS = [
 
 const DEFAULT_FOLDER_COLOR = "violet";
 
-const iconKeyForFolder = (folder: MoodFolder): string | undefined => {
+const iconKeyForFolder = (folder: Mood): string | undefined => {
   if (folder.icon) return folder.icon;
   const k = folder.label.trim().toLowerCase();
   if (k === "tired") return "moon";
@@ -50,7 +53,7 @@ const iconKeyForFolder = (folder: MoodFolder): string | undefined => {
   return undefined;
 };
 
-const iconForFolder = (folder: MoodFolder): string => {
+const iconForFolder = (folder: Mood): string => {
   const fromStore = getIconEmoji(folder.icon);
   if (fromStore) return fromStore;
   const k = folder.label.trim().toLowerCase();
@@ -61,22 +64,11 @@ const iconForFolder = (folder: MoodFolder): string => {
   return "\uD83D\uDCDA";
 };
 
-const folderTheme = (folder: MoodFolder) => {
+const folderTheme = (folder: Mood) => {
   const emoji = iconForFolder(folder);
   const colorKey = folder.color ?? DEFAULT_FOLDER_COLOR;
   const palette = FOLDER_COLORS.find((c) => c.key === colorKey) ?? FOLDER_COLORS.find((c) => c.key === DEFAULT_FOLDER_COLOR)!;
   return { ...palette, emoji };
-};
-
-const gradientForFolder = (folder: MoodFolder): string => folderTheme(folder).swatch;
-
-const genreChipTheme = (genre: string | undefined) => {
-  const g = (genre ?? "").toLowerCase();
-  if (g === "romance") return "border-rose-500/30 bg-rose-500/10 text-rose-200";
-  if (g === "science") return "border-sky-500/30 bg-sky-500/10 text-sky-200";
-  if (g === "fantasy") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
-  if (g === "casual nonfiction") return "border-lime-500/30 bg-lime-500/10 text-lime-200";
-  return "border-violet-500/30 bg-violet-500/10 text-violet-200";
 };
 
 function MoodBookCover(props: { coverUrl?: string; progressPercent: number; title: string }) {
@@ -107,86 +99,6 @@ function MoodBookCover(props: { coverUrl?: string; progressPercent: number; titl
         onError={coverUrl && !coverLoadFailed ? () => setCoverLoadFailed(true) : undefined}
       />
     </div>
-  );
-}
-
-function FolderPicker(props: {
-  folders: MoodFolder[];
-  book: LibraryBook;
-  onToggleInFolder: (folderId: string, bookId: string) => void;
-  open: boolean;
-  onClose: () => void;
-}) {
-  const { folders, book, onToggleInFolder, open, onClose } = props;
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (ref.current.contains(e.target as Node)) return;
-      onClose();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  return (
-    <>
-      <button
-        type="button"
-        aria-label="Close folder picker"
-        onClick={onClose}
-        className="fixed inset-0 z-40 bg-black/45 sm:hidden"
-      />
-
-      <div
-        ref={ref}
-        className="fixed inset-x-3 bottom-0 z-50 rounded-t-2xl border border-neutral-800 bg-neutral-900 shadow-xl shadow-black/50
-          overflow-hidden flex flex-col sm:absolute sm:inset-x-auto sm:right-0 sm:top-[calc(100%+8px)] sm:bottom-auto sm:z-30
-          sm:w-56 sm:rounded-xl"
-        style={{
-          maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - 12px)",
-          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
-        }}
-      >
-        <div className="px-3 py-2 border-b border-neutral-800 flex items-center justify-between">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
-            Add to folder
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="sm:hidden text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
-          >
-            Close
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto max-h-[min(58dvh,22rem)] sm:max-h-64">
-          {folders.map((f) => {
-            const checked = f.bookIds.includes(book.id);
-            return (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => onToggleInFolder(f.id, book.id)}
-                className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-neutral-800 transition-colors"
-              >
-                <div className={`h-7 w-7 rounded-lg ${gradientForFolder(f)} border border-neutral-700`} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-neutral-100 truncate">{f.label}</div>
-                </div>
-                <div className="w-5 text-right text-neutral-300">
-                  {checked ? "✓" : ""}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -376,14 +288,84 @@ function FolderBookPickerOverlay(props: {
   );
 }
 
+function AddBookToMoodSheet(props: {
+  mood: Mood;
+  books: LibraryBook[];
+  onClose: () => void;
+  onAddBook: (moodId: string, bookId: string) => void;
+}) {
+  const { mood, books, onClose, onAddBook } = props;
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredBooks = useMemo(() => {
+    if (!normalizedQuery) return books;
+    return books.filter((book) => {
+      const author = book.author ?? "";
+      return book.title.toLowerCase().includes(normalizedQuery) || author.toLowerCase().includes(normalizedQuery);
+    });
+  }, [books, normalizedQuery]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/55 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+      <div className="max-h-[82dvh] w-full overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl shadow-black/60">
+        <div className="border-b border-neutral-800 p-4">
+          <div className="text-sm font-semibold text-neutral-100">Add book to {mood.label}</div>
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search books..."
+            className="mt-3 w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-violet-400/60"
+          />
+        </div>
+        <div className="max-h-[58dvh] overflow-auto p-2">
+          {filteredBooks.length === 0 ? (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-3 text-sm text-neutral-500">
+              No books found.
+            </div>
+          ) : (
+            filteredBooks.map((book) => {
+              const alreadyInMood = mood.bookIds.includes(book.id);
+              return (
+                <button
+                  key={book.id}
+                  type="button"
+                  disabled={alreadyInMood}
+                  onClick={() => {
+                    onAddBook(mood.id, book.id);
+                    onClose();
+                  }}
+                  className="mb-1 flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold text-neutral-100">{book.title}</span>
+                    <span className="block truncate text-xs text-neutral-500">{book.author ?? "Unknown author"}</span>
+                  </span>
+                  <span className="shrink-0 text-xs text-neutral-500">{alreadyInMood ? "Already there" : "Add"}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <div className="border-t border-neutral-800 p-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+          <button type="button" onClick={onClose} className="w-full rounded-xl border border-neutral-700 px-4 py-2 text-sm font-semibold text-neutral-300">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MoodView(props: MoodViewProps) {
-  const { books, onOpenBook } = props;
-  const [folders, setFolders] = useState<MoodFolder[]>([]);
+  const { books, libraryLayout, onOpenBook } = props;
+  const [folders, setFolders] = useState<Mood[]>([]);
   const [recent, setRecentMap] = useState<Record<string, string>>({});
   const [newEditId, setNewEditId] = useState<string | null>(null);
-  const [pickerFor, setPickerFor] = useState<string | null>(null); // bookId
+  const [addingFolderToMoodId, setAddingFolderToMoodId] = useState<string | null>(null);
+  const [addingBookToMoodId, setAddingBookToMoodId] = useState<string | null>(null);
   const [persistError, setPersistError] = useState<string | null>(null);
-  const foldersRef = useRef<MoodFolder[]>([]);
+  const foldersRef = useRef<Mood[]>([]);
   const folderMutationIdRef = useRef(0);
   const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -391,7 +373,7 @@ export default function MoodView(props: MoodViewProps) {
     let cancelled = false;
     (async () => {
       try {
-        const [loadedFolders, loadedRecent] = await Promise.all([loadFolders(), loadRecent()]);
+        const [loadedFolders, loadedRecent] = await Promise.all([loadMoods(), loadRecent()]);
         if (cancelled) return;
         foldersRef.current = loadedFolders;
         setFolders(loadedFolders);
@@ -399,7 +381,7 @@ export default function MoodView(props: MoodViewProps) {
         setPersistError(null);
       } catch (error) {
         if (!cancelled) {
-          setPersistError(error instanceof Error ? error.message : "Failed to load folders");
+          setPersistError(error instanceof Error ? error.message : "Failed to load moods");
         }
       }
     })();
@@ -414,14 +396,12 @@ export default function MoodView(props: MoodViewProps) {
 
   const bookById = useMemo(() => new Map(books.map((b) => [b.id, b])), [books]);
 
-  const unassigned = useMemo(() => getUnassignedBooks(folders, books), [folders, books]);
-
   const persistFoldersWithRollback = useCallback(
-    (next: MoodFolder[], previous: MoodFolder[], mutationId: number) => {
+    (next: Mood[], previous: Mood[], mutationId: number) => {
       persistQueueRef.current = persistQueueRef.current
         .then(async () => {
           try {
-            await saveFolders(next);
+            await saveMoods(next);
             if (folderMutationIdRef.current === mutationId) {
               setPersistError(null);
             }
@@ -430,7 +410,7 @@ export default function MoodView(props: MoodViewProps) {
               foldersRef.current = previous;
               setFolders(previous);
             }
-            setPersistError(error instanceof Error ? error.message : "Failed to save folders");
+            setPersistError(error instanceof Error ? error.message : "Failed to save moods");
           }
         })
         .catch(() => undefined);
@@ -439,7 +419,7 @@ export default function MoodView(props: MoodViewProps) {
   );
 
   const applyFolderMutation = useCallback(
-    (mutate: (current: MoodFolder[]) => MoodFolder[]) => {
+    (mutate: (current: Mood[]) => Mood[]) => {
       const previous = foldersRef.current;
       const next = mutate(previous);
       if (next === previous) return;
@@ -509,9 +489,15 @@ export default function MoodView(props: MoodViewProps) {
     });
   }, [applyFolderMutation]);
 
+  const addBooksToMood = useCallback((folderId: string, bookIds: string[]) => {
+    applyFolderMutation((current) => {
+      return addBookIdsToMood(current, folderId, bookIds);
+    });
+  }, [applyFolderMutation]);
+
   const createFolder = useCallback(() => {
     const id = `mood-${Date.now().toString(36)}`;
-    const f: MoodFolder = { id, label: "New Folder", color: DEFAULT_FOLDER_COLOR, bookIds: [] };
+    const f: Mood = { id, label: "New Mood", color: DEFAULT_FOLDER_COLOR, bookIds: [] };
     applyFolderMutation((current) => [...current, f]);
     setNewEditId(id);
   }, [applyFolderMutation]);
@@ -548,6 +534,12 @@ export default function MoodView(props: MoodViewProps) {
   }, [applyFolderMutation]);
 
   const folderIds = useMemo(() => folders.map((f) => f.id), [folders]);
+  const moodForFolderImport = addingFolderToMoodId
+    ? folders.find((folder) => folder.id === addingFolderToMoodId) ?? null
+    : null;
+  const moodForBookImport = addingBookToMoodId
+    ? folders.find((folder) => folder.id === addingBookToMoodId) ?? null
+    : null;
 
   return (
    <motion.section
@@ -581,6 +573,12 @@ export default function MoodView(props: MoodViewProps) {
                onDeleteFolder={(folderId) => {
                  deleteFolder(folderId);
                }}
+               onAddLibraryFolder={(folderId) => {
+                 setAddingFolderToMoodId(folderId);
+               }}
+               onAddBook={(folderId) => {
+                 setAddingBookToMoodId(folderId);
+               }}
              />
            ))}
          </div>
@@ -595,7 +593,7 @@ export default function MoodView(props: MoodViewProps) {
         className="w-full rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/20 px-4 py-4 text-sm text-neutral-500
           hover:border-violet-500/40 hover:text-violet-400 transition-colors"
       >
-        + New Folder
+        + New Mood
       </button>
 
       {persistError ? (
@@ -604,67 +602,29 @@ export default function MoodView(props: MoodViewProps) {
         </div>
       ) : null}
 
-      <div className="pt-2">
-        <div className="text-xs uppercase tracking-[0.2em] text-neutral-500 mb-3 px-1">
-          Unassigned
-        </div>
-
-        <div className="space-y-2">
-          {unassigned.length === 0 ? (
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 text-sm text-neutral-500">
-              All books are in at least one folder.
-            </div>
-          ) : (
-            unassigned.map((b) => (
-              <div
-                key={b.id}
-                className="relative rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900/95 to-neutral-800/90 px-4 py-3 shadow-lg shadow-black/40"
-              >
-                <div className="grid grid-cols-[1fr_auto] items-center gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-neutral-100 truncate">{b.title}</div>
-                      </div>
-                      <span
-                        className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wider ${genreChipTheme(
-                          b.genre
-                        )}`}
-                      >
-                        {b.genre}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-neutral-400 truncate">{b.author ?? "Unknown author"}</div>
-                  </div>
-
-                  <div className="relative justify-self-end">
-                    <button
-                      type="button"
-                      onClick={() => setPickerFor((cur) => (cur === b.id ? null : b.id))}
-                      className="rounded-xl border border-neutral-700 bg-neutral-900/60 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900 transition-colors"
-                    >
-                      Add to folder
-                    </button>
-                    <FolderPicker
-                      folders={folders}
-                      book={b}
-                      open={pickerFor === b.id}
-                      onClose={() => setPickerFor(null)}
-                      onToggleInFolder={toggleBookInFolder}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+      {moodForFolderImport ? (
+        <AddLibraryFolderToMoodSheet
+          mood={moodForFolderImport}
+          books={books}
+          layout={libraryLayout}
+          onClose={() => setAddingFolderToMoodId(null)}
+          onConfirm={addBooksToMood}
+        />
+      ) : null}
+      {moodForBookImport ? (
+        <AddBookToMoodSheet
+          mood={moodForBookImport}
+          books={books}
+          onClose={() => setAddingBookToMoodId(null)}
+          onAddBook={(moodId, bookId) => addBooksToMood(moodId, [bookId])}
+        />
+      ) : null}
     </motion.section>
   );
 }
 
 function FolderCard(props: {
-  folder: MoodFolder;
+  folder: Mood;
   bookById: Map<string, LibraryBook>;
   recentBookId: string | undefined;
   onOpenRecent: (folderId: string, bookId: string) => void;
@@ -675,6 +635,8 @@ function FolderCard(props: {
   onConsumeEditMode: () => void;
   onCommitEdit: (folderId: string, label: string, icon?: string, color?: string) => void;
   onDeleteFolder: (folderId: string) => void;
+  onAddLibraryFolder: (folderId: string) => void;
+  onAddBook: (folderId: string) => void;
 }) {
   const {
     folder,
@@ -688,6 +650,8 @@ function FolderCard(props: {
     onConsumeEditMode,
     onCommitEdit,
     onDeleteFolder,
+    onAddLibraryFolder,
+    onAddBook,
   } = props;
 
   const [menuState, setMenuState] = useState<LocalMenuState>(startInEditMode ? "edit" : "closed");
@@ -781,7 +745,7 @@ function FolderCard(props: {
               }}
               disabled={searchDisabled}
               className="flex h-6 w-6 items-center justify-center rounded-md bg-white/5 text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Browse folder books"
+              aria-label="Browse mood books"
             >
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -794,7 +758,7 @@ function FolderCard(props: {
                 setMenuState(isMenuOpen ? "closed" : "menu");
               }}
               className="h-6 w-6 rounded-md bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-neutral-200 text-xs transition-colors flex items-center justify-center"
-              aria-label="Folder menu"
+              aria-label="Mood menu"
             >
               &#x22EF;
             </button>
@@ -808,6 +772,26 @@ function FolderCard(props: {
                   transition={{ duration: 0.15 }}
                   className="absolute right-0 top-[calc(100%+6px)] z-20 w-36 rounded-xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-xl shadow-black/50 overflow-hidden"
                 >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddLibraryFolder(folder.id);
+                      setMenuState("closed");
+                    }}
+                    className="w-full px-3 py-2 text-left text-xs text-neutral-200 hover:bg-white/5 transition-colors"
+                  >
+                    Add folder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddBook(folder.id);
+                      setMenuState("closed");
+                    }}
+                    className="w-full px-3 py-2 text-left text-xs text-neutral-200 hover:bg-white/5 transition-colors"
+                  >
+                    Add book
+                  </button>
                   {bookCount > 0 && (
                     <button
                       type="button"
@@ -853,8 +837,7 @@ function FolderCard(props: {
                 transition={{ duration: 0.2 }}
                 type="button"
                 onClick={() => onOpenRecent(folder.id, selectedBook.id)}
-                disabled={!!selectedBook.isMock}
-                className="flex flex-1 flex-col rounded-xl border border-white/5 bg-black/20 px-3 py-3 text-left transition-all duration-150 hover:border-white/10 hover:bg-black/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:hover:border-white/5 disabled:hover:bg-black/20 disabled:active:scale-100"
+                className="flex flex-1 flex-col rounded-xl border border-white/5 bg-black/20 px-3 py-3 text-left transition-all duration-150 hover:border-white/10 hover:bg-black/30 active:scale-[0.98]"
               >
                 <MoodBookCover
                   coverUrl={selectedBook.coverUrl}
@@ -922,7 +905,7 @@ function FolderCard(props: {
                       if (e.key === "Enter") { onCommitEdit(folder.id, renameDraft, iconDraft, colorDraft); setMenuState("closed"); }
                       if (e.key === "Escape") setMenuState("closed");
                     }}
-                    placeholder="Folder name"
+                    placeholder="Mood name"
                     className="flex-1 min-w-0 rounded-lg bg-black/30 border border-white/10 text-neutral-100 px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-white/20 transition-colors"
                   />
                 </div>
@@ -1019,7 +1002,7 @@ function FolderCard(props: {
                         type="button"
                         onClick={() => onToggleBook(b.id)}
                         className="shrink-0 h-5 w-5 rounded-md bg-white/5 hover:bg-red-500/20 text-neutral-500 hover:text-red-300 text-[10px] transition-colors flex items-center justify-center"
-                        aria-label="Remove from folder"
+                        aria-label="Remove from mood"
                       >
                         &#x2715;
                       </button>
@@ -1041,9 +1024,9 @@ function FolderCard(props: {
               className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm rounded-2xl px-4"
             >
               <div className="text-sm text-neutral-200 text-center">
-                Remove <span className="font-semibold">{folder.label}</span>?
+                Remove mood <span className="font-semibold">{folder.label}</span>?
               </div>
-              <div className="text-[11px] text-neutral-400 mt-1 text-center">Books return to unassigned</div>
+              <div className="text-[11px] text-neutral-400 mt-1 text-center">Books stay in your Library.</div>
               <div className="mt-4 flex items-center gap-2">
                 <button
                   type="button"

@@ -38,6 +38,7 @@ describe("book repository integration", () => {
         "app_settings",
         "book_chapters",
         "book_chunks",
+        "book_images",
         "books",
         "import_jobs",
         "reading_progress",
@@ -110,6 +111,7 @@ describe("book repository integration", () => {
           start_paragraph_id: 1,
         },
       ],
+      images: [],
       total_chunks: 1,
       total_paragraphs: 2,
       total_words: 4,
@@ -136,6 +138,15 @@ describe("book repository integration", () => {
           start_paragraph_id: 1,
         },
       ],
+      images: [
+        {
+          book_id: bookId,
+          image_index: 0,
+          after_paragraph_id: 1,
+          alt: "Illustration",
+          src: "data:image/png;base64,abc",
+        },
+      ],
       total_chunks: 2,
       total_paragraphs: 2,
       total_words: 4,
@@ -146,6 +157,22 @@ describe("book repository integration", () => {
     expect(aggregate?.chunks[0]?.paragraphs_json[0]?.text).toBe("new one");
     expect(aggregate?.chapters.length).toBe(1);
     expect(aggregate?.chapters[0]?.title).toBe("New chapter");
+    expect(aggregate?.images.length).toBe(1);
+    expect(aggregate?.images[0]?.src).toBe("data:image/png;base64,abc");
+
+    const readable = await repository.getReadableBook(bookId);
+    expect(readable).toBeNull();
+
+    await repository.setBookStatus(bookId, "completed");
+    const completed = await repository.getReadableBook(bookId);
+    expect(completed?.book.images).toEqual([
+      {
+        id: `${bookId}-img-0`,
+        afterParagraphId: 1,
+        alt: "Illustration",
+        src: "data:image/png;base64,abc",
+      },
+    ]);
   });
 
   it("keeps failed import errors and attempt history across retries", async () => {
