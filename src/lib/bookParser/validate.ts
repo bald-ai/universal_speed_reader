@@ -21,6 +21,7 @@ export function validateParserOutput(output: ParserOutput): ValidationResult {
 
   validateText(book, generated);
   validateParagraphIds(book, generated);
+  validateSceneBreaks(book, generated);
   validateChapters(book, generated);
   validateCover(book, generated);
   validateImages(book, internals.declaredImageCount, generated);
@@ -32,6 +33,34 @@ export function validateParserOutput(output: ParserOutput): ValidationResult {
     pass: diagnostics.every((diagnostic) => diagnostic.severity !== "failure"),
     diagnostics,
   };
+}
+
+function validateSceneBreaks(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
+  const breaks = book.paragraphs.filter((paragraph) => paragraph.sceneBreakBefore !== undefined);
+  const invalid = breaks.filter((paragraph) => paragraph.id <= 1).length;
+  if (invalid > 0) {
+    diagnostics.push(failure("Bad paragraph IDs", `${invalid} scene breaks are not anchored between real paragraphs.`));
+  }
+
+  const rawOrnaments = book.paragraphs.filter((paragraph) => {
+    const text = normalizeText(paragraph.text);
+    if (/[\p{L}\p{N}]/u.test(text)) return false;
+    return (text.match(/[\*\u2042\u2022\u25C6\u25C7\u25CA\u2766\u2767\u00B7]/gu)?.length ?? 0) >= 3;
+  }).length;
+  if (rawOrnaments > 0) {
+    const diagnostic = rawOrnaments >= 20 && rawOrnaments / Math.max(book.paragraphs.length, 1) > 0.02
+      ? failure("No / unusable text", `${rawOrnaments} isolated scene ornaments leaked into readable paragraphs.`)
+      : warning("No / unusable text", `${rawOrnaments} isolated ornament paragraph${rawOrnaments === 1 ? "" : "s"} should be manually reviewed.`);
+    diagnostics.push(diagnostic);
+  }
+
+  const impossibleDensity = breaks.length > 20 && breaks.length / Math.max(book.paragraphs.length, 1) > 0.35;
+  if (impossibleDensity) {
+    diagnostics.push(failure(
+      "No / unusable text",
+      `Scene-boundary density is implausible: ${breaks.length} breaks across ${book.paragraphs.length} paragraphs.`,
+    ));
+  }
 }
 
 function validateText(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
@@ -179,7 +208,8 @@ function validateTotals(book: ParsedBook, diagnostics: ParserDiagnostic[]): void
   const mismatch = book.totals.words !== actualWords
     || book.totals.paragraphs !== book.paragraphs.length
     || book.totals.chapters !== book.chapters.length
-    || book.totals.images !== book.images.length;
+    || book.totals.images !== book.images.length
+    || book.totals.sceneBreaks !== book.paragraphs.filter((paragraph) => paragraph.sceneBreakBefore !== undefined).length;
   if (mismatch) {
     diagnostics.push(failure("Other", "Output totals do not match the emitted model arrays."));
   }

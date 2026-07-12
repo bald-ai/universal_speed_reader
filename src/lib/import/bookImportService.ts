@@ -775,6 +775,8 @@ export class BookImportService {
         parsed.book.chapters.map((chapter) => ({
           title: chapter.title,
           start_paragraph_id: chapter.startParagraphId,
+          kind: chapter.kind,
+          level: chapter.level,
         }))
       );
       await ensureNotCancelled();

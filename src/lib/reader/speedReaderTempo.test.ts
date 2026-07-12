@@ -104,6 +104,37 @@ describe("speedReaderTempo", () => {
     expect(commaBreak).toBe(DEFAULT_SPEED_READER_TEMPO.commaBreakMs);
   });
 
+  it("pauses longer for a scene than a paragraph and shorter than a chapter", () => {
+    const book = makeBook();
+    book.paragraphs[1] = { ...book.paragraphs[1], sceneBreakBefore: "text-ornament" };
+    const pause = getStructuralPauseMs({
+      book,
+      currentPosition: { paragraphId: 1, wordIndex: 1 },
+      currentWord: "sentence.",
+      nextPosition: { paragraphId: 2, wordIndex: 0 },
+      tempo: DEFAULT_SPEED_READER_TEMPO,
+    });
+    expect(pause).toBeGreaterThan(DEFAULT_SPEED_READER_TEMPO.paragraphBreakMs);
+    expect(pause).toBeLessThan(DEFAULT_SPEED_READER_TEMPO.chapterBreakMs);
+  });
+
+  it("uses scene pacing when RSVP enters a named scene navigation entry", () => {
+    const book = makeBook();
+    book.chapters = [
+      { index: 0, title: "Act One", startParagraphId: 1, kind: "part" },
+      { index: 1, title: "SCENE I", startParagraphId: 2, kind: "scene" },
+    ];
+    const pause = getStructuralPauseMs({
+      book,
+      currentPosition: { paragraphId: 1, wordIndex: 1 },
+      currentWord: "sentence.",
+      nextPosition: { paragraphId: 2, wordIndex: 0 },
+      tempo: DEFAULT_SPEED_READER_TEMPO,
+    });
+    expect(pause).toBeGreaterThan(DEFAULT_SPEED_READER_TEMPO.paragraphBreakMs);
+    expect(pause).toBeLessThan(DEFAULT_SPEED_READER_TEMPO.chapterBreakMs);
+  });
+
   it("only applies period sentence breaks when the next token looks like a sentence start", () => {
     expect(shouldApplySentenceBreak("Hello.", "World")).toBe(true);
     expect(shouldApplySentenceBreak("Hello.", "(World")).toBe(true);

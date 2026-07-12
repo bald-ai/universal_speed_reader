@@ -2,6 +2,7 @@ import type { Book, BookImage, Paragraph } from "@/types/book";
 
 export type NormalReadingDisplayRow =
   | { kind: "paragraph"; paragraph: Paragraph }
+  | { kind: "scene-break"; beforeParagraphId: number }
   | { kind: "image"; image: BookImage };
 
 /**
@@ -28,6 +29,9 @@ export function buildNormalReadingDisplayRows(book: Pick<Book, "paragraphs" | "i
   }
 
   for (const paragraph of book.paragraphs) {
+    if (paragraph.sceneBreakBefore) {
+      rows.push({ kind: "scene-break", beforeParagraphId: paragraph.id });
+    }
     rows.push({ kind: "paragraph", paragraph });
     for (const image of imagesByAfterId.get(paragraph.id) ?? []) {
       rows.push({ kind: "image", image });

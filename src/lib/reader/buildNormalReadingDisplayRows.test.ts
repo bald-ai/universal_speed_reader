@@ -51,9 +51,9 @@ describe("buildNormalReadingDisplayRows", () => {
     );
 
     expect(
-      rows.map((row) =>
-        row.kind === "paragraph" ? `p:${row.paragraph.id}` : `i:${row.image.id}`
-      )
+      rows.map((row) => row.kind === "paragraph"
+        ? `p:${row.paragraph.id}`
+        : row.kind === "image" ? `i:${row.image.id}` : `s:${row.beforeParagraphId}`)
     ).toEqual(["i:img-before", "p:1", "i:img-mid", "p:2", "p:3", "i:img-end"]);
   });
 
@@ -78,9 +78,21 @@ describe("buildNormalReadingDisplayRows", () => {
     );
 
     expect(
-      rows.map((row) =>
-        row.kind === "paragraph" ? `p:${row.paragraph.id}` : `i:${row.image.id}`
-      )
+      rows.map((row) => row.kind === "paragraph"
+        ? `p:${row.paragraph.id}`
+        : row.kind === "image" ? `i:${row.image.id}` : `s:${row.beforeParagraphId}`)
     ).toEqual(["p:1", "p:2", "i:img-a", "i:img-b", "p:3"]);
+  });
+
+  it("inserts an accessible scene row before its anchored real paragraph", () => {
+    const rows = buildNormalReadingDisplayRows(makeBook({
+      paragraphs: [
+        { id: 1, text: "First paragraph" },
+        { id: 2, text: "Second paragraph", sceneBreakBefore: "text-ornament" },
+      ],
+    }));
+
+    expect(rows.map((row) => row.kind)).toEqual(["paragraph", "scene-break", "paragraph"]);
+    expect(rows[1]).toEqual({ kind: "scene-break", beforeParagraphId: 2 });
   });
 });

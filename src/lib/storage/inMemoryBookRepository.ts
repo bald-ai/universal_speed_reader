@@ -18,6 +18,7 @@ import type {
 } from "@/types/storage";
 import type { Book, BookImage, Chapter, Paragraph } from "@/types/book";
 import type { BookRepository, ListBooksOptions } from "@/lib/storage/bookRepository";
+import { classifyNavigationTitle, navigationLevel } from "@/lib/navigationHierarchy";
 
 const STORAGE_VERSION = 1;
 const PERSIST_DB_NAME = "universal_speed_reader_state";
@@ -110,15 +111,21 @@ function toParagraphs(rows: StoredParagraph[]): Paragraph[] {
   return rows.map((p) => ({
     id: p.id,
     text: p.text,
+    ...(p.sceneBreakBefore ? { sceneBreakBefore: p.sceneBreakBefore } : {}),
   }));
 }
 
 function toChapters(rows: StoredChapter[]): Chapter[] {
-  return rows.map((c) => ({
-    index: c.index,
-    title: c.title,
-    startParagraphId: c.start_paragraph_id,
-  }));
+  return rows.map((chapter) => {
+    const kind = chapter.kind ?? classifyNavigationTitle(chapter.title);
+    return {
+      index: chapter.index,
+      title: chapter.title,
+      startParagraphId: chapter.start_paragraph_id,
+      kind,
+      level: chapter.level ?? navigationLevel(kind),
+    };
+  });
 }
 
 function toBookImages(rows: BookImageRow[]): BookImage[] {
@@ -305,6 +312,7 @@ export class InMemoryBookRepository implements BookRepository {
             paragraphs_json: chunk.paragraphs_json.map((paragraph) => ({
               id: paragraph.id,
               text: paragraph.text,
+              ...(paragraph.sceneBreakBefore ? { sceneBreakBefore: paragraph.sceneBreakBefore } : {}),
             })),
           })),
         (chunk) => chunk.chunk_index
@@ -318,6 +326,8 @@ export class InMemoryBookRepository implements BookRepository {
             chapter_index: chapterIndex,
             title: chapter.title,
             start_paragraph_id: chapter.start_paragraph_id,
+            kind: chapter.kind ?? classifyNavigationTitle(chapter.title),
+            level: chapter.level ?? navigationLevel(chapter.kind ?? classifyNavigationTitle(chapter.title)),
           })),
         (chapter) => chapter.chapter_index
       );
@@ -430,6 +440,7 @@ export class InMemoryBookRepository implements BookRepository {
         .map((paragraph) => ({
           id: paragraph.id,
           text: paragraph.text,
+          ...(paragraph.sceneBreakBefore ? { sceneBreakBefore: paragraph.sceneBreakBefore } : {}),
         }));
 
       const chapters = toChapters(
@@ -437,6 +448,8 @@ export class InMemoryBookRepository implements BookRepository {
           index: chapter.chapter_index,
           title: chapter.title,
           start_paragraph_id: chapter.start_paragraph_id,
+          kind: chapter.kind,
+          level: chapter.level,
         }))
       );
 

@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reader Breaks — Issue Review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #131722;
+      --panel-2: #191e2b;
+      --line: #2a3142;
+      --text: #f4f1eb;
+      --muted: #a5adbd;
+      --accent: #b69cff;
+      --accent-2: #75e2d1;
+      --warn: #ffcd72;
+      --danger: #ff8d9a;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(182, 156, 255, .13), transparent 30rem),
+        radial-gradient(circle at 92% 12%, rgba(117, 226, 209, .08), transparent 26rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, textarea { font: inherit; }
+    button { color: inherit; }
+    a { color: inherit; }
+    :focus-visible { outline: 3px solid var(--accent-2); outline-offset: 3px; }
+
+    .page {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 28px;
+      width: min(1540px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(19, 23, 34, .92);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand { padding: 22px 22px 18px; border-bottom: 1px solid var(--line); }
+    .eyebrow {
+      color: var(--accent-2);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .brand h1 { margin: 7px 0 5px; font-size: 19px; line-height: 1.2; }
+    .brand p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    .nav { padding: 12px; }
+    .nav a {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px;
+      border-radius: 10px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .nav a:hover { color: var(--text); background: var(--panel-2); }
+    .nav-count { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+    .side-selection { padding: 16px; border-top: 1px solid var(--line); }
+    .selection-count { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .selection-count strong { font-size: 25px; font-variant-numeric: tabular-nums; }
+    .selection-count span { color: var(--muted); font-size: 12px; }
+    .mini-output {
+      width: 100%;
+      height: 106px;
+      margin: 12px 0 10px;
+      padding: 10px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0d1018;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    main { min-width: 0; }
+    .hero {
+      padding: 46px clamp(24px, 5vw, 72px);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(30, 35, 52, .94), rgba(16, 19, 29, .96));
+      box-shadow: var(--shadow);
+    }
+    .hero h2 {
+      max-width: 920px;
+      margin: 10px 0 14px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(34px, 5vw, 66px);
+      font-weight: 500;
+      letter-spacing: -.035em;
+      line-height: 1.02;
+    }
+    .hero p { max-width: 800px; margin: 0; color: var(--muted); font-size: 17px; }
+    .hero-note {
+      display: inline-flex;
+      gap: 8px;
+      margin-top: 22px;
+      padding: 8px 11px;
+      border: 1px solid rgba(117, 226, 209, .25);
+      border-radius: 999px;
+      color: var(--accent-2);
+      background: rgba(117, 226, 209, .06);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 18px;
+      z-index: 4;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin: 18px 0 38px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(11, 13, 18, .86);
+      backdrop-filter: blur(16px);
+    }
+
+    .button {
+      min-height: 40px;
+      padding: 8px 13px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      cursor: pointer;
+    }
+    .button:hover { border-color: #4b5670; transform: translateY(-1px); }
+    .button.primary { border-color: transparent; background: var(--accent); color: #171225; font-weight: 800; }
+    .button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .toggle { display: inline-flex; align-items: center; gap: 8px; padding: 0 8px; color: var(--muted); }
+    .toggle input, .issue-check { accent-color: var(--accent); }
+    .toolbar-status { align-self: center; margin-left: auto; color: var(--muted); font-size: 12px; }
+
+    .section { scroll-margin-top: 96px; margin-bottom: 54px; }
+    .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 0 4px 16px; }
+    .section-heading h3 { margin: 0; font: 500 30px/1.1 Georgia, serif; }
+    .section-heading p { max-width: 620px; margin: 5px 0 0; color: var(--muted); }
+    .section-tally { color: var(--accent); font-size: 13px; white-space: nowrap; }
+
+    .issue-list { display: grid; gap: 15px; }
+    .issue-card {
+      scroll-margin-top: 96px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(19, 23, 34, .84);
+      transition: border-color .18s ease, background .18s ease, opacity .18s ease;
+    }
+    .issue-card.selected { border-color: var(--accent); background: rgba(31, 27, 47, .94); }
+    .issue-card[hidden] { display: none; }
+
+    .issue-top { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; padding: 19px 20px 16px; }
+    .issue-check { width: 21px; height: 21px; margin: 3px 0 0; cursor: pointer; }
+    .issue-number { color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; }
+    .issue-title { margin: 2px 0 6px; font-size: 19px; line-height: 1.25; }
+    .issue-summary { margin: 0; color: var(--muted); }
+    .badges { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }
+    .badge { padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .badge.observed { border-color: rgba(255, 205, 114, .34); color: var(--warn); background: rgba(255, 205, 114, .06); }
+    .badge.adjacent { border-color: rgba(117, 226, 209, .3); color: var(--accent-2); background: rgba(117, 226, 209, .05); }
+
+    details { border-top: 1px solid var(--line); }
+    summary { padding: 12px 20px; color: var(--accent-2); cursor: pointer; font-size: 13px; font-weight: 700; }
+    summary::marker { color: var(--accent); }
+    .evidence { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr); gap: 14px; padding: 0 20px 20px; }
+    .example, .desired { min-width: 0; padding: 16px; border-radius: 13px; }
+    .example { border: 1px solid var(--line); background: #0d1018; }
+    .desired { border: 1px solid rgba(182, 156, 255, .22); background: rgba(182, 156, 255, .06); }
+    .label { margin-bottom: 8px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .source { margin-bottom: 10px; color: var(--accent-2); font-size: 12px; }
+    .excerpt { margin: 0; color: #e3dfd7; font: 15px/1.7 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .desired p { margin: 0; }
+
+    .selection-panel {
+      scroll-margin-top: 96px;
+      margin: 34px 0 80px;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(34, 29, 51, .95), rgba(19, 23, 34, .95));
+      box-shadow: var(--shadow);
+    }
+    .selection-panel h3 { margin: 0; font: 500 28px/1.2 Georgia, serif; }
+    .selection-panel p { margin: 6px 0 16px; color: var(--muted); }
+    .full-output {
+      width: 100%;
+      min-height: 250px;
+      padding: 16px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #0b0d12;
+      color: var(--text);
+      font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .selection-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+    .copy-status { color: var(--accent-2); font-size: 12px; }
+
+    @media (max-width: 900px) {
+      .page { grid-template-columns: 1fr; padding: 14px; }
+      .sidebar { position: static; max-height: none; }
+      .nav { display: flex; overflow-x: auto; }
+      .nav a { flex: 0 0 auto; }
+      .side-selection { display: none; }
+      .toolbar { top: 8px; }
+      .evidence { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 580px) {
+      .hero { padding: 30px 22px; }
+      .hero h2 { font-size: 39px; }
+      .hero p { font-size: 15px; }
+      .issue-top { grid-template-columns: auto 1fr; }
+      .badges { grid-column: 2; justify-content: start; }
+      .section-heading { display: block; }
+      .section-tally { display: block; margin-top: 7px; }
+      .toolbar-status { width: 100%; margin-left: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <aside class="sidebar" aria-label="Issue review navigation">
+      <div class="brand">
+        <div class="eyebrow">Universal Speed Reader</div>
+        <h1>Reader break review</h1>
+        <p>25 significant issues, grounded in the current book corpus.</p>
+      </div>
+      <nav class="nav" id="section-nav"></nav>
+      <div class="side-selection">
+        <div class="selection-count"><strong id="side-count">0 / 25</strong><span>selected</span></div>
+        <textarea class="mini-output" id="mini-output" readonly aria-label="Selected issues preview"></textarea>
+        <button class="button primary" id="side-copy" type="button" disabled>Copy checked list</button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <div class="eyebrow">Decision worksheet · real book examples</div>
+        <h2>What should count as a break?</h2>
+        <p>Review every reader-impacting issue uncovered by the PDF work. Tick only the ones you want fixed. The page builds a clean Markdown list you can copy into the implementation task.</p>
+        <div class="hero-note">Examples: Alice PDF + EPUB · Dracula · Moby-Dick · Penguin Persons &amp; Peppermints · Good Books PDF corpus</div>
+      </header>
+
+      <div class="toolbar" aria-label="Checklist controls">
+        <button class="button" id="select-all" type="button">Select all</button>
+        <button class="button" id="clear-all" type="button">Clear</button>
+        <label class="toggle"><input id="show-selected" type="checkbox"> Show selected only</label>
+        <a class="button" href="#selection">Jump to copy list</a>
+        <span class="toolbar-status" id="toolbar-status">0 of 25 selected</span>
+      </div>
+
+      <div id="sections"></div>
+
+      <section class="selection-panel" id="selection">
+        <div class="eyebrow">Your scope</div>
+        <h3>Checked issues</h3>
+        <p>This output updates immediately and is saved in this browser for the next time you open the file.</p>
+        <textarea class="full-output" id="full-output" readonly aria-label="Copyable list of checked issues"></textarea>
+        <div class="selection-actions">
+          <button class="button primary" id="main-copy" type="button" disabled>Copy checked list</button>
+          <span class="copy-status" id="copy-status" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const categories = [
+      { id: "observed", title: "Visible reading failures", note: "Problems already visible in normal reading with the actual imported books." },
+      { id: "detection", title: "Break detection", note: "Format-specific ways a meaningful scene transition can be lost, leaked, or misclassified." },
+      { id: "playback", title: "Playback & accessibility", note: "How the same structural gap affects RSVP, speech, and assistive technology." },
+      { id: "structure", title: "Hierarchy & saved position", note: "The data-model decisions needed to keep chapters, scenes, paragraphs, and progress coherent." },
+      { id: "quality", title: "Validation & regression safety", note: "Checks needed to stop these defects returning across the real corpus." }
+    ];
+
+    const issues = [
+      {
+        id: 1, category: "structure", status: "observed", formats: ["PDF", "EPUB", "Data"],
+        title: "There is no shared scene-break model",
+        summary: "The normalized book has chapters, paragraphs, images, and words—but no explicit anonymous scene transition.",
+        source: "Alice’s Adventures in Wonderland · same scene break in PDF and EPUB",
+        excerpt: "PDF result: the asterisk ornament becomes literal prose.\nEPUB result: the <p class=\"asterism\"> transition disappears.\n\nCurrent shape: Book → Chapters → Paragraphs → Words",
+        desired: "Represent a scene transition once, as a stable boundary anchored between paragraphs, then let normal reading, RSVP, and TTS interpret it appropriately."
+      },
+      {
+        id: 2, category: "observed", status: "observed", formats: ["PDF", "Reader"],
+        title: "PDF text ornaments leak into prose",
+        summary: "Alice displays a long run of stars in the middle of the text instead of a scene transition.",
+        source: "09-alices-adventures-in-wonderland-lewis-carroll.pdf · Chapter I",
+        excerpt: "…toast,) she very soon finished it off.\n* * * * * * * * * * * * * * * * * * * *\n“What a curious feeling!” said Alice; “I must be shutting up like a telescope.”",
+        desired: "Remove the ornament from readable prose and render one intentional scene divider between the surrounding paragraphs."
+      },
+      {
+        id: 3, category: "observed", status: "observed", formats: ["EPUB", "Reader"],
+        title: "EPUB text ornaments can disappear entirely",
+        summary: "The Alice EPUB contains a dedicated asterism paragraph, but punctuation-only content is dropped during normalization.",
+        source: "alice-in-wonderland.epub · <p class=\"asterism\">",
+        excerpt: "*      *      *      *      *      *      *\n\n    *      *      *      *      *      *\n\n*      *      *      *      *      *      *",
+        desired: "Recognize the element as a scene boundary before readability filtering removes it. Keep the stars out of prose while preserving their meaning."
+      },
+      {
+        id: 4, category: "detection", status: "observed", formats: ["EPUB"],
+        title: "EPUB horizontal rules are discarded",
+        summary: "An <hr> has no text children, so the current flow extractor emits nothing for it.",
+        source: "dracula.epub · title page and section rules",
+        excerpt: "<h2>D R A C U L A</h2>\n<hr style=\"width:15%;\"/>\n…\n<h2>CHAPTER I — JONATHAN HARKER’S JOURNAL</h2>",
+        desired: "Classify meaningful horizontal rules as structural boundaries while ignoring purely ornamental title-page rules where surrounding context says they are not scene breaks."
+      },
+      {
+        id: 5, category: "detection", status: "observed", formats: ["EPUB", "CSS"],
+        title: "CSS-only separators lose their presentation signal",
+        summary: "Classes, spacing, borders, pseudo-elements, and background ornaments can carry the only clue that an element is a break.",
+        source: "alice-in-wonderland.epub · p.asterism stylesheet",
+        excerpt: "p.asterism {\n  margin-left: 25%;\n  letter-spacing: 0.12em;\n  margin-top: 1em;\n  margin-bottom: 1em;\n}",
+        desired: "Inspect a small, explicit set of layout signals during EPUB import so a centered, isolated ornament is not treated like ordinary punctuation."
+      },
+      {
+        id: 6, category: "detection", status: "observed", formats: ["EPUB", "Images"],
+        title: "Decorative images are treated like illustrations",
+        summary: "Small empty-alt ornaments are preserved as normal image blocks, with no distinction between art and a scene boundary.",
+        source: "penguin-persons-peppermints-pg26405.epub · ornament3.jpg",
+        excerpt: "<p>For, as you may have guessed, the sundial is a symbol.</p>\n<div class=\"figcenter\" style=\"width: 79px;\">\n  <img alt=\"\" src=\"…_ornament3.jpg\">\n</div>\n…\n<h2>On Singing Songs with One Finger</h2>",
+        desired: "Classify small, centered, empty-alt repeated ornaments separately from content illustrations, and preserve their boundary meaning without showing an oversized image."
+      },
+      {
+        id: 7, category: "detection", status: "adjacent", formats: ["PDF", "Geometry"],
+        title: "PDF whitespace scene breaks are not modeled",
+        summary: "The paragraph repair uses page geometry, but a larger blank gap currently creates only separate paragraphs—not an explicit scene transition.",
+        source: "Alice PDF · modest paragraph gaps and larger ornamental gaps",
+        excerpt: "Paragraph ending a sentence.\n\n          [distinctly larger vertical gap]\n\nNext paragraph begins a new beat.",
+        desired: "Use page-local gap distribution plus sentence/indent context to distinguish a scene-sized blank gap from ordinary paragraph spacing and wrapped lines."
+      },
+      {
+        id: 8, category: "detection", status: "observed", formats: ["PDF"],
+        title: "Ornaments embedded in extracted PDF lines are not isolated",
+        summary: "When PDF extraction places stars on the same reconstructed paragraph as prose, punctuation filtering cannot remove them safely.",
+        source: "Alice PDF · stored paragraph 7 and paragraph 38",
+        excerpt: "…she very soon finished it off. * * * * * * * * * * * * * * * * * * * * “What a curious feeling!” said Alice…",
+        desired: "Detect an isolated ornament run inside a reconstructed block and split it only when there is convincing prose on both sides and layout supports a boundary."
+      },
+      {
+        id: 9, category: "detection", status: "observed", formats: ["EPUB", "Safety"],
+        title: "Star runs are not always scene breaks",
+        summary: "Moby-Dick uses stars for editorial omissions and footnote markers inside meaningful prose.",
+        source: "moby-dick.epub · etymology and footnote passages",
+        excerpt: "“WHALE. * * * Sw. and Dan. hval. This animal is named…”\n\n“…we cast the lead, and sounded, but found no ground. * * * * * The suddenness of the shock…”\n\n*See subsequent chapters…",
+        desired: "Require isolation and structural context. Inline stars, redactions, dictionary notation, tables, math, emphasis, and footnote markers must remain text."
+      },
+      {
+        id: 10, category: "detection", status: "adjacent", formats: ["PDF", "EPUB"],
+        title: "Equivalent separator forms need one normalization path",
+        summary: "Books express the same transition using different characters, rules, images, and blank space.",
+        source: "Alice, Dracula, Moby-Dick, and Penguin Persons & Peppermints",
+        excerpt: "***     * * *     ⁂     ◆     • • •\n<hr>     small ornament image     large blank gap",
+        desired: "Normalize supported forms into one boundary type, while retaining optional source metadata for debugging and future display choices."
+      },
+      {
+        id: 11, category: "observed", status: "observed", formats: ["Reader"],
+        title: "Scene breaks have no dedicated reader rendering",
+        summary: "The reader can show a chapter diamond, but a scene transition currently becomes raw text, vanishes, or looks like an ordinary image.",
+        source: "Alice PDF · raw stars in Chapter I vs clean diamond at Chapter II",
+        excerpt: "Current scene:  * * * * * * * * * *\n\nCurrent chapter:          ◆",
+        desired: "Render scene breaks consistently and more quietly than chapter boundaries. Keep the two visually distinct at every theme and font size."
+      },
+      {
+        id: 12, category: "playback", status: "adjacent", formats: ["TTS"],
+        title: "TTS has no scene-boundary behavior",
+        summary: "Without structure, TTS may speak ornament tokens or flow through a scene change with no intentional pause.",
+        source: "Alice PDF · the literal star paragraph is part of the stored speech text",
+        excerpt: "“…finished it off. star star star star… What a curious feeling!”\n—or—\n“…finished it off. What a curious feeling!” with no scene pause",
+        desired: "Never speak the ornament. Add a deliberate scene pause that is longer than a paragraph pause and shorter than a chapter transition."
+      },
+      {
+        id: 13, category: "playback", status: "adjacent", formats: ["RSVP"],
+        title: "Speed reading turns ornaments into words—or loses the pause",
+        summary: "RSVP follows normalized word tokens, so raw ornament text can flash as content while dropped ornaments remove pacing.",
+        source: "Alice PDF and EPUB · opposite outcomes from the same source transition",
+        excerpt: "PDF:  finished → * → * → * → curious\nEPUB: finished → curious",
+        desired: "Skip ornament glyphs and apply a deterministic scene pause without changing paragraph/word addressing."
+      },
+      {
+        id: 14, category: "playback", status: "adjacent", formats: ["A11y", "Reader"],
+        title: "Scene transitions lack accessibility semantics",
+        summary: "A purely visual diamond or star row does not tell assistive technology that the narrative context changed.",
+        source: "Alice · proposed replacement for the raw asterisk row",
+        excerpt: "Visible:          ⁂\nScreen reader:    [currently undefined]",
+        desired: "Expose a concise semantic transition without reading decorative glyphs repeatedly; avoid adding noisy focus stops."
+      },
+      {
+        id: 15, category: "observed", status: "observed", formats: ["Reader", "Design"],
+        title: "Chapters and scenes need a clear visual hierarchy",
+        summary: "Using the same ornament and spacing for both would make a minor narrative beat look like a new chapter.",
+        source: "Alice · Chapter II divider compared with Chapter I asterism",
+        excerpt: "CHAPTER BOUNDARY\n        ◆\n   CHAPTER II\n\nscene boundary\n      ⁂",
+        desired: "Keep chapters prominent and navigational; make anonymous scene breaks quieter, compact, and unlabelled unless accessibility needs a label."
+      },
+      {
+        id: 16, category: "observed", status: "observed", formats: ["PDF", "Reader"],
+        title: "The first chapter divider is suppressed even after front matter",
+        summary: "Alice has title, author, edition text, and contents before Chapter I, but the reader skips the first chapter boundary unconditionally.",
+        source: "Alice PDF · top of imported normal-reading flow",
+        excerpt: "ALICE’S ADVENTURES IN WONDERLAND\nLewis Carroll\n[edition text + contents]\n\nCHAPTER I\nDown the Rabbit-Hole",
+        desired: "Show the first chapter separator when readable content exists before its start; suppress it only when the chapter truly begins at the book’s first paragraph."
+      },
+      {
+        id: 17, category: "observed", status: "observed", formats: ["PDF", "Reader"],
+        title: "PDF contents pages leak into the reading stream",
+        summary: "Alice opens with a compact list of all twelve chapter titles before the actual Chapter I prose.",
+        source: "Alice PDF · front matter",
+        excerpt: "Contents CHAPTER I. Down the Rabbit-Hole CHAPTER II. The Pool of Tears … CHAPTER XII. Alice’s Evidence\n\nCHAPTER I. Down the Rabbit-Hole",
+        desired: "Keep useful contents information for chapter reconstruction, but omit a compact navigation-only contents block from the linear reading stream when confidence is high."
+      },
+      {
+        id: 18, category: "observed", status: "observed", formats: ["PDF", "Reader"],
+        title: "Recovered chapter headings can appear twice",
+        summary: "The fixed reader header names the chapter while the original heading remains as the first paragraph below it.",
+        source: "Alice PDF · Chapter I and Chapter II",
+        excerpt: "Sticky reader header:   CHAPTER I — Down the Rabbit-Hole\nBody begins:            CHAPTER I. Down the Rabbit-Hole",
+        desired: "Choose one visible title treatment while preserving a stable text position and the chapter’s navigation label."
+      },
+      {
+        id: 19, category: "structure", status: "adjacent", formats: ["EPUB", "Hierarchy"],
+        title: "Named theatrical scenes must not collide with anonymous breaks",
+        summary: "The chapter extractor already recognizes headings such as SCENE I for navigation; that is different from an unlabelled prose scene transition.",
+        source: "Current EPUB heading classifier · scene heading kind",
+        excerpt: "ACT II\nSCENE I — A room in the castle\n\n[anonymous narrative transition inside the scene]",
+        desired: "Keep named Scene I/II entries as hierarchical navigation headings. Store anonymous scene breaks as lightweight anchors, not chapters named “Scene.”"
+      },
+      {
+        id: 20, category: "structure", status: "observed", formats: ["PDF", "Hierarchy"],
+        title: "Parts, chapters, sections, and scenes need explicit precedence",
+        summary: "Several PDFs shipped filename bookmarks while their pages visibly contained a deeper, useful heading sequence.",
+        source: "Capital at the Brink, Plastic Bodies, The Neganthropocene",
+        excerpt: "Bad outline: cover front → bookblock screen.pdf → cover back\nVisible structure: Part → Chapter 1 … Chapter 10 → notes\n\nThe parser now recovers visible chapters, but not a general multi-level hierarchy.",
+        desired: "Define precedence for book/part/chapter/section/named scene/anonymous break so navigation and rendering do not flatten unlike structures together."
+      },
+      {
+        id: 21, category: "structure", status: "adjacent", formats: ["Data", "Progress"],
+        title: "Breaks need stable anchors between real paragraphs",
+        summary: "Representing a break as a fake or empty paragraph would distort paragraph counts and saved positions.",
+        source: "Alice PDF · 26,511 words and 106 reconstructed paragraphs after repair",
+        excerpt: "Paragraph 7  →  [scene break anchor]  →  Paragraph 8\nSaved position remains: { paragraphId: 8, wordIndex: 0 }",
+        desired: "Anchor a break before/after a real paragraph without giving it words or a user reading position. IDs for actual prose stay meaningful."
+      },
+      {
+        id: 22, category: "structure", status: "observed", formats: ["Import", "Progress"],
+        title: "Re-importing improved structure can invalidate saved progress",
+        summary: "The repaired Alice model changed from 85 collapsed paragraphs to 106 reasonable paragraphs; any old paragraph-based position needs deliberate handling.",
+        source: "Alice PDF · before/after device imports",
+        excerpt: "Old import: 85 paragraphs, giant blocks, existing progress\nNew import: 106 paragraphs, repaired boundaries, fresh position mapping",
+        desired: "Define whether reparsing resets, migrates by word offset, or preserves old imports. Never silently point a saved location at unrelated prose."
+      },
+      {
+        id: 23, category: "quality", status: "observed", formats: ["Validation"],
+        title: "Import validation does not measure scene preservation",
+        summary: "Strict validation catches collapsed paragraphs, but not excessive ornament tokens, lost separators, or raw front/back boilerplate.",
+        source: "Alice PDF/EPUB · both can pass while representing the same asterism incorrectly",
+        excerpt: "PDF: enough words + reasonable paragraphs + literal stars → passes\nEPUB: enough words + chapters + missing asterism → passes",
+        desired: "Add focused diagnostics for suspicious isolated ornament volume and impossible separator patterns without rejecting books merely because they contain legitimate stars."
+      },
+      {
+        id: 24, category: "quality", status: "observed", formats: ["Tests"],
+        title: "Regression tests do not cover the break matrix",
+        summary: "Current coverage exercises selectable PDF text and collapsed-paragraph rejection, not scene semantics across formats and playback.",
+        source: "Current parser tests vs real Alice, Dracula, Moby-Dick, and ornament-image cases",
+        excerpt: "Missing cases: EPUB <hr> · CSS asterism · ornament image · PDF whitespace · embedded PDF stars · false-positive inline stars · reader/TTS/RSVP behavior",
+        desired: "Add small fixtures for each signal and false-positive pair, then assert the normalized boundary model and each consumer’s behavior."
+      },
+      {
+        id: 25, category: "quality", status: "observed", formats: ["Corpus", "Audit"],
+        title: "The corpus audit can pass while scene transitions are broken",
+        summary: "Word, paragraph, image, and chapter counts do not reveal whether an ornament leaked or vanished.",
+        source: "Good Books corpus · Alice EPUB drops asterisms while Alice PDF retains raw stars",
+        excerpt: "Corpus result: import succeeds, chapters look plausible\nReader result: the same narrative boundary is absent in one format and noisy in the other",
+        desired: "Extend corpus reporting with boundary counts, source form, suspicious raw ornaments, and sampled before/after context so scene preservation becomes inspectable."
+      }
+    ];
+
+    const storageKey = "usr-reader-break-review-v1";
+    const selected = new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+
+    const escapeHtml = (value) => String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+
+    const nav = document.querySelector("#section-nav");
+    nav.innerHTML = categories.map((category) => {
+      const count = issues.filter((issue) => issue.category === category.id).length;
+      return `<a href="#section-${category.id}"><span>${escapeHtml(category.title)}</span><span class="nav-count">${count}</span></a>`;
+    }).join("") + '<a href="#selection"><span>Checked list</span><span class="nav-count">↓</span></a>';
+
+    const sections = document.querySelector("#sections");
+    sections.innerHTML = categories.map((category) => {
+      const categoryIssues = issues.filter((issue) => issue.category === category.id);
+      const cards = categoryIssues.map((issue) => `
+        <article class="issue-card" id="issue-${issue.id}" data-issue-id="${issue.id}">
+          <div class="issue-top">
+            <input class="issue-check" id="check-${issue.id}" type="checkbox" aria-label="Select issue ${issue.id}: ${escapeHtml(issue.title)}">
+            <div>
+              <div class="issue-number">ISSUE ${String(issue.id).padStart(2, "0")}</div>
+              <h4 class="issue-title"><label for="check-${issue.id}">${escapeHtml(issue.title)}</label></h4>
+              <p class="issue-summary">${escapeHtml(issue.summary)}</p>
+            </div>
+            <div class="badges">
+              <span class="badge ${issue.status}">${issue.status === "observed" ? "Observed" : "Adjacent risk"}</span>
+              ${issue.formats.map((format) => `<span class="badge">${escapeHtml(format)}</span>`).join("")}
+            </div>
+          </div>
+          <details>
+            <summary>Show real example and intended behavior</summary>
+            <div class="evidence">
+              <div class="example">
+                <div class="label">Real source</div>
+                <div class="source">${escapeHtml(issue.source)}</div>
+                <pre class="excerpt">${escapeHtml(issue.excerpt)}</pre>
+              </div>
+              <div class="desired">
+                <div class="label">What a fix should preserve</div>
+                <p>${escapeHtml(issue.desired)}</p>
+              </div>
+            </div>
+          </details>
+        </article>
+      `).join("");
+      return `
+        <section class="section" id="section-${category.id}">
+          <div class="section-heading">
+            <div><h3>${escapeHtml(category.title)}</h3><p>${escapeHtml(category.note)}</p></div>
+            <span class="section-tally" data-tally="${category.id}">0 / ${categoryIssues.length} selected</span>
+          </div>
+          <div class="issue-list">${cards}</div>
+        </section>
+      `;
+    }).join("");
+
+    const miniOutput = document.querySelector("#mini-output");
+    const fullOutput = document.querySelector("#full-output");
+    const showSelected = document.querySelector("#show-selected");
+
+    function selectedText() {
+      return issues
+        .filter((issue) => selected.has(issue.id))
+        .map((issue) => `- ${issue.id}. ${issue.title} — ${issue.desired}`)
+        .join("\n");
+    }
+
+    function update() {
+      document.querySelectorAll(".issue-card").forEach((card) => {
+        const id = Number(card.dataset.issueId);
+        const checked = selected.has(id);
+        const checkbox = card.querySelector(".issue-check");
+        checkbox.checked = checked;
+        card.classList.toggle("selected", checked);
+        card.hidden = showSelected.checked && !checked;
+      });
+
+      categories.forEach((category) => {
+        const categoryIssues = issues.filter((issue) => issue.category === category.id);
+        const categorySelected = categoryIssues.filter((issue) => selected.has(issue.id)).length;
+        document.querySelector(`[data-tally="${category.id}"]`).textContent = `${categorySelected} / ${categoryIssues.length} selected`;
+      });
+
+      const text = selectedText();
+      const count = selected.size;
+      miniOutput.value = text || "No issues selected yet.";
+      fullOutput.value = text || "No issues selected yet. Tick an issue above to add it here.";
+      document.querySelector("#side-count").textContent = `${count} / ${issues.length}`;
+      document.querySelector("#toolbar-status").textContent = `${count} of ${issues.length} selected`;
+      document.querySelectorAll("#side-copy, #main-copy").forEach((button) => { button.disabled = count === 0; });
+      localStorage.setItem(storageKey, JSON.stringify([...selected]));
+    }
+
+    document.querySelectorAll(".issue-check").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const id = Number(checkbox.closest(".issue-card").dataset.issueId);
+        checkbox.checked ? selected.add(id) : selected.delete(id);
+        update();
+      });
+    });
+
+    document.querySelector("#select-all").addEventListener("click", () => {
+      issues.forEach((issue) => selected.add(issue.id));
+      update();
+    });
+
+    document.querySelector("#clear-all").addEventListener("click", () => {
+      selected.clear();
+      showSelected.checked = false;
+      update();
+    });
+
+    showSelected.addEventListener("change", update);
+
+    async function copySelection() {
+      const text = selectedText();
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        fullOutput.value = text;
+        fullOutput.select();
+        document.execCommand("copy");
+      }
+      const status = document.querySelector("#copy-status");
+      status.textContent = `Copied ${selected.size} checked issue${selected.size === 1 ? "" : "s"}.`;
+      window.setTimeout(() => { status.textContent = ""; }, 2200);
+    }
+
+    document.querySelector("#side-copy").addEventListener("click", copySelection);
+    document.querySelector("#main-copy").addEventListener("click", copySelection);
+    update();
+  </script>
+</body>
+</html>

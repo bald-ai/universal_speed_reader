@@ -1,5 +1,7 @@
 import type { BookChapterRow, BookChunkRow, StoredParagraph } from "@/types/storage";
 import { tokenizeParagraph } from "@/lib/utils/wordExtraction";
+import { classifyNavigationTitle, navigationLevel, navigationPrecedence } from "@/lib/navigationHierarchy";
+import type { NavigationKind } from "@/types/navigation";
 
 const DEFAULT_CHUNK_SIZE = 50;
 
@@ -33,15 +35,27 @@ export function chunkParagraphs(
 
 export function normalizeChapters(
   bookId: string,
-  chapters: Array<{ title: string; start_paragraph_id: number }>
+  chapters: Array<{
+    title: string;
+    start_paragraph_id: number;
+    kind?: NavigationKind;
+    level?: number;
+  }>
 ): BookChapterRow[] {
   return [...chapters]
-    .sort((a, b) => a.start_paragraph_id - b.start_paragraph_id)
+    .map((chapter) => {
+      const kind = chapter.kind ?? classifyNavigationTitle(chapter.title);
+      return { ...chapter, kind, level: chapter.level ?? navigationLevel(kind) };
+    })
+    .sort((a, b) => a.start_paragraph_id - b.start_paragraph_id
+      || navigationPrecedence(a.kind) - navigationPrecedence(b.kind))
     .map((chapter, index) => ({
       book_id: bookId,
       chapter_index: index,
       title: chapter.title,
       start_paragraph_id: chapter.start_paragraph_id,
+      kind: chapter.kind,
+      level: chapter.level,
     }));
 }
 

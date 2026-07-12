@@ -70,7 +70,7 @@ describe("calculatePercentComplete", () => {
   });
 });
 
-describe("calculateChapterPercentComplete", () => {
+  describe("calculateChapterPercentComplete", () => {
   it("returns chapter-local progress based on current chapter word count", () => {
     const book = makeBook();
 
@@ -98,6 +98,19 @@ describe("calculateChapterPercentComplete", () => {
     expect(calculateChapterPercentComplete(book, { paragraphId: 3, wordIndex: 1 })).toBe(
       calculatePercentComplete(book, { paragraphId: 3, wordIndex: 1 })
     );
+  });
+
+  it("uses the deepest navigation entry when hierarchy levels share a start", () => {
+    const book = makeBook({
+      chapters: [
+        { index: 0, title: "Part One", startParagraphId: 1, kind: "part", level: 1 },
+        { index: 1, title: "SCENE I", startParagraphId: 1, kind: "scene", level: 4 },
+        { index: 2, title: "Chapter Two", startParagraphId: 3, kind: "chapter", level: 2 },
+      ],
+    });
+
+    expect(findChapterForParagraph(book, 1)?.kind).toBe("scene");
+    expect(calculateChapterPercentComplete(book, { paragraphId: 1, wordIndex: 1 })).toBe(33);
   });
 });
 

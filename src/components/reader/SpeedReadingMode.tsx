@@ -16,6 +16,7 @@ import { startSpeedModeKeepAwake } from "@/lib/screenAwake";
 import { findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import { getNextPosition, getWordAtPosition } from "@/lib/utils/bookHelpers";
 import type { Position } from "@/types/reading";
+import { classifyNavigationTitle, navigationKindLabel } from "@/lib/navigationHierarchy";
 
 function splitWordMiddle(word: string): { before: string; middle: string; after: string } {
   if (!word) return { before: "", middle: "", after: "" };
@@ -323,7 +324,7 @@ export default function SpeedReadingMode() {
                 {currentChapter ? (
                   <div className="flex flex-col items-center">
                     <span className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 mb-0.5">
-                      Chapter {currentChapter.index + 1}
+                      {navigationKindLabel(currentChapter.kind ?? classifyNavigationTitle(currentChapter.title))}
                     </span>
                     <span className="text-sm text-neutral-200 font-medium truncate max-w-[200px]">
                       {currentChapter.title}

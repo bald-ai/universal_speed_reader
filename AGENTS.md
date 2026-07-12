@@ -24,6 +24,14 @@ act accordingly.
 - No new dependencies or tooling changes without approval.
 - File size guideline: aim to keep files under ~700 LOC; split/refactor when it improves clarity or testability.
 
+## Android application identity
+
+The Android module is installed as `com.traycer.speedreader`. Before running
+any Android upload/install command, read
+[`../ANDROID_APP_IDS.md`](../ANDROID_APP_IDS.md) and verify the built APK's
+package ID. Never use `adb uninstall` as an automatic repair step: first stop
+and resolve a possible application-ID collision.
+
 ## Prototype mode (figure out what you want)
 - Keep clarity and naming rules.
 - During exploration, strict test/coverage gates can be relaxed, but handoff rules still apply before final handoff.

@@ -92,6 +92,8 @@ export interface ExtractionState {
   imageKeys: Set<string>;
   contentImageSources: Set<string>;
   contentImageReferences: Set<string>;
+  pendingSceneBreakSource: Paragraph["sceneBreakBefore"] | null;
+  cssSeparatorElements: Set<DomNode>;
   deadline: number;
   timeoutMs: number;
 }

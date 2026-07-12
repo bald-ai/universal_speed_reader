@@ -1,5 +1,6 @@
 import type { Book } from "@/types/book";
 import type { Mode } from "@/types/reading";
+import type { NavigationKind } from "@/types/navigation";
 
 export type ProcessingStatus =
   | "queued"
@@ -20,12 +21,15 @@ export type ImportErrorBucket =
 export type StoredParagraph = {
   id: number;
   text: string;
+  sceneBreakBefore?: "text-ornament" | "horizontal-rule" | "css-separator" | "whitespace";
 };
 
 export type StoredChapter = {
   index: number;
   title: string;
   start_paragraph_id: number;
+  kind?: NavigationKind;
+  level?: number;
 };
 
 export type BookRow = {
@@ -58,6 +62,8 @@ export type BookChapterRow = {
   chapter_index: number;
   title: string;
   start_paragraph_id: number;
+  kind?: NavigationKind;
+  level?: number;
 };
 
 export type BookImageRow = {

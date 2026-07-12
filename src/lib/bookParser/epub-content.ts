@@ -3,7 +3,7 @@ import { basename } from "./path.ts";
 import { load } from "cheerio";
 
 import { countWords, decodeSafeUriComponent, normalizeText } from "./text.ts";
-import type { BookImage, Cover, ParserDiagnostic } from "./types.ts";
+import type { BookImage, Cover, Paragraph, ParserDiagnostic } from "./types.ts";
 import {
   checkDeadline,
   decodeMarkup,
@@ -87,6 +87,8 @@ export function createExtractionState(
     imageKeys: new Set(),
     contentImageSources: new Set(),
     contentImageReferences: new Set(),
+    pendingSceneBreakSource: null,
+    cssSeparatorElements: new Set(),
     deadline,
     timeoutMs,
   };
@@ -255,6 +257,15 @@ async function collectStylesheetMediaReferences(
   }
 
   for (const stylesheet of stylesheets) {
+    for (const selector of cssSeparatorSelectors(stylesheet.css)) {
+      try {
+        for (const element of $(selector).toArray()) {
+          if (contentSet.has(element)) state.cssSeparatorElements.add(element);
+        }
+      } catch {
+        // Unsupported selectors are ignored just like unsupported image rules.
+      }
+    }
     for (const rule of cssImageRules(stylesheet.css)) {
       for (const selector of rule.selectors) {
         let matches: DomNode[];
@@ -279,6 +290,35 @@ async function collectStylesheetMediaReferences(
     }
   }
   return result;
+}
+
+function cssSeparatorSelectors(css: string): string[] {
+  const selectors: string[] = [];
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//gu, "");
+  for (const match of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+    const selectorText = match[1]?.trim() ?? "";
+    const declarations = match[2] ?? "";
+    if (!selectorText || selectorText.startsWith("@")) continue;
+    const narrowRule = /border-(?:top|bottom)\s*:\s*(?!0|none)/iu.test(declarations)
+      && /(?:width|max-width)\s*:\s*(?:[1-9]\d?|100)(?:px|%|em|rem)/iu.test(declarations);
+    const pairedMargins = cssLengthAtLeast(declarations, "margin-(?:top|block-start)", 1)
+      && cssLengthAtLeast(declarations, "margin-(?:bottom|block-end)", 1);
+    const centeredSpacing = /text-align\s*:\s*center/iu.test(declarations)
+      && (pairedMargins || cssLengthAtLeast(declarations, "min-height", 1));
+    const classScopedMarginGap = pairedMargins && /[.#][\w-]+/u.test(selectorText);
+    const content = /content\s*:\s*(['"])(.*?)\1/iu.exec(declarations)?.[2] ?? "";
+    if (!narrowRule && !centeredSpacing && !classScopedMarginGap && !isSceneOrnamentText(content)) continue;
+    selectors.push(...selectorText
+      .split(",")
+      .map((selector) => selector.replace(/::(?:before|after|marker)\b.*$/iu, "").trim())
+      .filter(Boolean));
+  }
+  return selectors;
+}
+
+function cssLengthAtLeast(declarations: string, propertyPattern: string, minimumEm: number): boolean {
+  const match = new RegExp(`${propertyPattern}\\s*:\\s*(\\d+(?:\\.\\d+)?)(em|rem)`, "iu").exec(declarations);
+  return match?.[1] !== undefined && Number(match[1]) >= minimumEm;
 }
 
 function cssImageRules(css: string): Array<{ selectors: string[]; references: string[] }> {
@@ -317,6 +357,21 @@ async function extractFlowElement(
   const tag = localName(element);
   if (IGNORED_TEXT_ELEMENTS.has(tag)) return;
 
+  if (tag === "hr") {
+    recordSceneBreak(state, "horizontal-rule");
+    return;
+  }
+
+  const elementText = normalizeText($(element).text());
+  if (isSceneOrnamentText(elementText) && $(element).find(MEDIA_SELECTOR).length === 0) {
+    recordSceneBreak(state, "text-ornament");
+    return;
+  }
+  if (elementText.length === 0 && hasCssSeparatorSignal($, element, state)) {
+    recordSceneBreak(state, "css-separator");
+    return;
+  }
+
   let buffer = "";
   let pendingPunctuation = "";
   let firstParagraphId: number | null = null;
@@ -335,7 +390,19 @@ async function extractFlowElement(
         : text;
       pendingPunctuation = "";
       const paragraphId = state.paragraphs.length + 1;
-      state.paragraphs.push({ id: paragraphId, text: paragraphText });
+      const previousParagraph = state.paragraphs.at(-1);
+      const sceneBreakBefore = state.pendingSceneBreakSource
+        && previousParagraph !== undefined
+        && countWords(previousParagraph.text) >= 8
+        && countWords(paragraphText) >= 8
+        ? state.pendingSceneBreakSource
+        : null;
+      state.paragraphs.push({
+        id: paragraphId,
+        text: paragraphText,
+        ...(sceneBreakBefore ? { sceneBreakBefore } : {}),
+      });
+      state.pendingSceneBreakSource = null;
       firstParagraphId ??= paragraphId;
       emittedTexts.push(paragraphText);
     }
@@ -354,6 +421,12 @@ async function extractFlowElement(
     if (nodeTag === "br") {
       registerElementAnchor($, node, documentPath, state);
       buffer += "\n";
+      return;
+    }
+
+    if (nodeTag === "hr") {
+      flushText();
+      recordSceneBreak(state, "horizontal-rule");
       return;
     }
 
@@ -423,6 +496,35 @@ async function extractFlowElement(
       if (!firstHeading.value) firstHeading.value = title;
     }
   }
+}
+
+function recordSceneBreak(
+  state: ExtractionState,
+  source: NonNullable<Paragraph["sceneBreakBefore"]>,
+): void {
+  if (state.paragraphs.length === 0) return;
+  state.pendingSceneBreakSource ??= source;
+}
+
+/** A standalone ornament is structural; the same glyphs inside prose are not. */
+export function isSceneOrnamentText(value: string): boolean {
+  const compact = normalizeText(value);
+  if (compact.length === 0 || /[\p{L}\p{N}]/u.test(compact)) return false;
+  if (/^[\u2042\u2766\u2767]$/u.test(compact)) return true;
+  const symbols = compact.match(/[\*\u2042\u2022\u25C6\u25C7\u25CA\u2766\u2767\u00B7]/gu) ?? [];
+  return symbols.length >= 3
+    && compact.replace(/[\s*\u2042\u2022\u25C6\u25C7\u25CA\u2766\u2767\u00B7—–_-]/gu, "").length === 0;
+}
+
+function hasCssSeparatorSignal($: LoadedDocument, element: DomNode, state: ExtractionState): boolean {
+  if (state.cssSeparatorElements.has(element)) return true;
+  const descriptor = `${$(element).attr("class") ?? ""} ${$(element).attr("id") ?? ""}`;
+  if (/(?:^|[\s_-])(?:asterism|scene[-_ ]?break|separator|divider|ornament)(?:$|[\s_-])/iu.test(descriptor)) {
+    return true;
+  }
+  const style = $(element).attr("style") ?? "";
+  return /border-(?:top|bottom)\s*:/iu.test(style)
+    && /(?:width|max-width)\s*:\s*(?:[1-9]\d?|100)(?:px|%|em|rem)/iu.test(style);
 }
 
 function registerElementAnchor(

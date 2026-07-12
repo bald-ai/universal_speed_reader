@@ -1,6 +1,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import type { Chapter } from "@/types/book";
+import { classifyNavigationTitle, navigationKindLabel, navigationLevel } from "@/lib/navigationHierarchy";
 
 type ChapterMenuProps = {
   isOpen: boolean;
@@ -46,7 +47,7 @@ export default function ChapterMenu(props: ChapterMenuProps) {
           >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800/80">
-              <h2 className="text-sm font-semibold tracking-tight text-neutral-100">Chapters</h2>
+              <h2 className="text-sm font-semibold tracking-tight text-neutral-100">Book navigation</h2>
               <motion.button
                 type="button"
                 onClick={onClose}
@@ -63,12 +64,14 @@ export default function ChapterMenu(props: ChapterMenuProps) {
             <div className="max-h-[calc(60vh-4rem)] overflow-y-auto">
               {chapters.length === 0 ? (
                 <div className="px-6 py-8 text-sm text-neutral-400 text-center">
-                  No chapters detected.
+                  No navigation entries detected.
                 </div>
               ) : (
                 <ul className="py-2">
                   {chapters.map((chapter, i) => {
                     const isActive = currentChapterIndex === chapter.index;
+                    const kind = chapter.kind ?? classifyNavigationTitle(chapter.title);
+                    const level = chapter.level ?? navigationLevel(kind);
                     return (
                       <motion.li
                         key={chapter.index}
@@ -85,12 +88,16 @@ export default function ChapterMenu(props: ChapterMenuProps) {
                           onClick={() => onSelect(chapter)}
                           whileHover={{ backgroundColor: isActive ? "rgba(139, 92, 246, 0.15)" : "rgba(64, 64, 64, 0.5)" }}
                           whileTap={{ scale: 0.98 }}
-                          className={`w-full px-6 py-4 text-left transition-colors duration-150 border-l-2 ${
+                          className={`w-full pr-6 py-4 text-left transition-colors duration-150 border-l-2 ${
                             isActive
                               ? "bg-violet-500/10 border-violet-500 text-violet-100"
                               : "border-transparent text-neutral-200 hover:bg-neutral-900/50"
                           }`}
+                          style={{ paddingLeft: `${Math.min(24 + Math.max(0, level - 1) * 16, 72)}px` }}
                         >
+                          <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                            {navigationKindLabel(kind)}
+                          </div>
                           <div className={`text-sm font-medium ${
                             isActive ? "text-violet-100" : "text-neutral-200"
                           }`}>

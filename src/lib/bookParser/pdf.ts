@@ -242,7 +242,11 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
   const book = buildBook({
     format: "pdf",
     metadata,
-    paragraphs: paragraphs.map((paragraph, index) => ({ id: index + 1, text: paragraph.text })),
+    paragraphs: paragraphs.map((paragraph, index) => ({
+      id: index + 1,
+      text: paragraph.text,
+      ...(paragraph.sceneBreakBefore ? { sceneBreakBefore: paragraph.sceneBreakBefore } : {}),
+    })),
     chapters,
     images,
     cover: totalPageCount > 0 ? { src: pdfPagePointer(1), mediaType: "application/pdf" } : null,

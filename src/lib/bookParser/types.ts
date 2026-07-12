@@ -1,3 +1,5 @@
+import type { NavigationKind } from "../../types/navigation.ts";
+
 export type BookFormat = "epub" | "pdf";
 
 export const FAILURE_BUCKETS = [
@@ -16,11 +18,17 @@ export type FailureBucket = (typeof FAILURE_BUCKETS)[number];
 export interface Paragraph {
   id: number;
   text: string;
+  /** Anonymous narrative transition immediately before this real paragraph. */
+  sceneBreakBefore?: SceneBreakSource;
 }
+
+export type SceneBreakSource = "text-ornament" | "horizontal-rule" | "css-separator" | "whitespace";
 
 export interface Chapter {
   title: string;
   startParagraphId: number;
+  kind?: NavigationKind;
+  level?: number;
 }
 
 export interface BookImage {
@@ -47,6 +55,7 @@ export interface BookTotals {
   paragraphs: number;
   chapters: number;
   images: number;
+  sceneBreaks: number;
 }
 
 export interface ParserDiagnostic {
@@ -64,7 +73,7 @@ export interface ParserTimings {
 }
 
 export interface ParsedBook {
-  schemaVersion: 1;
+  schemaVersion: 2;
   format: BookFormat;
   metadata: BookMetadata;
   paragraphs: Paragraph[];

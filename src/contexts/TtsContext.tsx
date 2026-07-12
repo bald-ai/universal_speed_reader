@@ -13,6 +13,9 @@ import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
 import { useTtsRegex } from "@/contexts/TtsRegexContext";
 import type { Position } from "@/types/reading";
+import type { Book, Paragraph } from "@/types/book";
+import { navigationEntryAtParagraph } from "@/lib/reader/chapterSeparators";
+import { classifyNavigationTitle } from "@/lib/navigationHierarchy";
 import { getTokensForParagraph } from "@/lib/utils/tokenCache";
 import type { TtsRegexMatchMode } from "@/types/ttsRegex";
 import {
@@ -51,6 +54,35 @@ type Props = { children: ReactNode };
 
 const MAX_UTTERANCE_CHARS = 1800;
 const MAX_TRANSFORMED_CHUNK_CHARS = 5000;
+export const TTS_PARAGRAPH_BREAK_PAUSE_MS = 280;
+export const TTS_SCENE_BREAK_PAUSE_MS = 650;
+export const TTS_CHAPTER_BREAK_PAUSE_MS = 1_000;
+
+export function ttsPauseBeforeParagraph(
+  book: Pick<Book, "chapters">,
+  paragraph: Pick<Paragraph, "id" | "sceneBreakBefore">,
+  isStartingParagraph: boolean,
+): number {
+  if (isStartingParagraph) return 0;
+  const navigationEntry = navigationEntryAtParagraph(book, paragraph.id);
+  if (navigationEntry) {
+    const kind = navigationEntry.kind ?? classifyNavigationTitle(navigationEntry.title);
+    return kind === "scene" || kind === "section"
+      ? TTS_SCENE_BREAK_PAUSE_MS
+      : TTS_CHAPTER_BREAK_PAUSE_MS;
+  }
+  if (paragraph.sceneBreakBefore) return TTS_SCENE_BREAK_PAUSE_MS;
+  return TTS_PARAGRAPH_BREAK_PAUSE_MS;
+}
+
+export function waitForTtsPause(
+  pauseMs: number,
+  schedule: (callback: () => void, delayMs: number) => unknown = (callback, delayMs) =>
+    window.setTimeout(callback, delayMs),
+): Promise<void> {
+  if (pauseMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => { schedule(resolve, pauseMs); });
+}
 const TTS_DEBUG_PREFIX = "[TTS DEBUG]";
 const TTS_DEBUG_ENABLED = import.meta.env.DEV;
 
@@ -67,17 +99,20 @@ function logTtsDebug(label: string, payload: Record<string, unknown>): void {
   console.warn(`${TTS_DEBUG_PREFIX} ${label} ${formatTtsDebugPayload(payload)}`);
 }
 
-type SpokenRange = {
+export type SpokenRange = {
   start: number;
   end: number;
   position: Position;
 };
 
-type SpokenChunk = {
+export type SpokenChunk = {
   text: string;
   ranges: SpokenRange[];
   startPosition: Position;
+  pauseBeforeMs: number;
 };
+
+export type ChunkedSpeech = { chunks: SpokenChunk[]; startPosition: Position };
 
 type TransformSpokenChunkResult = {
   text: string;
@@ -268,6 +303,74 @@ export function transformSpokenChunk(input: TransformSpokenChunkInput): Transfor
   };
 }
 
+export function buildTtsSpeechChunks(book: Book, start: Position): ChunkedSpeech | null {
+  if (book.paragraphs.length === 0) return null;
+
+  const paragraphIndexById = new Map<number, number>();
+  for (let index = 0; index < book.paragraphs.length; index += 1) {
+    paragraphIndexById.set(book.paragraphs[index].id, index);
+  }
+
+  const startParagraphIndex = paragraphIndexById.get(start.paragraphId) ?? 0;
+  const chunks: SpokenChunk[] = [];
+  let currentParts: string[] = [];
+  let currentRanges: SpokenRange[] = [];
+  let cursor = 0;
+  let currentPauseBeforeMs = 0;
+
+  const finalizeChunk = () => {
+    const first = currentRanges[0];
+    if (!first) return;
+    chunks.push({
+      text: currentParts.join(""),
+      ranges: currentRanges,
+      startPosition: first.position,
+      pauseBeforeMs: currentPauseBeforeMs,
+    });
+    currentParts = [];
+    currentRanges = [];
+    cursor = 0;
+    currentPauseBeforeMs = 0;
+  };
+
+  for (let paragraphIndex = startParagraphIndex; paragraphIndex < book.paragraphs.length; paragraphIndex += 1) {
+    const paragraph = book.paragraphs[paragraphIndex];
+    const tokens = getTokensForParagraph(book, paragraph);
+    const wordStart = paragraphIndex === startParagraphIndex ? Math.max(0, start.wordIndex) : 0;
+    if (wordStart >= tokens.length) continue;
+
+    if (paragraphIndex > startParagraphIndex) {
+      finalizeChunk();
+      currentPauseBeforeMs = ttsPauseBeforeParagraph(book, paragraph, false);
+    }
+
+    for (let wordIndex = wordStart; wordIndex < tokens.length; wordIndex += 1) {
+      const word = tokens[wordIndex]?.trim();
+      if (!word) continue;
+      const separator = currentParts.length > 0 ? " " : "";
+      if (cursor + separator.length + word.length > MAX_UTTERANCE_CHARS && currentRanges.length > 0) {
+        finalizeChunk();
+      }
+      if (currentParts.length > 0) {
+        currentParts.push(" ");
+        cursor += 1;
+      }
+      const startChar = cursor;
+      currentParts.push(word);
+      cursor += word.length;
+      currentRanges.push({
+        start: startChar,
+        end: cursor,
+        position: { paragraphId: paragraph.id, wordIndex },
+      });
+    }
+  }
+
+  finalizeChunk();
+  const firstChunk = chunks[0];
+  return firstChunk ? { chunks, startPosition: firstChunk.startPosition } : null;
+}
+
 export function TtsProvider(props: Props) {
   const { children } = props;
   const { book } = useBook();
@@ -323,82 +426,7 @@ export function TtsProvider(props: Props) {
   }, []);
 
   const buildChunkedSpeechFromPosition = useCallback(
-    (start: Position): { chunks: SpokenChunk[]; startPosition: Position } | null => {
-      if (!book || book.paragraphs.length === 0) return null;
-
-      const paragraphIndexById = new Map<number, number>();
-      for (let i = 0; i < book.paragraphs.length; i += 1) {
-        paragraphIndexById.set(book.paragraphs[i].id, i);
-      }
-
-      const startParagraphIndex = paragraphIndexById.get(start.paragraphId) ?? 0;
-      const chunks: SpokenChunk[] = [];
-
-      let currentParts: string[] = [];
-      let currentRanges: SpokenRange[] = [];
-      let cursor = 0;
-      let emittedWords = 0;
-      let lastParagraphId: number | null = null;
-
-      const finalizeChunk = () => {
-        if (currentRanges.length === 0) return;
-        const first = currentRanges[0];
-        if (!first) return;
-
-        chunks.push({
-          text: currentParts.join(""),
-          ranges: currentRanges,
-          startPosition: first.position,
-        });
-        currentParts = [];
-        currentRanges = [];
-        cursor = 0;
-      };
-
-      for (let p = startParagraphIndex; p < book.paragraphs.length; p += 1) {
-        const paragraph = book.paragraphs[p];
-        const tokens = getTokensForParagraph(book, paragraph);
-        const wordStart = p === startParagraphIndex ? Math.max(0, start.wordIndex) : 0;
-
-        for (let w = wordStart; w < tokens.length; w += 1) {
-          const word = tokens[w]?.trim();
-          if (!word) continue;
-
-          const position: Position = { paragraphId: paragraph.id, wordIndex: w };
-          let separator = "";
-          if (emittedWords > 0) {
-            separator = lastParagraphId === paragraph.id ? " " : "\n";
-          }
-
-          const candidateLen = separator.length + word.length;
-          if (cursor + candidateLen > MAX_UTTERANCE_CHARS && currentRanges.length > 0) {
-            finalizeChunk();
-            separator = "";
-          }
-
-          if (separator && currentParts.length > 0) {
-            currentParts.push(separator);
-            cursor += separator.length;
-          }
-
-          const startChar = cursor;
-          currentParts.push(word);
-          cursor += word.length;
-          currentRanges.push({ start: startChar, end: cursor, position });
-
-          emittedWords += 1;
-          lastParagraphId = paragraph.id;
-        }
-      }
-
-      finalizeChunk();
-
-      if (chunks.length === 0) return null;
-      const firstChunk = chunks[0];
-      if (!firstChunk) return null;
-
-      return { chunks, startPosition: firstChunk.startPosition };
-    },
+    (start: Position): ChunkedSpeech | null => book ? buildTtsSpeechChunks(book, start) : null,
     [book]
   );
 
@@ -457,6 +485,11 @@ export function TtsProvider(props: Props) {
         let hasShownReplacementWarning = false;
         for (const chunk of payload.chunks) {
           if (speakSessionRef.current !== sessionId) return;
+
+          if (chunk.pauseBeforeMs > 0) {
+            await waitForTtsPause(chunk.pauseBeforeMs);
+            if (speakSessionRef.current !== sessionId) return;
+          }
 
           const transformed = transformSpokenChunk({
             chunk,

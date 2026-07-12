@@ -7,6 +7,8 @@ import {
 import type { BookRepository, ListBooksOptions } from "@/lib/storage/bookRepository";
 import type { Book, BookImage, Chapter, Paragraph } from "@/types/book";
 import type { Mode } from "@/types/reading";
+import { classifyNavigationTitle, navigationLevel } from "@/lib/navigationHierarchy";
+import type { NavigationKind } from "@/types/navigation";
 import type {
   AppSettingRow,
   BookPatch,
@@ -25,7 +27,7 @@ import type {
 } from "@/types/storage";
 
 const DB_NAME = "universal_speed_reader";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const SCHEMA_V1_SQL = `
   CREATE TABLE IF NOT EXISTS books (
     id TEXT PRIMARY KEY NOT NULL,
@@ -99,6 +101,11 @@ const SCHEMA_V2_SQL = `
   );
 `;
 
+const SCHEMA_V3_SQL = `
+  ALTER TABLE book_chapters ADD COLUMN kind TEXT NOT NULL DEFAULT 'chapter';
+  ALTER TABLE book_chapters ADD COLUMN level INTEGER NOT NULL DEFAULT 2;
+`;
+
 type SqlRow = Record<string, unknown>;
 
 const PROCESSING_STATUS_VALUES = new Set<ProcessingStatus>([
@@ -112,6 +119,9 @@ const PROCESSING_STATUS_VALUES = new Set<ProcessingStatus>([
 ]);
 
 const MODE_VALUES = new Set<Mode>(["normal", "speed"]);
+const NAVIGATION_KIND_VALUES = new Set<NavigationKind>([
+  "frontmatter", "part", "chapter", "section", "scene", "backmatter",
+]);
 
 function readRequiredString(row: SqlRow, key: string): string {
   const value = row[key];
@@ -162,13 +172,18 @@ function readMode(row: SqlRow, key: string): Mode {
 function parseParagraphsJson(raw: unknown): Paragraph[] {
   if (typeof raw !== "string") return [];
   try {
-    const parsed = JSON.parse(raw) as Array<{ id: number; text: string }>;
+    const parsed = JSON.parse(raw) as Array<{
+      id: number;
+      text: string;
+      sceneBreakBefore?: Paragraph["sceneBreakBefore"];
+    }>;
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((entry) => typeof entry?.id === "number" && typeof entry?.text === "string")
       .map((entry) => ({
         id: entry.id,
         text: entry.text,
+        ...(entry.sceneBreakBefore ? { sceneBreakBefore: entry.sceneBreakBefore } : {}),
       }));
   } catch {
     return [];
@@ -203,11 +218,22 @@ function toBookChunkRow(row: SqlRow): BookChunkRow {
 }
 
 function toBookChapterRow(row: SqlRow): BookChapterRow {
+  const title = readRequiredString(row, "title");
+  const rawKind = readNullableString(row, "kind");
+  const kind = rawKind && NAVIGATION_KIND_VALUES.has(rawKind as NavigationKind)
+    ? rawKind as NavigationKind
+    : classifyNavigationTitle(title);
+  const rawLevel = row.level;
+  const level = typeof rawLevel === "number" && Number.isInteger(rawLevel) && rawLevel > 0
+    ? rawLevel
+    : navigationLevel(kind);
   return {
     book_id: readRequiredString(row, "book_id"),
     chapter_index: readRequiredNumber(row, "chapter_index"),
-    title: readRequiredString(row, "title"),
+    title,
     start_paragraph_id: readRequiredNumber(row, "start_paragraph_id"),
+    kind,
+    level,
   };
 }
 
@@ -522,8 +548,15 @@ export class SqliteBookRepository implements BookRepository {
         if (replacement.chapters.length > 0) {
           const chapterInserts: capSQLiteSet[] = replacement.chapters.map((chapter, chapterIndex) => ({
             statement:
-              "INSERT INTO book_chapters (book_id, chapter_index, title, start_paragraph_id) VALUES (?, ?, ?, ?)",
-            values: [bookId, chapterIndex, chapter.title, chapter.start_paragraph_id],
+              "INSERT INTO book_chapters (book_id, chapter_index, title, start_paragraph_id, kind, level) VALUES (?, ?, ?, ?, ?, ?)",
+            values: [
+              bookId,
+              chapterIndex,
+              chapter.title,
+              chapter.start_paragraph_id,
+              chapter.kind ?? classifyNavigationTitle(chapter.title),
+              chapter.level ?? navigationLevel(chapter.kind ?? classifyNavigationTitle(chapter.title)),
+            ],
           }));
           await db.executeSet(chapterInserts, false);
         }
@@ -652,6 +685,8 @@ export class SqliteBookRepository implements BookRepository {
           index: chapter.chapter_index,
           title: chapter.title,
           startParagraphId: chapter.start_paragraph_id,
+          kind: chapter.kind ?? classifyNavigationTitle(chapter.title),
+          level: chapter.level ?? navigationLevel(chapter.kind ?? classifyNavigationTitle(chapter.title)),
         }));
       const images = toBookImages(imageRows.map(toBookImageRow));
 
@@ -925,12 +960,14 @@ export class SqliteBookRepository implements BookRepository {
           await db.executeSet(
             snapshot.book_chapters.map((chapter) => ({
               statement:
-                "INSERT INTO book_chapters (book_id, chapter_index, title, start_paragraph_id) VALUES (?, ?, ?, ?)",
+                "INSERT INTO book_chapters (book_id, chapter_index, title, start_paragraph_id, kind, level) VALUES (?, ?, ?, ?, ?, ?)",
               values: [
                 chapter.book_id,
                 chapter.chapter_index,
                 chapter.title,
                 chapter.start_paragraph_id,
+                chapter.kind ?? classifyNavigationTitle(chapter.title),
+                chapter.level ?? navigationLevel(chapter.kind ?? classifyNavigationTitle(chapter.title)),
               ],
             })),
             false
@@ -1065,6 +1102,8 @@ export class SqliteBookRepository implements BookRepository {
         await db.execute(SCHEMA_V1_SQL);
       } else if (version === 2) {
         await db.execute(SCHEMA_V2_SQL);
+      } else if (version === 3) {
+        await db.execute(SCHEMA_V3_SQL);
       } else {
         throw new Error(`No SQLite migration defined for schema version ${version}`);
       }

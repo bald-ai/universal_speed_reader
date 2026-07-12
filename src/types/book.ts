@@ -1,13 +1,21 @@
+import type { NavigationKind } from "@/types/navigation";
+
 export type Paragraph = {
   id: number;
   text: string;
   chapterIndex?: number;
+  /** Anonymous narrative transition immediately before this real paragraph. */
+  sceneBreakBefore?: SceneBreakSource;
 };
+
+export type SceneBreakSource = "text-ornament" | "horizontal-rule" | "css-separator" | "whitespace";
 
 export type Chapter = {
   index: number;
   title: string;
   startParagraphId: number;
+  kind?: NavigationKind;
+  level?: number;
 };
 
 /** Sidecar image block for normal reading; anchored after a paragraph (0 = before first). */

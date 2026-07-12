@@ -4,6 +4,7 @@ import { loadRawBook, storeRawBook } from "./rawEpubStore";
 import { InMemoryBookRepository } from "@/lib/storage/inMemoryBookRepository";
 import { setBookRepositoryForTests } from "@/lib/storage/appRepository";
 import { __resetMoodStoreForTests } from "@/lib/moodStore";
+import { TTS_REGEX_SETTINGS_KEY } from "@/lib/ttsRegex/storePersistence";
 
 afterEach(() => {
   setBookRepositoryForTests(null);
@@ -32,6 +33,22 @@ describe("book parser library reset", () => {
       updated_at: 1,
     });
     await repository.putAppSetting("theme", "dark");
+    const globalRule = {
+      id: "global",
+      pattern: "global",
+      replacement: "global",
+      source: "regex" as const,
+      enabled: true,
+      caseInsensitive: true,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    await repository.putAppSetting(TTS_REGEX_SETTINGS_KEY, {
+      version: 1,
+      matchMode: "token",
+      globalRules: [globalRule],
+      bookRulesById: { "old-book": [{ ...globalRule, id: "book-rule" }] },
+    });
     await storeRawBook({
       bookId: "old-book",
       fileName: "old.epub",
@@ -47,6 +64,12 @@ describe("book parser library reset", () => {
     expect(await repository.listBooks()).toEqual([]);
     expect(await loadRawBook("old-book")).toBeNull();
     expect(await repository.getAppSetting<string>("theme")).toBe("dark");
-    expect(await repository.getAppSetting<boolean>("book_parser_library_reset.v1")).toBe(true);
+    expect(await repository.getAppSetting<boolean>("book_parser_library_reset.v3_scene_hierarchy")).toBe(true);
+    expect(await repository.getAppSetting<unknown>(TTS_REGEX_SETTINGS_KEY)).toEqual({
+      version: 1,
+      matchMode: "token",
+      globalRules: [globalRule],
+      bookRulesById: {},
+    });
   });
 });

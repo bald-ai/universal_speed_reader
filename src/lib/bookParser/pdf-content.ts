@@ -45,6 +45,7 @@ export interface DraftParagraph {
   text: string;
   lines: TextLine[];
   headingKind: "strong" | "typographic" | null;
+  sceneBreakBefore?: "text-ornament" | "whitespace";
 }
 
 const STRUCTURAL_ORDINAL_PATTERN = "(?:\\p{N}{1,3}|[ivxlcdm]{1,8}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)";
@@ -52,6 +53,41 @@ const BARE_STRUCTURAL_HEADING = new RegExp(
   `^(?:chapter|book|part|section)\\s+${STRUCTURAL_ORDINAL_PATTERN}[.)]?$`,
   "iu",
 );
+// These mirror validateText's strict rejection boundary. The retry only runs
+// for a model that validation would otherwise reject; validation itself stays
+// authoritative and unchanged.
+const COLLAPSED_PARAGRAPH_MINIMUM_WORDS = 1_000;
+const COLLAPSED_PARAGRAPH_MAXIMUM_WORDS = 5_000;
+const COLLAPSED_PARAGRAPH_WORD_RATIO = 0.9;
+const OVERSIZED_PROSE_PARAGRAPH_WORDS = 500;
+const SYNTHETIC_PARAGRAPH_TARGET_WORDS = 280;
+const SYNTHETIC_PARAGRAPH_MINIMUM_WORDS = 180;
+const SYNTHETIC_PARAGRAPH_MAXIMUM_WORDS = 420;
+
+interface GapProfile {
+  typical: number;
+  paragraphThreshold: number | null;
+}
+
+interface GapCluster {
+  values: number[];
+  center: number;
+}
+
+interface EmbeddedChapterMarker {
+  start: number;
+  end: number;
+  order: number;
+  paragraphIndex: number;
+}
+
+interface EmbeddedChapterRange {
+  start: number;
+  end: number;
+  title: string;
+  startParagraphIndex: number;
+  endParagraphIndex: number;
+}
 
 export function filterRepeatedPageFurniture(pages: PageData[]): void {
   for (const page of pages) {
@@ -124,10 +160,142 @@ function furnitureSignature(value: string): string {
 }
 
 export function buildParagraphs(pages: PageData[]): DraftParagraph[] {
+  const primary = buildParagraphsWithMode(pages, false);
+  const paragraphs = paragraphBoundariesCollapsed(primary)
+    ? buildParagraphsWithMode(pages, true)
+    : primary;
+  return splitOversizedProseParagraphs(
+    inferPdfSceneBreaks(stripCompactPdfContents(recoverEmbeddedChapterHeadings(paragraphs))),
+  );
+}
+
+/**
+ * A few text generators discard paragraph layout completely: every baseline
+ * is identical and paragraph starts can occur in the middle of a PDF line.
+ * Geometry cannot recover those original boundaries. Keep ordinary models
+ * untouched, but make an already-oversized prose block usable when it has
+ * repeated, convincing sentence boundaries. Blocks without that evidence
+ * remain collapsed so strict validation can still reject them.
+ */
+function splitOversizedProseParagraphs(paragraphs: DraftParagraph[]): DraftParagraph[] {
+  return paragraphs.flatMap((paragraph) => {
+    if (paragraph.headingKind !== null || countWords(paragraph.text) <= OVERSIZED_PROSE_PARAGRAPH_WORDS) {
+      return [paragraph];
+    }
+
+    const sentenceSlices = sentenceSlicesForSyntheticParagraphs(paragraph.text);
+    if (sentenceSlices.length < 3
+      || sentenceSlices.some((slice) => countWords(slice.text) > SYNTHETIC_PARAGRAPH_MAXIMUM_WORDS)) {
+      return [paragraph];
+    }
+
+    const chunks: TextSlice[] = [];
+    let current: TextSlice | null = null;
+    for (const sentence of sentenceSlices) {
+      if (current === null) {
+        current = sentence;
+        continue;
+      }
+      const currentWords = countWords(current.text);
+      const combinedWords = currentWords + countWords(sentence.text);
+      if (currentWords >= SYNTHETIC_PARAGRAPH_MINIMUM_WORDS
+        && combinedWords > SYNTHETIC_PARAGRAPH_TARGET_WORDS) {
+        chunks.push(current);
+        current = sentence;
+      } else {
+        current = {
+          start: current.start,
+          end: sentence.end,
+          text: normalizeText(`${current.text} ${sentence.text}`),
+        };
+      }
+    }
+    if (current !== null) chunks.push(current);
+
+    const tail = chunks.at(-1);
+    const beforeTail = chunks.at(-2);
+    if (tail !== undefined && beforeTail !== undefined
+      && countWords(tail.text) < SYNTHETIC_PARAGRAPH_MINIMUM_WORDS
+      && countWords(beforeTail.text) + countWords(tail.text) <= SYNTHETIC_PARAGRAPH_MAXIMUM_WORDS) {
+      chunks.splice(-2, 2, {
+        start: beforeTail.start,
+        end: tail.end,
+        text: normalizeText(`${beforeTail.text} ${tail.text}`),
+      });
+    }
+
+    if (chunks.length < 2
+      || chunks.some((chunk) => countWords(chunk.text) > SYNTHETIC_PARAGRAPH_MAXIMUM_WORDS)) {
+      return [paragraph];
+    }
+
+    const { sceneBreakBefore, ...base } = paragraph;
+    return chunks.map((chunk, index) => ({
+      ...base,
+      text: chunk.text,
+      lines: proportionalLinesForTextSlice(paragraph, chunk),
+      ...(index === 0 && sceneBreakBefore !== undefined ? { sceneBreakBefore } : {}),
+    }));
+  });
+}
+
+interface TextSlice {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function sentenceSlicesForSyntheticParagraphs(text: string): TextSlice[] {
+  const result: TextSlice[] = [];
+  const boundaryPattern = /[.!?…][”’)]?(?=\s+[\p{Lu}“‘\[])/gu;
+  let start = 0;
+  for (const match of text.matchAll(boundaryPattern)) {
+    if (match.index === undefined) continue;
+    const end = match.index + match[0].length;
+    const sentence = normalizeText(text.slice(start, end));
+    if (sentence.length > 0) result.push({ start, end, text: sentence });
+    start = end;
+  }
+  const tail = normalizeText(text.slice(start));
+  if (tail.length > 0) result.push({ start, end: text.length, text: tail });
+  return result;
+}
+
+function proportionalLinesForTextSlice(paragraph: DraftParagraph, slice: TextSlice): TextLine[] {
+  if (paragraph.lines.length <= 1 || paragraph.text.length === 0) return paragraph.lines;
+  const start = Math.min(
+    paragraph.lines.length - 1,
+    Math.floor((slice.start / paragraph.text.length) * paragraph.lines.length),
+  );
+  const end = Math.max(
+    start + 1,
+    Math.min(paragraph.lines.length, Math.ceil((slice.end / paragraph.text.length) * paragraph.lines.length)),
+  );
+  return paragraph.lines.slice(start, end);
+}
+
+function stripCompactPdfContents(paragraphs: DraftParagraph[]): DraftParagraph[] {
+  const firstBodyHeading = paragraphs.findIndex((paragraph) =>
+    paragraph.headingKind === "strong" && /^(?:chapter|book|part|section)\b/iu.test(paragraph.text)
+  );
+  if (firstBodyHeading < 0) return paragraphs;
+  return paragraphs.flatMap((paragraph, index) => {
+    if (index >= firstBodyHeading) return [paragraph];
+    const contentsStart = paragraph.text.search(/\bcontents\b/iu);
+    if (contentsStart < 0) return [paragraph];
+    const suffix = paragraph.text.slice(contentsStart);
+    const chapterMarkers = suffix.match(/\bchapter\s+(?:\p{N}{1,3}|[ivxlcdm]{1,8})\b/giu)?.length ?? 0;
+    if (chapterMarkers < 3) return [paragraph];
+    const prefix = normalizeText(paragraph.text.slice(0, contentsStart));
+    return prefix.length > 0 ? [{ ...paragraph, text: prefix }] : [];
+  });
+}
+
+function buildParagraphsWithMode(pages: PageData[], recoverImplicitBreaks: boolean): DraftParagraph[] {
   const result: DraftParagraph[] = [];
 
   for (const page of pages) {
-    const pageParagraphs = pageParagraphsFromLines(page);
+    const pageParagraphs = pageParagraphsFromLines(page, recoverImplicitBreaks);
     if (pageParagraphs.length === 0) continue;
     const previous = result.at(-1);
     const first = pageParagraphs[0];
@@ -146,7 +314,335 @@ export function buildParagraphs(pages: PageData[]): DraftParagraph[] {
       : paragraph);
 }
 
-function pageParagraphsFromLines(page: PageData): DraftParagraph[] {
+function paragraphBoundariesCollapsed(paragraphs: DraftParagraph[]): boolean {
+  const wordCounts = paragraphs.map((paragraph) => countWords(paragraph.text));
+  const totalWords = wordCounts.reduce((total, count) => total + count, 0);
+  const largestParagraphWords = Math.max(0, ...wordCounts);
+  return totalWords >= COLLAPSED_PARAGRAPH_MINIMUM_WORDS
+    && (paragraphs.length === 1
+      || largestParagraphWords > COLLAPSED_PARAGRAPH_MAXIMUM_WORDS
+      || largestParagraphWords / totalWords > COLLAPSED_PARAGRAPH_WORD_RATIO);
+}
+
+/**
+ * Some text PDFs put a chapter marker, title, and body prose in one physical
+ * line. Recover those boundaries only when the document contains a consecutive
+ * chapter-number sequence spread across the book. A compact duplicate sequence
+ * is treated as a contents list and supplies exact titles, but is never split.
+ */
+function recoverEmbeddedChapterHeadings(paragraphs: DraftParagraph[]): DraftParagraph[] {
+  if (paragraphs.length < 3) return paragraphs;
+  const offsets: number[] = [];
+  let documentText = "";
+  for (const [index, paragraph] of paragraphs.entries()) {
+    if (index > 0) documentText += "\n";
+    offsets.push(documentText.length);
+    documentText += paragraph.text;
+  }
+
+  const markerPattern = /\bchapter\s+(\p{N}{1,3}|[ivxlcdm]{1,8}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)(?:[.)]|\b)/giu;
+  const markers = [...documentText.matchAll(markerPattern)].flatMap((match): EmbeddedChapterMarker[] => {
+    const start = match.index;
+    const token = match[1];
+    if (start === undefined || token === undefined) return [];
+    const order = structuralOrdinal(token);
+    if (order === null) return [];
+    return [{
+      start,
+      end: start + match[0].length,
+      order,
+      paragraphIndex: paragraphIndexAtOffset(offsets, paragraphs, start),
+    }];
+  });
+  const sequences = consecutiveChapterSequences(markers);
+  const bodySequence = sequences
+    .filter((sequence) => sequence.length >= 3)
+    .filter((sequence) => new Set(sequence.map((marker) => marker.paragraphIndex)).size === sequence.length)
+    .filter((sequence) => sequence.every((marker) => paragraphs[marker.paragraphIndex]?.headingKind === null))
+    .filter((sequence) => {
+      const span = (sequence.at(-1)?.start ?? 0) - (sequence[0]?.start ?? 0);
+      return span >= Math.max(500, documentText.length * 0.2);
+    })
+    .sort((left, right) => right.length - left.length
+      || chapterSequenceSpan(right) - chapterSequenceSpan(left))[0];
+  if (bodySequence === undefined) return paragraphs;
+
+  const contentsSequence = sequences
+    .filter((sequence) => sequence !== bodySequence)
+    .filter((sequence) => sequence.length >= bodySequence.length)
+    .filter((sequence) => (sequence.at(-1)?.start ?? Infinity) < (bodySequence[0]?.start ?? 0))
+    .filter((sequence) => chapterSequenceSpan(sequence) <= Math.max(1_500, documentText.length * 0.05))
+    .sort((left, right) => chapterSequenceSpan(left) - chapterSequenceSpan(right))[0];
+  const contentsTitles = contentsSequence === undefined
+    ? new Map<number, string>()
+    : chapterTitlesFromContents(documentText, markers, contentsSequence, bodySequence[0]?.start ?? documentText.length);
+  const contentsParagraphs = new Set(
+    (contentsSequence ?? []).flatMap((marker) => paragraphs[marker.paragraphIndex] ?? []),
+  );
+
+  const ranges = bodySequence.flatMap((marker): EmbeddedChapterRange[] => {
+    const expectedTitle = contentsTitles.get(marker.order);
+    const titleMatch = expectedTitle === undefined
+      ? null
+      : headingPattern(expectedTitle).exec(documentText.slice(marker.start));
+    const end = titleMatch?.index === 0 ? marker.start + titleMatch[0].length : marker.end;
+    return [{
+      start: marker.start,
+      end,
+      title: normalizeText(documentText.slice(marker.start, end)),
+      startParagraphIndex: marker.paragraphIndex,
+      endParagraphIndex: paragraphIndexAtOffset(offsets, paragraphs, Math.max(marker.start, end - 1)),
+    }];
+  });
+
+  const result = [...paragraphs];
+  for (const range of [...ranges].reverse()) {
+    const startParagraph = paragraphs[range.startParagraphIndex];
+    const endParagraph = paragraphs[range.endParagraphIndex];
+    if (startParagraph === undefined || endParagraph === undefined) continue;
+    const localStart = range.start - (offsets[range.startParagraphIndex] ?? 0);
+    const localEnd = range.end - (offsets[range.endParagraphIndex] ?? 0);
+    const prefix = normalizeText(startParagraph.text.slice(0, localStart))
+      .replace(/(?:\s*\*){3,}\s*$/u, "")
+      .trim();
+    const suffix = normalizeText(endParagraph.text.slice(localEnd));
+    const replacement: DraftParagraph[] = [];
+    if (prefix.length > 0) replacement.push({ ...startParagraph, text: prefix });
+    replacement.push({
+      text: range.title,
+      lines: paragraphs
+        .slice(range.startParagraphIndex, range.endParagraphIndex + 1)
+        .flatMap((paragraph) => paragraph.lines),
+      headingKind: "strong",
+    });
+    if (suffix.length > 0) replacement.push({ ...endParagraph, text: suffix });
+    result.splice(
+      range.startParagraphIndex,
+      range.endParagraphIndex - range.startParagraphIndex + 1,
+      ...replacement,
+    );
+  }
+  return result.flatMap((paragraph) => {
+    if (!contentsParagraphs.has(paragraph)) return [paragraph];
+    const contentsStart = paragraph.text.search(/\bcontents\b/iu);
+    const prefix = normalizeText(contentsStart >= 0 ? paragraph.text.slice(0, contentsStart) : "");
+    return prefix.length > 0 ? [{ ...paragraph, text: prefix }] : [];
+  });
+}
+
+function inferPdfSceneBreaks(paragraphs: DraftParagraph[]): DraftParagraph[] {
+  const typicalGapByPage = pageTypicalGapMap(paragraphs);
+  const result: DraftParagraph[] = [];
+  let pendingOrnament = false;
+
+  for (const [index, paragraph] of paragraphs.entries()) {
+    const next = paragraphs[index + 1];
+    if (isPdfSceneOrnament(paragraph.text)) {
+      if (result.length > 0 && next !== undefined) pendingOrnament = true;
+      continue;
+    }
+
+    const firstLine = paragraph.lines[0];
+    if (firstLine !== undefined && isPdfSceneOrnament(firstLine.text) && paragraph.lines.length > 1 && result.length > 0) {
+      const remainingLines = paragraph.lines.slice(1);
+      const text = remainingLines.map((line) => line.text).reduce(joinWrappedText);
+      if (countWords(text) >= 3) {
+        result.push({ ...paragraph, text, lines: remainingLines, sceneBreakBefore: "text-ornament" });
+        pendingOrnament = false;
+        continue;
+      }
+    }
+
+    const lastLine = paragraph.lines.at(-1);
+    if (lastLine !== undefined && isPdfSceneOrnament(lastLine.text) && paragraph.lines.length > 1 && next !== undefined) {
+      const remainingLines = paragraph.lines.slice(0, -1);
+      const text = remainingLines.map((line) => line.text).reduce(joinWrappedText);
+      if (countWords(text) >= 3) {
+        result.push({ ...paragraph, text, lines: remainingLines });
+        pendingOrnament = true;
+        continue;
+      }
+    }
+
+    const split = splitParagraphAtSceneOrnament(paragraph);
+    if (split !== null) {
+      const [before, after] = split;
+      result.push(before, { ...after, sceneBreakBefore: "text-ornament" });
+      pendingOrnament = false;
+      continue;
+    }
+
+    const previous = result.at(-1);
+    const sceneBreakBefore = pendingOrnament
+      ? "text-ornament" as const
+      : previous !== undefined && isPdfWhitespaceSceneBreak(previous, paragraph, typicalGapByPage)
+        ? "whitespace" as const
+        : undefined;
+    result.push(sceneBreakBefore ? { ...paragraph, sceneBreakBefore } : paragraph);
+    pendingOrnament = false;
+  }
+
+  return result;
+}
+
+function isPdfSceneOrnament(value: string): boolean {
+  const text = normalizeText(value);
+  if (text.length === 0 || /[\p{L}\p{N}]/u.test(text)) return false;
+  if (/^[\u2042\u2766\u2767]$/u.test(text)) return true;
+  const symbols = text.match(/[\*\u2042\u2022\u25C6\u25C7\u25CA\u2766\u2767\u00B7]/gu) ?? [];
+  return symbols.length >= 3
+    && text.replace(/[\s*\u2042\u2022\u25C6\u25C7\u25CA\u2766\u2767\u00B7—–_-]/gu, "").length === 0;
+}
+
+function splitParagraphAtSceneOrnament(
+  paragraph: DraftParagraph,
+): [DraftParagraph, DraftParagraph] | null {
+  const ornamentLineIndex = paragraph.lines.findIndex((line) => isPdfSceneOrnament(line.text));
+  if (ornamentLineIndex > 0 && ornamentLineIndex < paragraph.lines.length - 1) {
+    const beforeLines = paragraph.lines.slice(0, ornamentLineIndex);
+    const afterLines = paragraph.lines.slice(ornamentLineIndex + 1);
+    const beforeText = beforeLines.map((line) => line.text).reduce(joinWrappedText);
+    const afterText = afterLines.map((line) => line.text).reduce(joinWrappedText);
+    if (countWords(beforeText) >= 3 && countWords(afterText) >= 3) {
+      return [
+        { ...paragraph, text: beforeText, lines: beforeLines },
+        { ...paragraph, text: afterText, lines: afterLines },
+      ];
+    }
+  }
+
+  // Some generated PDFs wrap a long centered ornament into the end/start of
+  // ordinary text lines. A very long run plus sentence context is required;
+  // shorter editorial omissions and redactions remain prose.
+  const match = /(?:\s*[\*\u2042\u2022\u25C6\u25C7\u25CA\u2766\u2767\u00B7]){16,}\s*/u.exec(paragraph.text);
+  if (match?.index === undefined) return null;
+  const beforeText = normalizeText(paragraph.text.slice(0, match.index));
+  const afterText = normalizeText(paragraph.text.slice(match.index + match[0].length));
+  if (countWords(beforeText) < 3 || countWords(afterText) < 3) return null;
+  if (!/[.!?…:”’)]$/u.test(beforeText) || !/^[\p{Lu}“‘\[]/u.test(afterText)) return null;
+  return [
+    { ...paragraph, text: beforeText },
+    { ...paragraph, text: afterText },
+  ];
+}
+
+function pageTypicalGapMap(paragraphs: DraftParagraph[]): Map<number, number> {
+  const linesByPage = new Map<number, TextLine[]>();
+  for (const line of paragraphs.flatMap((paragraph) => paragraph.lines)) {
+    const lines = linesByPage.get(line.pageNumber) ?? [];
+    lines.push(line);
+    linesByPage.set(line.pageNumber, lines);
+  }
+  const result = new Map<number, number>();
+  for (const [pageNumber, lines] of linesByPage) {
+    const sorted = [...lines].sort((left, right) => left.column - right.column || left.baseline - right.baseline);
+    const gaps = sorted.slice(1).flatMap((line, index) => {
+      const previous = sorted[index];
+      if (previous === undefined || previous.column !== line.column) return [];
+      const gap = line.baseline - previous.baseline;
+      return gap > 0 && gap < Math.max(line.fontSize, previous.fontSize) * 3 ? [gap] : [];
+    });
+    if (gaps.length > 0) result.set(pageNumber, median(gaps));
+  }
+  return result;
+}
+
+function isPdfWhitespaceSceneBreak(
+  previous: DraftParagraph,
+  current: DraftParagraph,
+  typicalGapByPage: Map<number, number>,
+): boolean {
+  if (previous.headingKind !== null || current.headingKind !== null) return false;
+  const previousLine = previous.lines.at(-1);
+  const currentLine = current.lines[0];
+  if (previousLine === undefined || currentLine === undefined) return false;
+  if (previousLine.pageNumber !== currentLine.pageNumber || previousLine.column !== currentLine.column) return false;
+  const typical = typicalGapByPage.get(currentLine.pageNumber);
+  if (typical === undefined) return false;
+  const gap = currentLine.baseline - previousLine.baseline;
+  const distinctSceneGap = gap >= Math.max(typical * 2.2, typical + Math.max(8, currentLine.fontSize * 0.75));
+  return distinctSceneGap
+    && countWords(previous.text) >= 8
+    && countWords(current.text) >= 8
+    && /[.!?…:”’)]$/u.test(previous.text)
+    && /^[\p{Lu}“‘\[]/u.test(current.text);
+}
+
+function consecutiveChapterSequences(markers: EmbeddedChapterMarker[]): EmbeddedChapterMarker[][] {
+  const sequences: EmbeddedChapterMarker[][] = [];
+  for (const [startIndex, first] of markers.entries()) {
+    if (first.order !== 1) continue;
+    const sequence = [first];
+    let expected = 2;
+    for (const marker of markers.slice(startIndex + 1)) {
+      if (marker.order === 1) break;
+      if (marker.order !== expected) continue;
+      sequence.push(marker);
+      expected += 1;
+    }
+    sequences.push(sequence);
+  }
+  return sequences;
+}
+
+function chapterSequenceSpan(sequence: EmbeddedChapterMarker[]): number {
+  return (sequence.at(-1)?.start ?? 0) - (sequence[0]?.start ?? 0);
+}
+
+function chapterTitlesFromContents(
+  documentText: string,
+  allMarkers: EmbeddedChapterMarker[],
+  contents: EmbeddedChapterMarker[],
+  bodyStart: number,
+): Map<number, string> {
+  const result = new Map<number, string>();
+  for (const [index, marker] of contents.entries()) {
+    const next = contents[index + 1];
+    const end = next?.start
+      ?? allMarkers.find((candidate) => candidate.start > marker.start)?.start
+      ?? bodyStart;
+    const suffix = normalizeText(documentText.slice(marker.end, Math.min(end, marker.end + 160)));
+    if (suffix.length === 0 || countWords(suffix) > 16 || /[.!?]\s+\p{Lu}/u.test(suffix)) continue;
+    result.set(marker.order, `${normalizeText(documentText.slice(marker.start, marker.end))} ${suffix}`.trim());
+  }
+  return result;
+}
+
+function headingPattern(title: string): RegExp {
+  const source = title
+    .split(/\s+/u)
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join("\\s+");
+  return new RegExp(`^${source}`, "iu");
+}
+
+function paragraphIndexAtOffset(offsets: number[], paragraphs: DraftParagraph[], offset: number): number {
+  for (let index = offsets.length - 1; index >= 0; index -= 1) {
+    const start = offsets[index];
+    const paragraph = paragraphs[index];
+    if (start !== undefined && paragraph !== undefined && offset >= start) return index;
+  }
+  return 0;
+}
+
+function structuralOrdinal(token: string): number | null {
+  const normalized = token.toLocaleLowerCase();
+  if (/^\p{N}+$/u.test(normalized)) return Number(normalized);
+  const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
+  const wordIndex = words.indexOf(normalized);
+  if (wordIndex >= 0) return wordIndex + 1;
+  if (!/^[ivxlcdm]+$/u.test(normalized)) return null;
+  const values: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1_000 };
+  let total = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    const current = values[normalized[index] ?? ""] ?? 0;
+    const next = values[normalized[index + 1] ?? ""] ?? 0;
+    total += current < next ? -current : current;
+  }
+  return total > 0 ? total : null;
+}
+
+function pageParagraphsFromLines(page: PageData, recoverImplicitBreaks: boolean): DraftParagraph[] {
   const lines = page.lines.filter((line) => line.text.length > 0);
   if (lines.length === 0) return [];
   const bodyFontSize = weightedMedian(lines.map((line) => [line.fontSize, Math.min(line.text.length, 80)]));
@@ -157,7 +653,7 @@ function pageParagraphsFromLines(page: PageData): DraftParagraph[] {
     if (previous === undefined || previous.column !== line.column || line.baseline <= previous.baseline) return [];
     return [line.baseline - previous.baseline];
   });
-  const typicalGap = median(normalGaps.length > 0 ? normalGaps : [bodyFontSize * 1.2]);
+  const gapProfile = pageGapProfile(normalGaps, bodyFontSize);
   const paragraphs: DraftParagraph[] = [];
   let current: DraftParagraph | null = null;
 
@@ -168,7 +664,7 @@ function pageParagraphsFromLines(page: PageData): DraftParagraph[] {
       || previousLine === undefined
       || headingKind !== null
       || current.headingKind !== null
-      || isParagraphBreak(previousLine, line, typicalGap, typicalWidth);
+      || isParagraphBreak(previousLine, line, gapProfile, typicalWidth, recoverImplicitBreaks);
 
     if (startNew) {
       current = { text: line.text, lines: [line], headingKind };
@@ -179,7 +675,43 @@ function pageParagraphsFromLines(page: PageData): DraftParagraph[] {
     }
   }
 
-  return mergeAdjacentHeadingParagraphs(paragraphs, typicalGap);
+  return mergeAdjacentHeadingParagraphs(paragraphs, gapProfile.typical);
+}
+
+function pageGapProfile(gaps: number[], bodyFontSize: number): GapProfile {
+  if (gaps.length === 0) return { typical: bodyFontSize * 1.2, paragraphThreshold: null };
+  const tolerance = Math.max(0.75, bodyFontSize * 0.08);
+  const clusters = clusterGaps(gaps, tolerance);
+  const minimumSubstantialCount = Math.max(2, Math.ceil(gaps.length * 0.1));
+  const typicalCluster = clusters.find((cluster) => cluster.values.length >= minimumSubstantialCount)
+    ?? [...clusters].sort((left, right) => right.values.length - left.values.length || left.center - right.center)[0];
+  if (typicalCluster === undefined) return { typical: median(gaps), paragraphThreshold: null };
+
+  const typical = median(typicalCluster.values);
+  const largerCluster = clusters.find((cluster) =>
+    cluster.center > typicalCluster.center
+    && cluster.values.length >= minimumSubstantialCount
+    && cluster.center - typical >= Math.max(1, bodyFontSize * 0.08)
+    && cluster.center >= typical * 1.12,
+  );
+  const paragraphThreshold = largerCluster === undefined
+    ? null
+    : ((Math.max(...typicalCluster.values) + Math.min(...largerCluster.values)) / 2);
+  return { typical, paragraphThreshold };
+}
+
+function clusterGaps(gaps: number[], tolerance: number): GapCluster[] {
+  const clusters: GapCluster[] = [];
+  for (const gap of [...gaps].sort((left, right) => left - right)) {
+    const current = clusters.at(-1);
+    if (current === undefined || gap - current.center > tolerance) {
+      clusters.push({ values: [gap], center: gap });
+      continue;
+    }
+    current.values.push(gap);
+    current.center = median(current.values);
+  }
+  return clusters;
 }
 
 function mergeAdjacentHeadingParagraphs(paragraphs: DraftParagraph[], typicalGap: number): DraftParagraph[] {
@@ -208,18 +740,36 @@ function mergeAdjacentHeadingParagraphs(paragraphs: DraftParagraph[], typicalGap
   return merged;
 }
 
-function isParagraphBreak(previous: TextLine, current: TextLine, typicalGap: number, typicalWidth: number): boolean {
+function isParagraphBreak(
+  previous: TextLine,
+  current: TextLine,
+  gapProfile: GapProfile,
+  typicalWidth: number,
+  recoverImplicitBreaks: boolean,
+): boolean {
   if (previous.vertical || current.vertical) return true;
   if (previous.column !== current.column) return true;
   const verticalGap = current.baseline - previous.baseline;
-  if (verticalGap > typicalGap * 1.5 + 1) return true;
+  if (verticalGap > gapProfile.typical * 1.5 + 1) return true;
   if (/^(?:[-•‣⁃]|\p{N}{1,3}[.)])\s+/u.test(current.text)) return true;
   const previousWidth = previous.xMax - previous.xMin;
   const currentIndented = current.xMin - previous.xMin > Math.max(10, current.fontSize * 0.9);
-  if (currentIndented && /[.!?…:;”’)]$/u.test(previous.text)) return true;
-  const previousLooksLikeLastLine = previousWidth < typicalWidth * 0.72;
+  const previousEndsSentence = /[.!?…:”’)]$/u.test(previous.text);
   const currentStartsSentence = /^[\p{Lu}“‘\[]/u.test(current.text);
-  return previousLooksLikeLastLine && currentStartsSentence && /[.!?…:”’)]$/u.test(previous.text);
+  const sentenceBoundary = previousEndsSentence && currentStartsSentence;
+  if (currentIndented && previousEndsSentence) return true;
+  if (gapProfile.paragraphThreshold !== null
+    && verticalGap >= gapProfile.paragraphThreshold
+    && sentenceBoundary) return true;
+  const previousLooksLikeLastLine = previousWidth < typicalWidth * 0.72;
+  if (previousLooksLikeLastLine && sentenceBoundary) return true;
+
+  // Some generators retain explicit line endings but flatten paragraph spacing
+  // completely. Only retry this signal after the primary model is already
+  // collapsed, and only for aligned prose with the same text style.
+  const alignedProse = Math.abs(current.xMin - previous.xMin) <= Math.max(4, current.fontSize * 0.4)
+    && Math.abs(current.fontSize - previous.fontSize) <= Math.max(1, current.fontSize * 0.12);
+  return recoverImplicitBreaks && previous.hasEol && alignedProse && sentenceBoundary;
 }
 
 function shouldMergeAcrossPages(previous: DraftParagraph, current: DraftParagraph): boolean {

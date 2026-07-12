@@ -18,6 +18,23 @@ describe("PDF chapter confidence", () => {
     expect(paragraphs[0]?.headingKind).toBe("strong");
   });
 
+  test("does not split a compact contents-only chapter sequence", () => {
+    const page = makePage(1, [
+      makeLine(
+        "Contents CHAPTER I. First CHAPTER II. Second CHAPTER III. Third CHAPTER IV. Fourth",
+        1,
+        70,
+        10,
+        440,
+      ),
+      makeLine("Ordinary body prose follows without any distributed chapter openers in the document.", 1, 84, 10, 440),
+    ]);
+
+    const paragraphs = buildParagraphs([page]);
+
+    expect(paragraphs.some((paragraph) => /^CHAPTER\s+[IVX]+/u.test(paragraph.text))).toBe(false);
+  });
+
   test("prefers prominent real openers over body-sized TOC copies and a lone junk bookmark", () => {
     const pages = Array.from({ length: 30 }, (_value, index) => makePage(index + 1));
     const paragraphs = Array.from({ length: 30 }, (_value, index) => bodyParagraph(index + 1));
@@ -41,7 +58,39 @@ describe("PDF chapter confidence", () => {
     expect(chapters.map((chapter) => chapter.title)).toEqual(["CHAPTER 1", "CHAPTER 2", "CHAPTER 3"]);
     expect(diagnostics).toContainEqual(expect.objectContaining({
       severity: "warning",
-      message: expect.stringContaining("reliable numbered-heading sequence"),
+      message: expect.stringContaining("reliable visible-heading sequence"),
+    }));
+  });
+
+  test("replaces a spread-out production-file outline with prominent visible headings", () => {
+    const pages = Array.from({ length: 30 }, (_value, index) => makePage(index + 1));
+    const paragraphs = Array.from({ length: 30 }, (_value, index) => bodyParagraph(index + 1));
+    const visibleStarts = [4, 16, 28];
+    for (const [index, start] of visibleStarts.entries()) {
+      paragraphs[start - 1] = headingParagraph(["Opening", "Conflict", "Resolution"][index] ?? "Section", start, 20);
+    }
+    attachParagraphLines(pages, paragraphs);
+    const outline: ResolvedOutlineItem[] = [
+      { title: "Example - Cover Front", pageIndex: 0, targetY: null },
+      { title: "Example - Bookblock screen.pdf", pageIndex: 14, targetY: null },
+      { title: "Example - Cover Back", pageIndex: 29, targetY: null },
+    ];
+    const diagnostics: ParserDiagnostic[] = [];
+
+    const chapters = buildChapters(
+      pages,
+      paragraphs,
+      outline,
+      { title: "Fixture", authors: [] },
+      diagnostics,
+      outline.length,
+    );
+
+    expect(chapters.map((chapter) => chapter.title)).toEqual(["Opening", "Conflict", "Resolution"]);
+    expect(chapters.map((chapter) => chapter.startParagraphId)).toEqual(visibleStarts);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      severity: "warning",
+      message: expect.stringContaining("reliable visible-heading sequence"),
     }));
   });
 

@@ -1,6 +1,7 @@
 import type { Book } from "@/types/book";
 import type { Position } from "@/types/reading";
 import { getTokensForParagraph, getWordCountForParagraph } from "./tokenCache";
+import { classifyNavigationTitle, navigationPrecedence } from "@/lib/navigationHierarchy";
 
 type ChapterProgressBounds = {
   startParagraphIndex: number;
@@ -50,7 +51,11 @@ function buildChapterProgressCache(book: Book): ChapterProgressCache | null {
     paragraphWordPrefix[i + 1] = paragraphWordPrefix[i] + paragraphWordCount;
   }
 
-  const sortedChapters = [...book.chapters].sort((a, b) => a.startParagraphId - b.startParagraphId);
+  const sortedChapters = [...book.chapters]
+    .sort((a, b) => a.startParagraphId - b.startParagraphId
+      || navigationPrecedence(a.kind ?? classifyNavigationTitle(a.title))
+        - navigationPrecedence(b.kind ?? classifyNavigationTitle(b.title)))
+    .filter((chapter, index, entries) => entries[index + 1]?.startParagraphId !== chapter.startParagraphId);
   const chapterBounds: ChapterProgressBounds[] = [];
 
   for (let i = 0; i < sortedChapters.length; i += 1) {

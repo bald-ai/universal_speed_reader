@@ -2,6 +2,7 @@ import { clampWpm } from "@/lib/constants";
 import { findChapterForParagraph, getWordAtPosition } from "@/lib/utils/bookHelpers";
 import type { Book } from "@/types/book";
 import type { Position } from "@/types/reading";
+import { classifyNavigationTitle } from "@/lib/navigationHierarchy";
 
 export type SpeedReaderTempoSettings = {
   commaBreakMs: number;
@@ -323,7 +324,17 @@ export function getStructuralPauseMs(input: {
   const currentChapter = findChapterForParagraph(book, currentPosition.paragraphId);
   const nextChapter = findChapterForParagraph(book, nextPosition.paragraphId);
   if (currentChapter?.index !== nextChapter?.index) {
+    const nextKind = nextChapter?.kind ?? (nextChapter ? classifyNavigationTitle(nextChapter.title) : "chapter");
+    if (nextKind === "scene" || nextKind === "section") {
+      return Math.round((tempo.paragraphBreakMs + tempo.chapterBreakMs) / 2);
+    }
     return tempo.chapterBreakMs;
+  }
+
+  const nextParagraph = book.paragraphs[nextPosition.paragraphId - 1]
+    ?? book.paragraphs.find((paragraph) => paragraph.id === nextPosition.paragraphId);
+  if (nextParagraph?.sceneBreakBefore) {
+    return Math.round((tempo.paragraphBreakMs + tempo.chapterBreakMs) / 2);
   }
 
   if (currentPosition.paragraphId !== nextPosition.paragraphId) {

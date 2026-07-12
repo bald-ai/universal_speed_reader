@@ -62,34 +62,45 @@ export function buildChapters(
   const headingParagraphs = paragraphs
     .map((paragraph, index) => ({ paragraph, id: index + 1 }))
     .filter(({ paragraph }) => paragraph.headingKind !== null);
-  const strongHeadings = headingParagraphs.filter(({ paragraph }) => paragraph.headingKind === "strong");
-  const preferredHeadings = strongHeadings.length >= 2 ? strongHeadings : headingParagraphs;
   const documentBodyFontSize = median(pages.flatMap((page) => page.lines
     .filter((line) => countWords(line.text) >= 3)
     .map((line) => line.fontSize)));
-  const allHeadingCandidates = deduplicateHeadingCandidates(preferredHeadings.map(({ paragraph, id }): HeadingChapterCandidate => ({
+  const allHeadingCandidates = deduplicateHeadingCandidates(headingParagraphs.map(({ paragraph, id }): HeadingChapterCandidate => ({
     title: paragraph.text,
     startParagraphId: id,
     paragraph,
     structuralMarker: structuralMarker(paragraph.text),
     prominence: paragraphProminence(paragraph, documentBodyFontSize),
   })));
-  const headingFallbackReliable = hasReliableNumberedHeadingSequence(allHeadingCandidates, paragraphs.length);
-  const headingCandidates = headingFallbackReliable
+  const strongHeadingCandidates = allHeadingCandidates.filter((candidate) => candidate.paragraph.headingKind === "strong");
+  const numberedHeadingEvidence = strongHeadingCandidates.length >= 2
+    ? strongHeadingCandidates
+    : allHeadingCandidates;
+  const numberedHeadingSequenceReliable = hasReliableNumberedHeadingSequence(numberedHeadingEvidence, paragraphs.length);
+  const headingCandidates = numberedHeadingSequenceReliable
     ? allHeadingCandidates.filter((candidate) =>
         candidate.structuralMarker !== null || isFrontmatterHeading(candidate.title),
       )
-    : allHeadingCandidates;
+    : allHeadingCandidates.filter((candidate) =>
+        candidate.prominence >= 1.15
+        || candidate.structuralMarker !== null
+        || isFrontmatterHeading(candidate.title),
+      );
+  const headingFallbackReliable = numberedHeadingSequenceReliable
+    || hasReliableHeadingFallback(headingCandidates, paragraphs.length);
   const headingChapters: Chapter[] = headingCandidates.map(({ title, startParagraphId }) => ({ title, startParagraphId }));
   const outlineReliable = hasReliableOutline(outlineCandidates, paragraphs.length);
+  const productionArtifactOutline = hasProductionArtifactOutline(outlineCandidates);
 
   let chapters = outlineChapters.length > 0 ? outlineChapters : headingChapters;
-  if (outlineChapters.length > 0 && !outlineReliable && headingFallbackReliable) {
+  if (outlineChapters.length > 0
+    && !outlineReliable
+    && (numberedHeadingSequenceReliable || (productionArtifactOutline && headingFallbackReliable))) {
     chapters = headingChapters;
     diagnostics.push({
       bucket: "Weak / missing / nonsense chapters",
       severity: "warning",
-      message: "Weak PDF outline was replaced by a reliable numbered-heading sequence",
+      message: "Weak PDF outline was replaced by a reliable visible-heading sequence",
       details: {
         outlineChapters: outlineChapters.length,
         titleMatchedOutlineChapters: outlineCandidates.filter((candidate) => candidate.titleMatched).length,
@@ -129,14 +140,12 @@ export function buildChapters(
 
 function deduplicateHeadingCandidates(candidates: HeadingChapterCandidate[]): HeadingChapterCandidate[] {
   const structuralGroups = new Map<string, HeadingChapterCandidate[]>();
-  const ungrouped: HeadingChapterCandidate[] = [];
   for (const candidate of candidates) {
-    const key = candidate.structuralMarker?.key;
-    if (key === undefined) ungrouped.push(candidate);
-    else structuralGroups.set(key, [...(structuralGroups.get(key) ?? []), candidate]);
+    const key = candidate.structuralMarker?.key ?? `title:${chapterTitleKey(candidate.title)}`;
+    structuralGroups.set(key, [...(structuralGroups.get(key) ?? []), candidate]);
   }
 
-  const selected = [...ungrouped];
+  const selected: HeadingChapterCandidate[] = [];
   for (const group of structuralGroups.values()) {
     const ranked = [...group].sort((left, right) =>
       right.prominence - left.prominence || right.startParagraphId - left.startParagraphId,
@@ -161,9 +170,31 @@ function paragraphProminence(paragraph: DraftParagraph, bodySize: number): numbe
 function hasReliableOutline(candidates: OutlineChapterCandidate[], paragraphCount: number): boolean {
   if (candidates.filter((candidate) => candidate.titleMatched).length >= 2) return true;
   if (candidates.length < 3) return false;
+  if (hasProductionArtifactOutline(candidates)) return false;
   const starts = [...new Set(candidates.map((candidate) => candidate.startParagraphId))].sort((left, right) => left - right);
   if (starts.length / candidates.length < 0.6) return false;
   return (starts.at(-1) ?? 0) - (starts[0] ?? 0) >= Math.max(20, paragraphCount * 0.2);
+}
+
+function hasProductionArtifactOutline(candidates: OutlineChapterCandidate[]): boolean {
+  return candidates.length > 0
+    && candidates.filter((candidate) => isProductionArtifactTitle(candidate.title)).length >= candidates.length / 2;
+}
+
+function hasReliableHeadingFallback(candidates: HeadingChapterCandidate[], paragraphCount: number): boolean {
+  if (candidates.length < 3) return false;
+  const distinctTitles = new Set(candidates.map((candidate) => chapterTitleKey(candidate.title)).filter(Boolean));
+  const distinctStarts = new Set(candidates.map((candidate) => candidate.startParagraphId));
+  if (distinctTitles.size < 3 || distinctStarts.size / candidates.length < 0.75) return false;
+  const starts = [...distinctStarts].sort((left, right) => left - right);
+  return (starts.at(-1) ?? 0) - (starts[0] ?? 0) >= Math.max(20, paragraphCount * 0.2);
+}
+
+function isProductionArtifactTitle(value: string): boolean {
+  const normalized = normalizeText(value).toLocaleLowerCase();
+  return /(?:\.pdf$|\b(?:cover\s+(?:front|back)|bookblock|book\s*block|interior|blank[-\s]|txt$)|^(?:front|back)(?:\.pdf)?$)/u.test(
+    normalized,
+  );
 }
 
 function hasReliableNumberedHeadingSequence(candidates: HeadingChapterCandidate[], paragraphCount: number): boolean {

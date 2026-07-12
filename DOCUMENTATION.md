@@ -1,5 +1,13 @@
 # Universal Speed Reader Documentation
 
+## Android app identity
+
+The Capacitor Android module is installed as `com.traycer.speedreader`. It is
+registered with the other local Android apps in
+[`../ANDROID_APP_IDS.md`](../ANDROID_APP_IDS.md). Before uploading an APK to a
+phone, verify its embedded package ID using that registry; Android treats two
+APKs with the same `applicationId` as one app and replaces the existing one.
+
 ## Why The App Preprocesses Books
 
 Universal Speed Reader is not only a basic EPUB reader. The app is meant to be a universal reading surface where the same book can move between normal reading, speed reading, TTS, pronunciation fixes, chapter-aware pacing, and progress tracking.
@@ -12,6 +20,7 @@ This app imports EPUBs and selectable-text PDFs into a normalized internal model
 - words addressed by paragraph ID and word index
 - chapters mapped to paragraph starts
 - optional in-book image blocks anchored after paragraphs (normal reading only)
+- optional anonymous scene boundaries anchored before a real paragraph
 - total word and paragraph counts
 - stored chunks for persistence
 
@@ -80,6 +89,40 @@ producing pointers that would render blank through the reader.
   without reliable text, chapters, or in-book images are rejected clearly.
 - The parser keeps the shared `{ paragraphId, wordIndex }` model used by normal
   reading, speed reading, TTS, and saved progress.
+- PDF paragraph reconstruction profiles page-local line gaps so a repeated,
+  modest paragraph-gap cluster is accepted when sentence context agrees. If a
+  selectable-text PDF still produces a model that would fail the strict
+  collapsed-paragraph check, aligned explicit line endings plus sentence
+  boundaries are used for one conservative recovery pass. When a generator has
+  also flattened paragraph starts into the middle of physical lines, only
+  already-oversized prose blocks with repeated sentence-boundary evidence are
+  divided into moderate reading chunks. Punctuation-free collapsed text remains
+  rejected; the validator is not relaxed.
+- PDF chapter reconstruction can replace production-file bookmarks (for
+  example cover/interior filenames) with a document-wide visible-heading
+  sequence. It also recovers chapter headings flattened into body lines only
+  when consecutive chapter numbers are spread through the book; a compact
+  contents sequence may provide the exact titles without becoming duplicate
+  reader chapters. A raw asterisk ornament immediately before such a recovered
+  chapter is removed so the reader's existing chapter divider is shown instead.
+- EPUB scene ornaments, context-qualified horizontal rules, and narrowly
+  identified CSS separators (semantic classes, ornament pseudo-content,
+  centered spacing, and narrow rules from inline or linked stylesheets) are
+  normalized into the same paragraph-anchored scene boundary.
+  PDF import recognizes isolated ornament lines, conservative embedded ornament
+  runs, and distinctly larger page-local whitespace gaps. Inline stars used for
+  omissions, footnotes, or ordinary notation remain readable text.
+- Anonymous scene boundaries never receive paragraph IDs or words. Normal
+  reading renders a quiet accessible asterism, RSVP pauses longer than at a
+  paragraph and shorter than at a chapter, and TTS uses deterministic silent
+  pauses of 280 ms / 650 ms / 1,000 ms for paragraph / scene / chapter changes.
+  A named navigation entry (part, chapter, section, or named scene) takes
+  precedence when it begins at the same paragraph. Navigation kind and level
+  are persisted, shown hierarchically in the navigation menu, and rendered with
+  distinct part/chapter/section/named-scene separators.
+- Compact PDF contents sequences used to recover chapter names are removed from
+  linear prose. The first chapter divider is shown when front matter precedes
+  it, and a matching in-body heading is not rendered a second time.
 - The parser runs with a 30-second quality ceiling; a book exceeding it is
   rejected rather than completing with unreliable data.
 
@@ -88,4 +131,5 @@ producing pointers that would render blank through the reader.
 This parser release performs one product-owner-approved, one-time library reset
 on first launch. It deletes existing books, their stored original files,
 progress, folders, and moods so every imported book uses the new extraction
-path. Reader preferences such as theme and speed settings remain intact.
+path. Book-scoped TTS replacement rules are also removed; global rules and
+reader preferences such as theme and speed settings remain intact.

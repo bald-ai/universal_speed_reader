@@ -82,4 +82,20 @@ describe("validateParserOutput", () => {
     expect(result.pass).toBe(true);
     expect(result.diagnostics).toEqual([]);
   });
+
+  test("rejects repeated isolated ornaments that leaked as paragraphs", () => {
+    const output = validOutput();
+    output.book.paragraphs.splice(2, 0, ...Array.from({ length: 25 }, (_value, index) => ({
+      id: index + 3,
+      text: index % 2 === 0 ? "* * * * *" : "• • •",
+    })));
+    output.book.paragraphs.forEach((paragraph, index) => { paragraph.id = index + 1; });
+    output.book.totals.paragraphs = output.book.paragraphs.length;
+    output.book.totals.words = output.book.paragraphs.reduce((sum, paragraph) => sum + paragraph.text.split(/\s+/u).length, 0);
+
+    expect(validateParserOutput(output).diagnostics).toContainEqual(expect.objectContaining({
+      severity: "failure",
+      message: expect.stringContaining("isolated scene ornaments leaked"),
+    }));
+  });
 });

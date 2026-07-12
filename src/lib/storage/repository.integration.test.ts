@@ -127,7 +127,7 @@ describe("book repository integration", () => {
         {
           book_id: bookId,
           chunk_index: 1,
-          paragraphs_json: [{ id: 2, text: "new two" }],
+          paragraphs_json: [{ id: 2, text: "new two", sceneBreakBefore: "text-ornament" }],
         },
       ],
       chapters: [
@@ -136,6 +136,8 @@ describe("book repository integration", () => {
           chapter_index: 0,
           title: "New chapter",
           start_paragraph_id: 1,
+          kind: "scene",
+          level: 4,
         },
       ],
       images: [
@@ -157,6 +159,8 @@ describe("book repository integration", () => {
     expect(aggregate?.chunks[0]?.paragraphs_json[0]?.text).toBe("new one");
     expect(aggregate?.chapters.length).toBe(1);
     expect(aggregate?.chapters[0]?.title).toBe("New chapter");
+    expect(aggregate?.chapters[0]?.kind).toBe("scene");
+    expect(aggregate?.chapters[0]?.level).toBe(4);
     expect(aggregate?.images.length).toBe(1);
     expect(aggregate?.images[0]?.src).toBe("data:image/png;base64,abc");
 
@@ -173,6 +177,8 @@ describe("book repository integration", () => {
         src: "data:image/png;base64,abc",
       },
     ]);
+    expect(completed?.book.paragraphs[1]?.sceneBreakBefore).toBe("text-ornament");
+    expect(completed?.book.chapters[0]).toMatchObject({ kind: "scene", level: 4 });
   });
 
   it("keeps failed import errors and attempt history across retries", async () => {

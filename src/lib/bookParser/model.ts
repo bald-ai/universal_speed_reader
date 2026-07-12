@@ -1,4 +1,5 @@
 import { countWords, normalizeText } from "./text.ts";
+import { classifyNavigationTitle, navigationLevel, navigationPrecedence } from "../navigationHierarchy.ts";
 import type {
   BookFormat,
   BookImage,
@@ -32,10 +33,18 @@ export function chaptersHaveCollapsedStarts(chapters: readonly Chapter[]): boole
 }
 
 export function buildBook(input: BuildBookInput): ParsedBook {
-  const paragraphs = input.paragraphs.map((paragraph, index) => ({
-    id: index + 1,
-    text: normalizeText(paragraph.text),
-  }));
+  const navigationStarts = new Set(input.chapters.map((chapter) => chapter.startParagraphId));
+  const paragraphs = input.paragraphs.map((paragraph, index) => {
+    const id = index + 1;
+    const sceneBreakBefore = id > 1 && !navigationStarts.has(id)
+      ? paragraph.sceneBreakBefore
+      : undefined;
+    return {
+      id,
+      text: normalizeText(paragraph.text),
+      ...(sceneBreakBefore ? { sceneBreakBefore } : {}),
+    };
+  });
   const paragraphCount = paragraphs.length;
   const chapters = deduplicateChapters(input.chapters, paragraphCount);
   const images = input.images.map((image) => ({
@@ -45,7 +54,7 @@ export function buildBook(input: BuildBookInput): ParsedBook {
   }));
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     format: input.format,
     metadata: input.metadata,
     paragraphs,
@@ -57,6 +66,7 @@ export function buildBook(input: BuildBookInput): ParsedBook {
       paragraphs: paragraphCount,
       chapters: chapters.length,
       images: images.length,
+      sceneBreaks: paragraphs.filter((paragraph) => paragraph.sceneBreakBefore !== undefined).length,
     },
     diagnostics: input.diagnostics ?? [],
     timings: input.timings,
@@ -73,9 +83,16 @@ function deduplicateChapters(chapters: Chapter[], paragraphCount: number): Chapt
     const key = `${title.toLocaleLowerCase()}\u0000${startParagraphId}`;
     if (title.length === 0 || title.length > 240 || seen.has(key)) continue;
     seen.add(key);
-    result.push({ title, startParagraphId });
+    const kind = chapter.kind ?? classifyNavigationTitle(title);
+    result.push({
+      title,
+      startParagraphId,
+      kind,
+      level: chapter.level ?? navigationLevel(kind),
+    });
   }
 
-  result.sort((left, right) => left.startParagraphId - right.startParagraphId);
+  result.sort((left, right) => left.startParagraphId - right.startParagraphId
+    || navigationPrecedence(left.kind ?? "chapter") - navigationPrecedence(right.kind ?? "chapter"));
   return result;
 }

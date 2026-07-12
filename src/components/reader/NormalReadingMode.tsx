@@ -25,6 +25,10 @@ import {
 } from "@/lib/reader/buildNormalReadingDisplayRows";
 import { resolveBookImageSrc } from "@/lib/reader/resolveBookImageSrc";
 import type { BookImage, Chapter, Paragraph } from "@/types/book";
+import { buildChapterSeparatorStarts, isDuplicateVisibleChapterHeading, navigationEntryAtParagraph } from "@/lib/reader/chapterSeparators";
+import { classifyNavigationTitle, navigationKindLabel } from "@/lib/navigationHierarchy";
+import NavigationSeparator from "@/components/reader/NavigationSeparator";
+import SceneSeparator from "@/components/reader/SceneSeparator";
 import type { Position, TtsHighlightStyle } from "@/types/reading";
 
 // ── sentence boundary helper ──
@@ -326,20 +330,7 @@ export default function NormalReadingMode() {
   }, [book, position.paragraphId]);
 
   const chapterSeparatorStarts = useMemo(() => {
-    if (!book || book.chapters.length <= 1) return new Set<number>();
-
-    const sorted = [...book.chapters].sort((a, b) => a.startParagraphId - b.startParagraphId);
-    const firstStart = sorted[0]?.startParagraphId;
-    if (typeof firstStart !== "number") return new Set<number>();
-
-    const starts = new Set<number>();
-    for (const chapter of sorted) {
-      if (chapter.startParagraphId !== firstStart) {
-        starts.add(chapter.startParagraphId);
-      }
-    }
-
-    return starts;
+    return book ? buildChapterSeparatorStarts(book) : new Set<number>();
   }, [book]);
 
   const progressPercent = useMemo(() => {
@@ -352,7 +343,10 @@ export default function NormalReadingMode() {
   const rowVirtualizer = useVirtualizer({
     count: displayRows.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: (index) => (displayRows[index]?.kind === "image" ? 220 : 80),
+    estimateSize: (index) => {
+      const kind = displayRows[index]?.kind;
+      return kind === "image" ? 220 : kind === "scene-break" ? 72 : 80;
+    },
     overscan: 10,
   });
 
@@ -799,7 +793,9 @@ export default function NormalReadingMode() {
       {/* Progress Bar Section */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-2">
-          <span>Chapter progress</span>
+          <span>{currentChapter
+            ? `${navigationKindLabel(currentChapter.kind ?? classifyNavigationTitle(currentChapter.title))} progress`
+            : "Book progress"}</span>
           <span className="font-medium text-neutral-400">
             {progressLoaded ? `${displayedProgress}%` : ""}
           </span>
@@ -842,11 +838,16 @@ export default function NormalReadingMode() {
                 <div className="w-full max-w-2xl mx-auto">
                   {row.kind === "image" ? (
                     <ImageRow bookId={book.id} image={row.image} />
+                  ) : row.kind === "scene-break" ? (
+                    <SceneSeparator />
                   ) : (
                     (() => {
                       const paragraph = row.paragraph;
                       const words = getTokensForParagraph(book, paragraph);
                       const showChapterSeparator = chapterSeparatorStarts.has(paragraph.id);
+                      const navigationEntry = navigationEntryAtParagraph(book, paragraph.id);
+                      const hideDuplicateChapterHeading = showChapterSeparator
+                        && isDuplicateVisibleChapterHeading(book, paragraph.id, paragraph.text);
                       const highlightedWordIndex =
                         highlightedWord?.paragraphId === paragraph.id
                           ? highlightedWord.wordIndex
@@ -855,31 +856,22 @@ export default function NormalReadingMode() {
                       return (
                         <>
                           {showChapterSeparator ? (
-                            <div
-                              aria-hidden="true"
-                              data-testid="chapter-separator"
-                              className="relative flex items-center justify-center py-16"
-                            >
-                              <div
-                                className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_0%,rgba(26,26,42,0.10)_30%,rgba(26,26,42,0.18)_50%,rgba(26,26,42,0.10)_70%,transparent_100%)]"
-                              />
-                              <div className="relative flex flex-col items-center gap-3">
-                                <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
-                                <div className="h-2 w-2 rotate-45 bg-neutral-500/80" />
-                                <div className="h-px w-24 bg-[linear-gradient(90deg,transparent,rgba(120,120,120,0.85),transparent)]" />
-                              </div>
-                            </div>
+                            <NavigationSeparator
+                              kind={navigationEntry?.kind ?? classifyNavigationTitle(navigationEntry?.title ?? "Chapter")}
+                            />
                           ) : null}
-                          <ParagraphRow
-                            paragraph={paragraph}
-                            words={words}
-                            highlightedWordIndex={highlightedWordIndex}
-                            highlightStyle={settings.ttsHighlightStyle}
-                            onWordClick={handleWordClick}
-                            wordClicksDisabled={tts.status === "playing"}
-                            fontSizeClass={fontSizeClass}
-                            fontFamilyClass={fontFamilyClass}
-                          />
+                          {hideDuplicateChapterHeading ? null : (
+                            <ParagraphRow
+                              paragraph={paragraph}
+                              words={words}
+                              highlightedWordIndex={highlightedWordIndex}
+                              highlightStyle={settings.ttsHighlightStyle}
+                              onWordClick={handleWordClick}
+                              wordClicksDisabled={tts.status === "playing"}
+                              fontSizeClass={fontSizeClass}
+                              fontFamilyClass={fontFamilyClass}
+                            />
+                          )}
                         </>
                       );
                     })()
