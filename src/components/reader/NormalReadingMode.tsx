@@ -4,16 +4,16 @@ import { useLocation } from "wouter";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
-import { useSettings } from "@/contexts/SettingsContext";
+import { PROGRESS_BAR_THEMES, useSettings } from "@/contexts/SettingsContext";
 import { useTts } from "@/contexts/TtsContext";
 import { useTtsRegex } from "@/contexts/TtsRegexContext";
 import SettingsModal from "@/components/reader/SettingsModal";
 import ChapterMenu from "@/components/reader/ChapterMenu";
-import ProgressBar from "@/components/shared/ProgressBar";
 import TtsMiniBar from "@/components/reader/TtsMiniBar";
 import TtsRegexRulesModal from "@/components/reader/TtsRegexRulesModal";
 import ReaderToolsMenu, { PRONUNCIATION_ICON } from "@/components/reader/ReaderToolsMenu";
 import WordReplacementSheet from "@/components/reader/WordReplacementSheet";
+import NormalReaderToolbar, { type NormalReaderToolbarState } from "@/components/reader/NormalReaderToolbar";
 
 import { speakNativeText, isNativeTtsAvailable } from "@/lib/nativeTts";
 import { createSimpleWordPattern } from "@/lib/ttsRegex/simpleRule";
@@ -26,7 +26,12 @@ import {
 import { resolveBookImageSrc } from "@/lib/reader/resolveBookImageSrc";
 import type { BookImage, Chapter, Paragraph } from "@/types/book";
 import { buildChapterSeparatorStarts, isDuplicateVisibleChapterHeading, navigationEntryAtParagraph } from "@/lib/reader/chapterSeparators";
-import { classifyNavigationTitle, navigationKindLabel } from "@/lib/navigationHierarchy";
+import { classifyNavigationTitle } from "@/lib/navigationHierarchy";
+import {
+  createReaderToolbarScrollState,
+  resetReaderToolbarScrollState,
+  updateReaderToolbarScrollState,
+} from "@/lib/reader/readerToolbarVisibility";
 import NavigationSeparator from "@/components/reader/NavigationSeparator";
 import SceneSeparator from "@/components/reader/SceneSeparator";
 import type { Position, TtsHighlightStyle } from "@/types/reading";
@@ -238,7 +243,7 @@ export default function NormalReadingMode() {
   const [regexInitialPattern, setRegexInitialPattern] = useState("");
   const [regexInitialReplacement, setRegexInitialReplacement] = useState("");
   const [showWordReplacement, setShowWordReplacement] = useState(false);
-  const [isScrolled, setIsScrolled] = useState(false);
+  const [toolbarMode, setToolbarMode] = useState<"edge" | "expanded">("edge");
   const [isTtsBarOpen, setIsTtsBarOpen] = useState(false);
   const [displayedProgress, setDisplayedProgress] = useState(0);
 
@@ -246,6 +251,8 @@ export default function NormalReadingMode() {
   const hasScrolledToInitialPosition = useRef(false);
   const hasRevealedInitialProgress = useRef(false);
   const lastScrollUpdateRef = useRef<number>(0);
+  const toolbarScrollStateRef = useRef(createReaderToolbarScrollState());
+  const toolbarIntentSuppressedUntilRef = useRef(0);
   const initialScrollTimeoutRef = useRef<number | null>(null);
   const chapterSelectTimeoutRef = useRef<number | null>(null);
   const findWordRetryTimeoutRef = useRef<number | null>(null);
@@ -263,6 +270,17 @@ export default function NormalReadingMode() {
       setIsTtsBarOpen(false);
     }
   }, [highlightedWord]);
+
+  const isTtsSessionActive = tts.status === "playing" || tts.status === "paused";
+  const toolbarState: NormalReaderToolbarState = isTtsSessionActive ? "hidden" : toolbarMode;
+
+  useEffect(() => {
+    const now = Date.now();
+    const scrollTop = scrollContainerRef.current?.scrollTop ?? 0;
+    toolbarScrollStateRef.current = resetReaderToolbarScrollState(scrollTop, now);
+    toolbarIntentSuppressedUntilRef.current = now + POSITION_SYNC_SUPPRESS_MS;
+    setToolbarMode("edge");
+  }, [isTtsSessionActive]);
 
   const fontSizeClass = useMemo(() => {
     switch (settings.fontSize) {
@@ -289,6 +307,11 @@ export default function NormalReadingMode() {
         return "font-sans";
     }
   }, [settings.fontFamily]);
+
+  const progressTheme = useMemo(
+    () => PROGRESS_BAR_THEMES.find((theme) => theme.name === settings.progressBarTheme) ?? PROGRESS_BAR_THEMES[0],
+    [settings.progressBarTheme]
+  );
 
   const paragraphIndexById = useMemo(() => {
     if (!book) return new Map<number, number>();
@@ -517,12 +540,29 @@ export default function NormalReadingMode() {
     if (!book || !scrollContainerRef.current) return;
     
     const scrollTop = scrollContainerRef.current.scrollTop;
-    setIsScrolled(scrollTop > 10);
+    const now = Date.now();
+    const canReactToToolbarScroll = progressLoaded
+      && hasScrolledToInitialPosition.current
+      && now >= suppressPositionSyncUntilRef.current
+      && now >= toolbarIntentSuppressedUntilRef.current
+      && !isTtsSessionActive;
+
+    if (canReactToToolbarScroll) {
+      const toolbarUpdate = updateReaderToolbarScrollState(
+        toolbarScrollStateRef.current,
+        scrollTop,
+        now,
+      );
+      toolbarScrollStateRef.current = toolbarUpdate.state;
+      if (toolbarUpdate.intent === "backward") setToolbarMode("expanded");
+      if (toolbarUpdate.intent === "forward") setToolbarMode("edge");
+    } else {
+      toolbarScrollStateRef.current = resetReaderToolbarScrollState(scrollTop, now);
+    }
 
     if (!progressLoaded || !hasScrolledToInitialPosition.current) return;
     if (Date.now() < suppressPositionSyncUntilRef.current) return;
     
-    const now = Date.now();
     if (now - lastScrollUpdateRef.current < 150) return;
     lastScrollUpdateRef.current = now;
 
@@ -558,7 +598,7 @@ export default function NormalReadingMode() {
         wordIndex: 0
       });
     }
-  }, [book, displayRows, position.paragraphId, progressLoaded, rowVirtualizer, setPosition]);
+  }, [book, displayRows, isTtsSessionActive, position.paragraphId, progressLoaded, rowVirtualizer, setPosition]);
 
   const handleWordClick = useCallback((paragraphId: number, wordIndex: number) => {
     // When TTS is playing, don't allow changing the current word via clicks.
@@ -719,8 +759,22 @@ export default function NormalReadingMode() {
         wordIndex: 0
       });
     }
+    setToolbarMode("edge");
     setShowChapterMenu(false);
   }, [book, displayRowIndexByParagraphId, rowVirtualizer, setPosition, suppressPositionSync]);
+
+  const handleToolbarChapterAction = useCallback(() => {
+    if (toolbarMode === "edge") {
+      setToolbarMode("expanded");
+      return;
+    }
+    setShowChapterMenu(true);
+  }, [toolbarMode]);
+
+  const handleOpenSettings = useCallback(() => {
+    tts.stop();
+    setShowSettings(true);
+  }, [tts]);
 
   const handleBack = useCallback(() => {
     tts.stop();
@@ -735,73 +789,20 @@ export default function NormalReadingMode() {
   return (
     <div
       className="flex h-screen flex-col bg-neutral-950"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+      }}
     >
-      {/* Header with glassmorphism on scroll */}
-      <header 
-        className={`flex items-center gap-3 px-4 py-3 transition-all duration-300 z-20 ${
-          isScrolled 
-            ? "bg-neutral-950/90 backdrop-blur-xl border-b border-neutral-800/80 shadow-lg shadow-black/20" 
-            : "bg-neutral-950 border-b border-transparent"
-        }`}
-      >
-        <button
-          type="button"
-          onClick={handleBack}
-          className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 
-            px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 
-            transition-all duration-150 hover:scale-105 active:scale-95"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-          </svg>
-          <span className="hidden sm:inline">Back</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowChapterMenu(true)}
-          className="flex-1 truncate text-center hover:scale-[1.02] transition-transform duration-150"
-        >
-          {currentChapter ? (
-            <span className="text-sm text-neutral-200 font-medium truncate max-w-[200px]">
-              {currentChapter.title}
-            </span>
-          ) : (
-            <span className="text-sm text-neutral-400">Full book</span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            tts.stop();
-            setShowSettings(true);
-          }}
-          className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-900/80 
-            px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 
-            transition-all duration-150 hover:scale-105 active:scale-95"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.212 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span className="hidden sm:inline">Settings</span>
-        </button>
-      </header>
-
-      {/* Progress Bar Section */}
-      <div className="px-4 pt-3 pb-2">
-        <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-2">
-          <span>{currentChapter
-            ? `${navigationKindLabel(currentChapter.kind ?? classifyNavigationTitle(currentChapter.title))} progress`
-            : "Book progress"}</span>
-          <span className="font-medium text-neutral-400">
-            {progressLoaded ? `${displayedProgress}%` : ""}
-          </span>
-        </div>
-        {progressLoaded && <ProgressBar value={displayedProgress} />}
-      </div>
+      <NormalReaderToolbar
+        state={toolbarState}
+        chapterTitle={currentChapter?.title ?? "Full book"}
+        progressPercent={progressLoaded ? displayedProgress : null}
+        progressGradient={progressTheme}
+        onBack={handleBack}
+        onChapterAction={handleToolbarChapterAction}
+        onSettings={handleOpenSettings}
+      />
 
       {/* Reading Content */}
       <div

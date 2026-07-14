@@ -45,6 +45,31 @@ That cost is intentional because it buys a richer and more reliable reading mode
 
 Future improvements should preserve the normalized model while reducing the wait, for example by making books readable after the first usable content is available and continuing deeper processing in the background.
 
+## Normal reading toolbar
+
+Normal reading keeps a quiet edge caption as its resting state: the current
+chapter is shown on the left, chapter progress on the right, and progress itself
+as a thin hairline. Tapping the caption expands the back and settings controls;
+the chapter title simultaneously moves to the center. Expanded controls stay
+flat against the reading surface: there is no toolbar container, chapter pill,
+chevron, box around the side icons, or percentage label. Tapping the centered
+title opens chapter navigation. Collapsing moves the title back left and restores
+the percentage label.
+
+Scroll-driven visibility requires deliberate movement rather than touch jitter:
+
+- 40 px of movement toward earlier text within 220 ms expands the controls.
+- 40 px of movement forward within 220 ms returns to the edge caption.
+- A pause longer than the window or a direction change starts a new gesture.
+- Initial positioning, chapter jumps, and other suppressed programmatic scrolls
+  reset the measurement baseline instead of toggling the toolbar.
+- Playing or paused TTS hides the top toolbar. Ending the TTS session returns to
+  the edge caption.
+
+The caption and expanded controls are one morphing element with a constant
+reading offset, so expanding and collapsing does not move the prose. The offset
+animates away only when the toolbar is fully hidden for TTS.
+
 ## In-book images
 
 The normalized book model can also store sidecar image blocks for normal reading:
