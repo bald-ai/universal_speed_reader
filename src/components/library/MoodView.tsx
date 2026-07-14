@@ -21,6 +21,7 @@ import type { LibraryLayout } from "@/types/libraryLayout";
 import { addBookIdsToMood, loadMoods, loadRecent, saveMoods, setRecent } from "@/lib/moodStore";
 import { MOOD_ICONS, getIconEmoji } from "@/lib/moodIcons";
 import { getBookCoverPlaceholder } from "@/lib/library/coverPlaceholders";
+import BookFormatBadge from "@/components/library/BookFormatBadge";
 
 type MoodViewProps = {
   books: LibraryBook[];
@@ -122,8 +123,11 @@ function BookRowContent(props: { book: LibraryBook; isSelected: boolean }) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="min-w-0 flex-1">
-        <div className={`truncate text-[12px] font-medium text-neutral-100 ${isSelected ? "text-violet-200" : ""}`}>
-          {book.title}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className={`min-w-0 flex-1 truncate text-[12px] font-medium text-neutral-100 ${isSelected ? "text-violet-200" : ""}`}>
+            {book.title}
+          </div>
+          <BookFormatBadge format={book.sourceFormat} />
         </div>
         <div className="truncate text-[10px] text-neutral-500">{book.author ?? "Unknown author"}</div>
       </div>
@@ -337,8 +341,11 @@ function AddBookToMoodSheet(props: {
                   }}
                   className="mb-1 flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold text-neutral-100">{book.title}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="min-w-0 flex-1 truncate font-semibold text-neutral-100">{book.title}</span>
+                      <BookFormatBadge format={book.sourceFormat} />
+                    </span>
                     <span className="block truncate text-xs text-neutral-500">{book.author ?? "Unknown author"}</span>
                   </span>
                   <span className="shrink-0 text-xs text-neutral-500">{alreadyInMood ? "Already there" : "Add"}</span>
@@ -845,8 +852,11 @@ function FolderCard(props: {
                   title={selectedBook.title}
                 />
                 <div className="mt-auto">
-                  <div className="line-clamp-2 text-sm font-semibold leading-snug text-neutral-100">
-                    {selectedBook.title}
+                  <div className="flex items-start gap-1.5">
+                    <div className="min-w-0 flex-1 line-clamp-2 text-sm font-semibold leading-snug text-neutral-100">
+                      {selectedBook.title}
+                    </div>
+                    <BookFormatBadge format={selectedBook.sourceFormat} />
                   </div>
                   <div className="mt-1 text-[11px] text-neutral-400 truncate">
                     {selectedBook.author ?? "Unknown author"}

@@ -18,6 +18,7 @@ import type { LibraryBook } from "@/types/book";
 import type { LibraryLayout } from "@/types/libraryLayout";
 import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
 import { getBookImportService, type ImportPayload } from "@/lib/import/bookImportService";
+import { isSupportedBookFile } from "@/lib/import/bookFileSelection";
 import {
   buildFolderImportPreview,
   flattenFolderImportBooks,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/import/folderImportTree";
 import {
   isNativeEpubFolderPickerAvailable,
+  pickNativeBookFiles,
   pickNativeEpubFolder,
   readNativeEpubFolderBytes,
   type NativeEpubFolderFile,
@@ -329,15 +331,43 @@ export default function Home() {
     setEditActionError(null);
   }, [editingBookId, entryById]);
 
-  const triggerImportPicker = () => {
+  const triggerImportPicker = async () => {
     setIsImportChooserOpen(false);
-    fileInputRef.current?.click();
+    if (!isNativeEpubFolderPickerAvailable()) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    setImportError(null);
+    try {
+      const outcome = await pickNativeBookFiles();
+      if (outcome.status !== "selected") return;
+      if (outcome.files.length === 0) {
+        setImportError("No EPUB or PDF books selected.");
+        return;
+      }
+
+      setPendingFolderImport(null);
+      setPendingImportItems(outcome.files.map((file) => ({
+        kind: "native-folder-file",
+        name: file.name,
+        size: file.size,
+        nativeFile: file,
+      })));
+      setPendingImportDescription("Android picked the files. Review the batch before adding it to your library.");
+      setBatchImportProgress({ completed: 0, failed: 0 });
+      setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
+      setLastImportSummary(null);
+      setView("library");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not open those books.");
+    }
   };
 
   const openImportChooser = () => {
     if (isImportingBatch) return;
     if (!isNativeEpubFolderPickerAvailable()) {
-      triggerImportPicker();
+      void triggerImportPicker();
       return;
     }
     setIsImportChooserOpen(true);
@@ -348,6 +378,12 @@ export default function Home() {
     if (!selectedFiles || selectedFiles.length === 0) return;
     const files = Array.from(selectedFiles);
     event.target.value = "";
+    const unsupportedFiles = files.filter((file) => !isSupportedBookFile(file));
+    if (unsupportedFiles.length > 0) {
+      const unsupportedNames = unsupportedFiles.map((file) => file.name).join(", ");
+      setImportError(`Only EPUB and PDF books can be imported. Unsupported: ${unsupportedNames}`);
+      return;
+    }
     setPendingFolderImport(null);
     setPendingImportItems(files.map((file) => ({
       kind: "file",
@@ -930,7 +966,9 @@ export default function Home() {
             <div className="relative w-full rounded-2xl border border-neutral-800 bg-neutral-900 p-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] shadow-2xl shadow-black/60">
               <button
                 type="button"
-                onClick={triggerImportPicker}
+                onClick={() => {
+                  void triggerImportPicker();
+                }}
                 className="w-full rounded-xl px-4 py-3 text-left text-sm font-semibold text-neutral-100 hover:bg-neutral-800 transition-colors"
               >
                 EPUB or PDF files

@@ -1,5 +1,5 @@
 import { getBookRepository } from "@/lib/storage/appRepository";
-import type { LibraryBook } from "@/types/book";
+import type { BookSourceFormat, LibraryBook } from "@/types/book";
 import type { BookRow, ProcessingStatus } from "@/types/storage";
 
 export type LibraryEntry = {
@@ -13,8 +13,22 @@ export type LibraryEntry = {
   totalWords: number;
   totalParagraphs: number;
   progressPercent: number;
+  sourceFormat: BookSourceFormat | null;
   libraryBook: LibraryBook;
 };
+
+export function getBookSourceFormat(sourceUri: string): BookSourceFormat | null {
+  let normalized = sourceUri.trim().toLowerCase();
+  try {
+    normalized = decodeURIComponent(normalized);
+  } catch {
+    // A malformed legacy URI can still be checked in its stored form.
+  }
+  const path = normalized.split(/[?#]/u, 1)[0] ?? normalized;
+  if (path.endsWith(".epub")) return "EPUB";
+  if (path.endsWith(".pdf")) return "PDF";
+  return null;
+}
 
 function statusLabel(status: ProcessingStatus): LibraryEntry["processingStatusLabel"] {
   if (status === "queued") return "Queued";
@@ -54,6 +68,7 @@ export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
     const progressPercent = progress
       ? estimateProgressPercent(book.total_paragraphs, progress.paragraph_id)
       : 0;
+    const sourceFormat = getBookSourceFormat(book.source_uri);
 
     return {
       id: book.id,
@@ -66,6 +81,7 @@ export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
       totalWords: book.total_words,
       totalParagraphs: book.total_paragraphs,
       progressPercent,
+      sourceFormat,
       libraryBook: {
         id: book.id,
         title: book.title,
@@ -74,6 +90,7 @@ export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
         genre: "Book",
         description: buildDescription(book),
         progressPercent,
+        ...(sourceFormat ? { sourceFormat } : {}),
       },
     };
   });

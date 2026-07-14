@@ -35,6 +35,7 @@ function buildFolderTree(
       id: book.id,
       name: book.title,
       subtitle: book.author ?? "Unknown author",
+      ...(book.sourceFormat ? { sourceFormat: book.sourceFormat } : {}),
     })),
   ];
 

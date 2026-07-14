@@ -210,6 +210,27 @@ describe("portable book parser", () => {
     expect(output.book.diagnostics.filter((diagnostic) => diagnostic.severity === "failure")).toEqual([]);
   });
 
+  test("keeps images inside centered CSS wrappers instead of treating the wrapper as a scene break", async () => {
+    const prose = "This ordinary paragraph contains enough readable words to establish reliable narrative context around a centered illustration in the sample publication.";
+    const output = await parseBookBytes({
+      sourceBytes: makeEpub(`
+        <h1>Chapter One</h1>
+        <p>${prose} ${prose}</p>
+        <div class="quiet-space"><img src="illustration.png" alt="Centered illustration"/></div>
+        <p>${prose} ${prose}</p>
+      `),
+      sourceName: "centered-image.epub",
+    });
+
+    expect(output.book.images).toHaveLength(1);
+    expect(output.book.images[0]).toMatchObject({
+      alt: "Centered illustration",
+      src: "OPS/illustration.png",
+    });
+    expect(output.book.paragraphs.filter((paragraph) => paragraph.sceneBreakBefore)).toEqual([]);
+    expect(output.book.diagnostics.filter((diagnostic) => diagnostic.severity === "failure")).toEqual([]);
+  });
+
   test("does not promote Dracula title-page and back-matter rules to scenes", async () => {
     const fixture = Bun.file("test-fixtures/epubs-with-covers/dracula.epub");
     const output = await parseBookBytes({
@@ -347,8 +368,12 @@ function makeEpub(body: string): Uint8Array {
   return zipSync({
     mimetype: strToU8("application/epub+zip"),
     "META-INF/container.xml": strToU8(`<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`),
-    "OPS/package.opf": strToU8(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">scene-test</dc:identifier><dc:title>Scene Test</dc:title><dc:creator>Fixture</dc:creator><dc:language>en</dc:language></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="style" href="style.css" media-type="text/css"/></manifest><spine><itemref idref="content"/></spine></package>`),
+    "OPS/package.opf": strToU8(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">scene-test</dc:identifier><dc:title>Scene Test</dc:title><dc:creator>Fixture</dc:creator><dc:language>en</dc:language></metadata><manifest><item id="content" href="content.xhtml" media-type="application/xhtml+xml"/><item id="style" href="style.css" media-type="text/css"/><item id="illustration" href="illustration.png" media-type="image/png"/></manifest><spine><itemref idref="content"/></spine></package>`),
     "OPS/content.xhtml": strToU8(`<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Scene Test</title><link rel="stylesheet" href="style.css"/></head><body>${body}</body></html>`),
     "OPS/style.css": strToU8(`.quiet-space { text-align: center; margin-top: 2em; margin-bottom: 2em; } .margin-gap { margin-top: 2em; margin-bottom: 2em; } .pseudo-break::after { content: "⁂"; } .external-rule { border-top: 1px solid; width: 20%; }`),
+    "OPS/illustration.png": Uint8Array.from(
+      atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+      (character) => character.charCodeAt(0),
+    ),
   });
 }

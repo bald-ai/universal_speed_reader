@@ -15,6 +15,7 @@ type NativeEpubFolderPickerResult = {
 };
 
 type NativeEpubFolderPickerPlugin = {
+  pickFiles(): Promise<NativeEpubFolderPickerResult>;
   pickFolder(): Promise<NativeEpubFolderPickerResult>;
 };
 
@@ -23,10 +24,28 @@ export type NativeEpubFolderPickOutcome =
   | { status: "canceled" }
   | { status: "selected"; folderName: string; files: NativeEpubFolderFile[] };
 
+export type NativeBookFilePickOutcome =
+  | { status: "unavailable" }
+  | { status: "canceled" }
+  | { status: "selected"; files: NativeEpubFolderFile[] };
+
 const EpubFolderPicker = registerPlugin<NativeEpubFolderPickerPlugin>("EpubFolderPicker");
 
 export function isNativeEpubFolderPickerAvailable(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+}
+
+export async function pickNativeBookFiles(): Promise<NativeBookFilePickOutcome> {
+  if (!isNativeEpubFolderPickerAvailable()) {
+    return { status: "unavailable" };
+  }
+
+  const result = await EpubFolderPicker.pickFiles();
+  if (result.canceled) {
+    return { status: "canceled" };
+  }
+
+  return { status: "selected", files: result.files };
 }
 
 export async function pickNativeEpubFolder(): Promise<NativeEpubFolderPickOutcome> {

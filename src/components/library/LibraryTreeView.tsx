@@ -33,6 +33,7 @@ import {
 import { getBookCoverPlaceholder } from "@/lib/library/coverPlaceholders";
 import { addBookIdsToMood, loadMoods, saveMoods } from "@/lib/moodStore";
 import { MOOD_ICONS, getIconEmoji } from "@/lib/moodIcons";
+import BookFormatBadge from "@/components/library/BookFormatBadge";
 import type { Mood } from "@/types/book";
 import type { LibraryFolder, LibraryLayout, LibraryLayoutItemId } from "@/types/libraryLayout";
 
@@ -141,6 +142,7 @@ function buildFolderPickPruneTree(
       id: entry.id,
       name: entry.title,
       subtitle: entry.author ?? "Unknown author",
+      ...(entry.sourceFormat ? { sourceFormat: entry.sourceFormat } : {}),
     })),
   ];
 
@@ -324,7 +326,10 @@ function BookRow(props: {
           <img src={coverUrl} alt="" className="h-12 w-9 rounded-md bg-neutral-800 object-cover" loading="lazy" decoding="async" />
         </button>
         <button type="button" onClick={onOpen} disabled={!canOpen || isDeleting || isBusy} className="min-w-0 flex-1 text-left disabled:opacity-50">
-          <div className="truncate text-sm font-semibold text-neutral-100">{entry.title}</div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-100">{entry.title}</div>
+            <BookFormatBadge format={entry.sourceFormat} />
+          </div>
           <div className="truncate text-xs text-neutral-500">{entry.author}</div>
           <div className="mt-1 flex items-center gap-2">
             <div className="h-0.5 w-16 overflow-hidden rounded-full bg-neutral-800">
@@ -466,7 +471,10 @@ function MoveBookSheet(props: {
       <div className="max-h-[78dvh] w-full overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl shadow-black/60">
         <div className="border-b border-neutral-800 p-4">
           <div className="text-sm font-semibold text-neutral-100">Move to folder...</div>
-          <div className="mt-1 truncate text-xs text-neutral-500">{entry.title}</div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5">
+            <div className="min-w-0 flex-1 truncate text-xs text-neutral-500">{entry.title}</div>
+            <BookFormatBadge format={entry.sourceFormat} />
+          </div>
         </div>
         <div className="max-h-[58dvh] overflow-auto p-2">
           <button

@@ -367,7 +367,11 @@ async function extractFlowElement(
     recordSceneBreak(state, "text-ornament");
     return;
   }
-  if (elementText.length === 0 && hasCssSeparatorSignal($, element, state)) {
+  if (
+    elementText.length === 0
+    && $(element).find(MEDIA_SELECTOR).length === 0
+    && hasCssSeparatorSignal($, element, state)
+  ) {
     recordSceneBreak(state, "css-separator");
     return;
   }

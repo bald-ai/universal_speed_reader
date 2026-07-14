@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import BookFormatBadge from "./BookFormatBadge";
+import type { BookSourceFormat } from "@/types/book";
 
 export type PickPruneBookNode = {
   kind: "book";
@@ -6,6 +8,7 @@ export type PickPruneBookNode = {
   name: string;
   subtitle?: string;
   size?: number;
+  sourceFormat?: BookSourceFormat;
 };
 
 export type PickPruneFolderNode = {
@@ -101,7 +104,10 @@ function TreeNode(props: {
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-neutral-100">{node.name}</div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-100">{node.name}</div>
+            <BookFormatBadge format={node.sourceFormat} />
+          </div>
           <div className="truncate text-xs text-neutral-500">
             {node.subtitle ?? (node.size !== undefined ? formatBytes(node.size) : "Book")}
           </div>

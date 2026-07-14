@@ -69,11 +69,23 @@ The normalized book model can also store sidecar image blocks for normal reading
 
 On import, the app materializes the library cover into a `data:image/...;base64,...` string and stores that in `books.cover_path` so library UI can use it directly as an `<img src>`. EPUB covers come from the raw EPUB archive. PDF covers are rendered from the first page. SVG covers are supported for EPUBs.
 
+Library and Mood book rows show a compact `EPUB` or `PDF` badge derived from the
+stored `books.source_uri`. This uses existing import metadata and requires no
+database migration.
+
 Manual cover edits already store data URLs the same way. Books imported before this change may still have a bare zip path (broken in the library); retry or restore re-runs import and repairs the cover. There is no automatic backfill for old rows.
 
 ## Deleting books during import
 
 Library delete is always available, including while a book shows Processing. Delete cancels the active/queued import for that book, removes its DB rows and raw EPUB, and ignores any late write from the cancelled worker.
+
+## Android file selection
+
+Android's WebView file chooser can collapse a mixed EPUB/PDF `accept` list to one
+MIME type and can restore a stale storage path that appears empty. Android uses
+the app's native picker bridge instead: it requests EPUB/PDF files, starts at the
+system Downloads root, and validates the selected filenames and MIME types before
+import. Browser builds keep the native HTML file filter.
 
 ## Book processing
 

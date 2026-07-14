@@ -10,6 +10,8 @@ export type Paragraph = {
 
 export type SceneBreakSource = "text-ornament" | "horizontal-rule" | "css-separator" | "whitespace";
 
+export type BookSourceFormat = "EPUB" | "PDF";
+
 export type Chapter = {
   index: number;
   title: string;
@@ -43,6 +45,7 @@ export type LibraryBook = Pick<Book, "id" | "title" | "author" | "coverUrl"> & {
   genre: string;
   description: string;
   progressPercent: number;
+  sourceFormat?: BookSourceFormat;
 };
 
 export type Mood = {
