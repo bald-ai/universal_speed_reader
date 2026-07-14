@@ -15,13 +15,20 @@ import {
 import { epubCoverDataUrl } from "@/lib/import/epubCoverDataUrl";
 import { createPdfCoverDataUrl } from "@/lib/import/pdfImageRenderer";
 import { clearBookImageSrcCache } from "@/lib/reader/resolveBookImageSrc";
+import {
+  classifyImportDiagnostics,
+  ensureImagesMissingWarning,
+} from "@/lib/import/importDiagnostics";
+import { MAX_INLINE_MEDIA_LENGTH } from "@/lib/bookParser/validate";
 import type {
   BookImageRow,
   BookRow,
   ImportErrorBucket,
   ImportJobRow,
   ProcessingStatus,
+  ProcessingWarning,
 } from "@/types/storage";
+import type { BookFormat, BookImage as ParsedBookImage } from "@/lib/bookParser/types";
 
 const MAX_IMPORT_SIZE_BYTES = 150 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 180_000;
@@ -44,6 +51,15 @@ type ImportSnapshotRow = {
   bookId: string;
   status: ProcessingStatus;
   error: string | null;
+  warnings: ProcessingWarning[] | null;
+};
+
+type ImportTerminalOutcome = {
+  status: "completed" | "failed";
+  attempt: number;
+  error: string | null;
+  warnings: ProcessingWarning[] | null;
+  fileName: string;
 };
 
 type UpdateBookMetadataInput = {
@@ -165,20 +181,38 @@ function classifyError(error: unknown): ImportFailure {
 
 /**
  * Persist image sidecar rows as cheap references:
- * - inline `data:image/...` (e.g. serialized SVG) stored as-is
+ * - inline `data:image/...` (e.g. serialized SVG) stored as-is when small enough
  * - zip-relative paths stored as paths (loaded on demand while reading)
- * Does not base64-materialize zip assets during import.
+ * Drops invalid or oversized payloads and reports how many were removed.
  */
-function toBookImageRows(
+export function toBookImageRows(
   bookId: string,
-  parsedImages: Array<{ src: string; alt: string; afterParagraphId: number }>
-): BookImageRow[] {
-  if (parsedImages.length === 0) return [];
+  parsedImages: ParsedBookImage[],
+  format: BookFormat,
+  paragraphCount: number
+): { rows: BookImageRow[]; droppedCount: number } {
+  if (parsedImages.length === 0) return { rows: [], droppedCount: 0 };
   const rows: BookImageRow[] = [];
+  let droppedCount = 0;
+  let previousAnchor = 0;
 
   for (const image of parsedImages) {
     const src = image.src.trim();
-    if (!src) continue;
+    const validAnchor = Number.isInteger(image.afterParagraphId)
+      && image.afterParagraphId >= 0
+      && image.afterParagraphId <= paragraphCount
+      && image.afterParagraphId >= previousAnchor;
+    const validSource = src.length > 0
+      && !src.startsWith("blob:")
+      && !/^javascript:/iu.test(src)
+      && !(src.startsWith("data:") && src.length > MAX_INLINE_MEDIA_LENGTH)
+      && (format !== "pdf" || /^pdf:\/\/page\/\d+(?:\/image\/\d+)?(?:[?#].*)?$/u.test(src));
+
+    if (!validAnchor || !validSource) {
+      droppedCount += 1;
+      continue;
+    }
+
     rows.push({
       book_id: bookId,
       image_index: rows.length,
@@ -186,9 +220,15 @@ function toBookImageRows(
       alt: image.alt.trim() || null,
       src,
     });
+    previousAnchor = image.afterParagraphId;
   }
 
-  return rows;
+  return { rows, droppedCount };
+}
+
+function isOversizedInlineCover(src: string | null | undefined): boolean {
+  if (!src) return false;
+  return src.startsWith("data:") && src.length > MAX_INLINE_MEDIA_LENGTH;
 }
 
 type ImportTask = {
@@ -200,6 +240,8 @@ type ImportTask = {
   persistSource?: Promise<RawSourcePersistResult>;
   clearProgressOnSuccess: boolean;
   clearExistingContentBeforeParse: boolean;
+  /** When true, hard-fail removes the library row. False for retry/restore of an existing book. */
+  purgeOnHardFailure: boolean;
 };
 
 type RawSourcePersistResult =
@@ -235,6 +277,9 @@ export class BookImportService {
   private enqueueLock: Promise<void> = Promise.resolve();
   private inlineBatchBytes = 0;
   private inlineBatchTasks = 0;
+  /** Terminal outcomes retained after hard-fail purge so Last import can still report them. */
+  private readonly terminalOutcomes = new Map<string, ImportTerminalOutcome>();
+  private legacyFailedPurgePromise: Promise<void> | null = null;
 
   constructor(repositoryPromise?: Promise<BookRepository>, rawStore?: RawStoreAdapter) {
     this.repositoryPromise = repositoryPromise ?? getBookRepository();
@@ -243,6 +288,27 @@ export class BookImportService {
       load: loadRawBook,
       remove: deleteRawBook,
     };
+  }
+
+  /** Removes leftover Failed library rows from older imports (one-time). */
+  async purgeLegacyFailedBooks(): Promise<void> {
+    if (!this.legacyFailedPurgePromise) {
+      this.legacyFailedPurgePromise = this.runLegacyFailedPurge();
+    }
+    await this.legacyFailedPurgePromise;
+  }
+
+  private async runLegacyFailedPurge(): Promise<void> {
+    const repository = await this.repositoryPromise;
+    const settingKey = "import.purge_failed_library_rows.v1";
+    const alreadyApplied = await repository.getAppSetting<boolean>(settingKey);
+    if (alreadyApplied === true) return;
+
+    const failedBooks = await repository.listBooks({ statuses: ["failed"] });
+    for (const book of failedBooks) {
+      await this.deleteBook(book.id);
+    }
+    await repository.putAppSetting(settingKey, true);
   }
 
   subscribe(listener: () => void): () => void {
@@ -274,6 +340,7 @@ export class BookImportService {
       size_bytes: payload.bytes.byteLength,
       processing_status: "queued",
       processing_error: null,
+      processing_warnings: null,
       total_chunks: 0,
       total_paragraphs: 0,
       total_words: 0,
@@ -304,7 +371,10 @@ export class BookImportService {
 
     const validationFailure = validateSource(source);
     if (validationFailure) {
-      await this.failImport(repository, bookId, attempt, validationFailure);
+      await this.failImport(repository, bookId, attempt, validationFailure, {
+        fileName: payload.fileName,
+        purge: true,
+      });
       return bookId;
     }
 
@@ -326,6 +396,7 @@ export class BookImportService {
         persistSource: this.persistRawSource(source),
         clearProgressOnSuccess: false,
         clearExistingContentBeforeParse: false,
+        purgeOnHardFailure: true,
       });
       this.emit();
       void this.runQueue();
@@ -343,7 +414,8 @@ export class BookImportService {
         new ImportFailure(
           "Corrupted/Unreadable book",
           `Corrupted/Unreadable book: failed to persist source file for retry (${message})`
-        )
+        ),
+        { fileName: payload.fileName, purge: true }
       );
       return bookId;
     }
@@ -358,6 +430,7 @@ export class BookImportService {
       },
       clearProgressOnSuccess: false,
       clearExistingContentBeforeParse: false,
+      purgeOnHardFailure: true,
     });
     this.emit();
     void this.runQueue();
@@ -391,7 +464,9 @@ export class BookImportService {
         finished_at: null,
       };
       await repository.insertImportJob(job);
-      await repository.setBookStatus(bookId, "queued", {
+      // Keep prior soft warnings until a successful re-import replaces them.
+      await repository.patchBook(bookId, {
+        processing_status: "queued",
         processing_error: null,
         updated_at: now,
       });
@@ -406,7 +481,8 @@ export class BookImportService {
           new ImportFailure(
             "Corrupted/Unreadable book",
             "Corrupted/Unreadable book: no stored source file available for retry"
-          )
+          ),
+          { fileName: book.title, purge: false }
         );
         return;
       }
@@ -420,7 +496,9 @@ export class BookImportService {
           sizeBytes: source.sizeBytes,
         },
         clearProgressOnSuccess: false,
-        clearExistingContentBeforeParse: true,
+        // Keep prior content until replace succeeds so a hard-fail cannot wipe the book.
+        clearExistingContentBeforeParse: false,
+        purgeOnHardFailure: false,
       });
       this.emit();
       void this.runQueue();
@@ -502,7 +580,9 @@ export class BookImportService {
         finished_at: null,
       };
       await repository.insertImportJob(job);
-      await repository.setBookStatus(bookId, "queued", {
+      // Keep prior soft warnings until a successful restore replaces them.
+      await repository.patchBook(bookId, {
+        processing_status: "queued",
         processing_error: null,
         updated_at: now,
       });
@@ -510,16 +590,18 @@ export class BookImportService {
 
       const source = await this.rawStore.load(bookId);
       if (!source) {
+        const failure = new ImportFailure(
+          "Corrupted/Unreadable book",
+          "Corrupted/Unreadable book: no stored source file available for restore"
+        );
         await this.failImport(
           repository,
           bookId,
           attempt,
-          new ImportFailure(
-            "Corrupted/Unreadable book",
-            "Corrupted/Unreadable book: no stored source file available for restore"
-          )
+          failure,
+          { fileName: book.title, purge: false }
         );
-        return;
+        throw new Error(formatFailure(failure));
       }
 
       this.queue.push({
@@ -531,15 +613,17 @@ export class BookImportService {
           sizeBytes: source.sizeBytes,
         },
         clearProgressOnSuccess: true,
-        clearExistingContentBeforeParse: true,
+        // Keep prior content until replace succeeds so a hard-fail cannot wipe the book.
+        clearExistingContentBeforeParse: false,
+        purgeOnHardFailure: false,
       });
       this.emit();
       void this.runQueue();
 
       const terminalStatus = await this.waitForAttemptTerminalStatus(bookId, attempt);
       if (terminalStatus === "failed") {
-        const latest = await repository.getBook(bookId);
-        const details = latest?.processing_error ?? "Restore failed";
+        const outcome = this.terminalOutcomes.get(bookId);
+        const details = outcome?.error ?? "Restore failed";
         throw new Error(details);
       }
     });
@@ -582,11 +666,24 @@ export class BookImportService {
   async listImportSnapshot(): Promise<ImportSnapshotRow[]> {
     const repository = await this.repositoryPromise;
     const books = await repository.listBooks();
-    return books.map((book) => ({
+    const bookIds = new Set(books.map((book) => book.id));
+    const rows: ImportSnapshotRow[] = books.map((book) => ({
       bookId: book.id,
       status: book.processing_status,
       error: book.processing_error,
+      warnings: book.processing_warnings,
     }));
+
+    for (const [bookId, outcome] of this.terminalOutcomes) {
+      if (bookIds.has(bookId)) continue;
+      rows.push({
+        bookId,
+        status: outcome.status,
+        error: outcome.error,
+        warnings: outcome.warnings,
+      });
+    }
+    return rows;
   }
 
   private async runQueue(): Promise<void> {
@@ -681,6 +778,7 @@ export class BookImportService {
       source,
       clearProgressOnSuccess,
       clearExistingContentBeforeParse,
+      purgeOnHardFailure,
     } = task;
     const ensureNotCancelled = async () => {
       if (this.cancelledBookIds.has(bookId) || cancelSignal?.aborted) {
@@ -761,11 +859,11 @@ export class BookImportService {
         );
       }
 
-      const strictFailure = parsed.book.diagnostics.find((diagnostic) => diagnostic.severity === "failure");
-      if (strictFailure) {
+      const classification = classifyImportDiagnostics(parsed.book.diagnostics);
+      if (classification.hardFailure) {
         throw new ImportFailure(
           "Book content not reliable",
-          `Book content not reliable: ${strictFailure.message}`
+          `Book content not reliable: ${classification.hardFailure.message}`
         );
       }
 
@@ -780,24 +878,36 @@ export class BookImportService {
         }))
       );
       await ensureNotCancelled();
-      const imageRows = toBookImageRows(bookId, parsed.book.images);
+      const { rows: imageRows, droppedCount: droppedImageCount } = toBookImageRows(
+        bookId,
+        parsed.book.images,
+        parsed.book.format,
+        parsed.book.paragraphs.length
+      );
       const totalWords = parsed.book.totals.words > 0
         ? parsed.book.totals.words
         : computeTotalWords(parsed.book.paragraphs);
       await ensureNotCancelled();
+      const rawCoverSrc = parsed.book.cover?.src ?? null;
       const coverDataUrl = parsed.book.format === "epub"
-        ? await epubCoverDataUrl(storedSource.bytes, parsed.book.cover?.src ?? null)
+        ? (isOversizedInlineCover(rawCoverSrc)
+          ? null
+          : await epubCoverDataUrl(storedSource.bytes, rawCoverSrc))
         : await createPdfCoverDataUrl(storedSource.bytes);
       await ensureNotCancelled();
-      await repository.patchBook(bookId, {
-        title: parsed.book.metadata.title || fileNameToTitle(storedSource.fileName),
-        author: parsed.book.metadata.authors.join(", ") || null,
-        cover_path: coverDataUrl,
-        language: parsed.book.metadata.language ?? null,
-        size_bytes: storedSource.sizeBytes,
-        updated_at: Date.now(),
-      });
-      clearBookTokenCache(bookId);
+      let processingWarnings = classification.warnings.length > 0 ? [...classification.warnings] : [];
+      if (droppedImageCount > 0) {
+        processingWarnings = ensureImagesMissingWarning(processingWarnings);
+      }
+      if (
+        isOversizedInlineCover(rawCoverSrc)
+        && !processingWarnings.some((warning) => warning.code === "cover_missing")
+      ) {
+        processingWarnings.push({ code: "cover_missing", message: "No cover image was found." });
+      }
+      const warningsToStore = processingWarnings.length > 0 ? processingWarnings : null;
+      // Replace content before metadata so a late failure cannot leave a new
+      // cover/title/warnings on the previous body (Restore keep-prior path).
       await ensureNotCancelled();
       await repository.replaceBookContent(bookId, {
         chunks: chunkRows,
@@ -807,12 +917,30 @@ export class BookImportService {
         total_paragraphs: parsed.book.paragraphs.length,
         total_words: totalWords,
       });
+      clearBookTokenCache(bookId);
+      await ensureNotCancelled();
+      await repository.patchBook(bookId, {
+        title: parsed.book.metadata.title || fileNameToTitle(storedSource.fileName),
+        author: parsed.book.metadata.authors.join(", ") || null,
+        cover_path: coverDataUrl,
+        language: parsed.book.metadata.language ?? null,
+        size_bytes: storedSource.sizeBytes,
+        processing_warnings: warningsToStore,
+        updated_at: Date.now(),
+      });
       if (clearProgressOnSuccess) {
         await ensureNotCancelled();
         await repository.deleteReadingProgress(bookId);
       }
 
       await markStatus("completed", { finishedAt: Date.now(), error: null });
+      this.terminalOutcomes.set(bookId, {
+        status: "completed",
+        attempt,
+        error: null,
+        warnings: warningsToStore,
+        fileName: storedSource.fileName,
+      });
     } catch (unknownError) {
       if (
         unknownError instanceof ImportCancelledError ||
@@ -822,7 +950,10 @@ export class BookImportService {
         return;
       }
       const failure = await this.resolveTaskFailure(task, unknownError);
-      await this.failImport(repository, bookId, attempt, failure);
+      await this.failImport(repository, bookId, attempt, failure, {
+        fileName: task.source.fileName,
+        purge: purgeOnHardFailure,
+      });
     }
   }
 
@@ -871,15 +1002,70 @@ export class BookImportService {
     repository: BookRepository,
     bookId: string,
     attempt: number,
-    failure: ImportFailure
+    failure: ImportFailure,
+    options?: { fileName?: string; purge?: boolean }
   ): Promise<void> {
     const message = formatFailure(failure);
-    await repository.setBookAndImportStatus(bookId, attempt, "failed", {
-      processing_error: message,
-      updated_at: Date.now(),
+    const purge = options?.purge !== false;
+    const book = await repository.getBook(bookId);
+    const resolvedFileName = options?.fileName
+      ?? (() => {
+        const encoded = book?.source_uri.split("/").pop();
+        if (!encoded) return book?.title ?? "Unknown file";
+        try {
+          return decodeURIComponent(encoded);
+        } catch {
+          return encoded;
+        }
+      })();
+
+    this.terminalOutcomes.set(bookId, {
+      status: "failed",
+      attempt,
+      error: message,
+      warnings: null,
+      fileName: resolvedFileName,
+    });
+
+    if (!book) {
+      this.emit();
+      return;
+    }
+
+    if (purge) {
+      await repository.setBookAndImportStatus(bookId, attempt, "failed", {
+        processing_error: message,
+        updated_at: Date.now(),
+        finished_at: Date.now(),
+      });
+      this.emit();
+      try {
+        await this.deleteBook(bookId);
+      } catch (error) {
+        // The failed outcome is already terminal. Cleanup must not reject the
+        // active task and strand every later item in the import queue.
+        console.warn(`Could not fully purge failed import ${bookId}:`, error);
+      }
+      return;
+    }
+
+    // Restore hard-fail: keep the existing library book, prior content, and warnings.
+    await repository.patchImportJob(bookId, attempt, {
+      status: "failed",
+      error: message,
       finished_at: Date.now(),
     });
+    await repository.patchBook(bookId, {
+      processing_status: "completed",
+      processing_error: null,
+      updated_at: Date.now(),
+    });
     this.emit();
+  }
+
+  /** Clears Last-import outcomes for purged hard-fails. Call at the start of each import batch. */
+  clearTerminalOutcomes(): void {
+    this.terminalOutcomes.clear();
   }
 
   private emit(): void {
@@ -905,6 +1091,10 @@ export class BookImportService {
     const start = Date.now();
     let delayMs = 120;
     while (Date.now() - start < timeoutMs) {
+      const outcome = this.terminalOutcomes.get(bookId);
+      if (outcome?.attempt === attempt) {
+        return outcome.status;
+      }
       const repository = await this.repositoryPromise;
       const job = (await repository.listImportJobs(bookId)).find((entry) => entry.attempt === attempt);
       if (job?.status === "completed" || job?.status === "failed") {

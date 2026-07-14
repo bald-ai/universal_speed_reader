@@ -61,12 +61,25 @@ type BatchImportTiming = {
   processedBytes: number;
 };
 
+type ImportBookResultStatus = "ok" | "with_issues" | "failed";
+
+type ImportBookResult = {
+  /** Stable row id: book id after enqueue, or a synthetic id for pre-queue failures. */
+  id: string;
+  fileName: string;
+  status: ImportBookResultStatus;
+  reason: string | null;
+  sizeBytes: number;
+};
+
 type ImportTimingSummary = {
   bookCount: number;
   completedCount: number;
+  withIssuesCount: number;
   failedCount: number;
   totalBytes: number;
   elapsedMs: number;
+  books: ImportBookResult[];
 };
 
 type PendingFolderImport = {
@@ -466,11 +479,15 @@ export default function Home() {
     const totalBytes = items.reduce((sum, item) => sum + item.size, 0);
     const startedAtMs = Date.now();
     const immediateFailures: string[] = [];
-    const immediateFailedItems: PendingImportItem[] = [];
+    const immediateFailedResults: ImportBookResult[] = [];
     const trackedBooks: TrackedImportBook[] = [];
+    let immediateFailureSeq = 0;
     let completedCount = 0;
+    let withIssuesCount = 0;
     let failedCount = 0;
     let processedBytes = 0;
+    let bookResults: ImportBookResult[] = [];
+    importService.clearTerminalOutcomes();
     setIsImportingBatch(true);
     setBatchImportProgress({ completed: 0, failed: 0 });
     setBatchImportTiming({ startedAtMs, elapsedMs: 0, processedBytes: 0 });
@@ -487,7 +504,14 @@ export default function Home() {
         } catch (error) {
           const message = error instanceof Error ? error.message : "Import failed";
           immediateFailures.push(`${item.name}: ${message}`);
-          immediateFailedItems.push(item);
+          immediateFailureSeq += 1;
+          immediateFailedResults.push({
+            id: `prequeue-${immediateFailureSeq}`,
+            fileName: item.name,
+            status: "failed",
+            reason: message,
+            sizeBytes: item.size,
+          });
         } finally {
           setBatchImportTiming((current) => ({
             ...current,
@@ -500,9 +524,14 @@ export default function Home() {
         const snapshot = await importService.listImportSnapshot();
         const statusByBookId = new Map(snapshot.map((row) => [row.bookId, row]));
         const failedProcessingMessages: string[] = [];
+        const nextResults: ImportBookResult[] = [...immediateFailedResults];
         let nextCompletedCount = 0;
-        let nextFailedCount = immediateFailedItems.length;
-        let nextProcessedBytes = immediateFailedItems.reduce((sum, item) => sum + item.size, 0);
+        let nextWithIssuesCount = 0;
+        let nextFailedCount = immediateFailedResults.length;
+        let nextProcessedBytes = immediateFailedResults.reduce(
+          (sum, result) => sum + result.sizeBytes,
+          0
+        );
 
         for (const trackedBook of trackedBooks) {
           const row = statusByBookId.get(trackedBook.bookId);
@@ -511,21 +540,48 @@ export default function Home() {
           if (row.status === "completed") {
             nextCompletedCount += 1;
             nextProcessedBytes += trackedBook.item.size;
+            const warnings = row.warnings ?? [];
+            if (warnings.length > 0) {
+              nextWithIssuesCount += 1;
+              nextResults.push({
+                id: trackedBook.bookId,
+                fileName: trackedBook.item.name,
+                status: "with_issues",
+                reason: warnings.map((warning) => warning.message).join(" "),
+                sizeBytes: trackedBook.item.size,
+              });
+            } else {
+              nextResults.push({
+                id: trackedBook.bookId,
+                fileName: trackedBook.item.name,
+                status: "ok",
+                reason: null,
+                sizeBytes: trackedBook.item.size,
+              });
+            }
             continue;
           }
 
           if (row.status === "failed") {
             nextFailedCount += 1;
             nextProcessedBytes += trackedBook.item.size;
-            failedProcessingMessages.push(
-              `${trackedBook.item.name}: ${row.error ?? "Import failed during processing"}`
-            );
+            const reason = row.error ?? "Import failed during processing";
+            failedProcessingMessages.push(`${trackedBook.item.name}: ${reason}`);
+            nextResults.push({
+              id: trackedBook.bookId,
+              fileName: trackedBook.item.name,
+              status: "failed",
+              reason,
+              sizeBytes: trackedBook.item.size,
+            });
           }
         }
 
         completedCount = nextCompletedCount;
+        withIssuesCount = nextWithIssuesCount;
         failedCount = nextFailedCount;
         processedBytes = nextProcessedBytes;
+        bookResults = nextResults;
         setBatchImportProgress({ completed: completedCount, failed: failedCount });
         setBatchImportTiming((current) => ({
           ...current,
@@ -554,9 +610,11 @@ export default function Home() {
       setLastImportSummary({
         bookCount: totalPendingImports,
         completedCount,
+        withIssuesCount,
         failedCount,
         totalBytes,
         elapsedMs,
+        books: bookResults,
       });
     }
 
@@ -617,11 +675,28 @@ export default function Home() {
     }
 
     try {
+      const importedBookIds = new Set<string>();
       await runImportBatch(selectedItems, {
         onBookImported: (bookId, item) => {
+          importedBookIds.add(bookId);
           nextLayout = moveBookToFolder(nextLayout, bookId, folderIdByItem.get(item) ?? null);
         },
         onBeforeRefresh: async () => {
+          const snapshot = await importService.listImportSnapshot();
+          const completedInBatch = new Set(
+            snapshot
+              .filter((row) => importedBookIds.has(row.bookId) && row.status === "completed")
+              .map((row) => row.bookId)
+          );
+          // Drop placements only for books from this folder import that hard-failed
+          // (and were purged). Leave every other library placement alone.
+          nextLayout = {
+            ...nextLayout,
+            placements: nextLayout.placements.filter((placement) => {
+              if (!importedBookIds.has(placement.bookId)) return true;
+              return completedInBatch.has(placement.bookId);
+            }),
+          };
           await saveLibraryLayout(nextLayout);
         },
       });
@@ -629,7 +704,7 @@ export default function Home() {
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Folder import failed");
     }
-  }, [isImportingBatch, pendingFolderImport, runImportBatch]);
+  }, [importService, isImportingBatch, pendingFolderImport, runImportBatch]);
 
   const handleOpenOrRetry = useCallback(
     async (entry: LibraryEntry) => {
@@ -899,7 +974,10 @@ export default function Home() {
               <div>
                 <h2 className="text-base font-semibold text-neutral-100">Last import</h2>
                 <p className="mt-1 text-sm text-neutral-400">
-                  {lastImportSummary.completedCount} completed
+                  {lastImportSummary.completedCount - lastImportSummary.withIssuesCount} OK
+                  {lastImportSummary.withIssuesCount > 0
+                    ? `, ${lastImportSummary.withIssuesCount} with issues`
+                    : ""}
                   {lastImportSummary.failedCount > 0 ? `, ${lastImportSummary.failedCount} failed` : ""}
                   {" "}from {formatSummaryBytes(lastImportSummary.totalBytes)}
                 </p>
@@ -908,6 +986,36 @@ export default function Home() {
                 {formatSummaryDuration(lastImportSummary.elapsedMs)}
               </div>
             </div>
+            {lastImportSummary.books.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {lastImportSummary.books.map((book) => (
+                  <li
+                    key={book.id}
+                    className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-neutral-100">{book.fileName}</div>
+                        {book.reason ? (
+                          <p className="mt-1 text-xs text-neutral-400">{book.reason}</p>
+                        ) : null}
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                          book.status === "ok"
+                            ? "border border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+                            : book.status === "with_issues"
+                              ? "border border-amber-400/30 bg-amber-500/10 text-amber-100"
+                              : "border border-rose-400/30 bg-rose-500/10 text-rose-100"
+                        }`}
+                      >
+                        {book.status === "ok" ? "OK" : book.status === "with_issues" ? "With issues" : "Failed"}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <div className="mt-3 grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
                 <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per book</div>

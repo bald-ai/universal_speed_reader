@@ -65,6 +65,17 @@ The normalized book model can also store sidecar image blocks for normal reading
 - Books imported before this change may still have materialized `data:image/...` rows; those keep working. New imports use path references.
 - SQLite schema version 2 adds the `book_images` table via a normal migration (`user_version`), not an ad-hoc create on every open.
 
+## Soft vs hard import failures
+
+Import trusts flawed-but-usable books and only hard-fails fully unusable ones.
+
+- **Soft issues** (missing/broken images, garbled decoding text, missing cover, weak chapters, ornament junk, picture-heavy/low-text) complete as `processing_status: "completed"` with `books.processing_warnings` (`{ code, message }` JSON). The library row stays openable and shows a warning mark with plain explanations such as “Some pictures are missing.”
+- **Hard failures** (unreadable/unsupported/too large, almost no usable text, broken paragraph IDs, timeout/save failure, unsafe model integrity) are recorded under **Last import** only for new imports. The book is deleted from the library and storage the same way as a user delete — no dead Failed rows remain. There is no user-facing Failed-row **Retry import**. Re-processing an existing book is **Restore to original** (Edit); if that hard-fails, the book is **not** deleted — prior content and soft warnings stay, and the book remains completed/openable while the UI reports the restore error. Metadata (title/cover/warnings) is only written after content replace succeeds, so a failed restore cannot mix a new cover/title onto the old body.
+- Soft image issues drop invalid or oversized inline image payloads instead of storing them, and warn that some pictures are missing.
+- Last import reports per-book **OK** / **With issues** / **Failed**, plus counts and timing. For a purged hard-fail, try again by importing the file again.
+- Soft vs hard classification uses stable diagnostic `code` values (with message fallbacks for older uncoded diagnostics).
+- Schema version 4 adds `processing_warnings`. A one-time startup cleanup removes any leftover `processing_status = "failed"` rows from older imports.
+
 ## Library covers
 
 On import, the app materializes the library cover into a `data:image/...;base64,...` string and stores that in `books.cover_path` so library UI can use it directly as an `<img src>`. EPUB covers come from the raw EPUB archive. PDF covers are rendered from the first page. SVG covers are supported for EPUBs.
@@ -73,7 +84,7 @@ Library and Mood book rows show a compact `EPUB` or `PDF` badge derived from the
 stored `books.source_uri`. This uses existing import metadata and requires no
 database migration.
 
-Manual cover edits already store data URLs the same way. Books imported before this change may still have a bare zip path (broken in the library); retry or restore re-runs import and repairs the cover. There is no automatic backfill for old rows.
+Manual cover edits already store data URLs the same way. Books imported before this change may still have a bare zip path (broken in the library); **Restore to original** re-runs import and repairs the cover. There is no automatic backfill for old rows.
 
 ## Deleting books during import
 
@@ -98,7 +109,9 @@ producing pointers that would render blank through the reader.
 
 - EPUB 2/3 and selectable-text PDFs are supported.
 - Scanned/OCR-only PDFs, fixed-layout EPUBs, comics, DRM-locked books, and books
-  without reliable text, chapters, or in-book images are rejected clearly.
+  without enough usable text or a safe reading model hard-fail and are removed
+  from the library after import. Soft quality issues such as missing images or
+  weak chapters complete with warnings instead.
 - The parser keeps the shared `{ paragraphId, wordIndex }` model used by normal
   reading, speed reading, TTS, and saved progress.
 - PDF paragraph reconstruction profiles page-local line gaps so a repeated,

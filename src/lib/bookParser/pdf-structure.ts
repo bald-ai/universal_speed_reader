@@ -4,6 +4,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import { median, transformPoint, type DraftParagraph, type PageData } from "./pdf-content.ts";
 import { countWords, decodeSafeUriComponent, normalizeText } from "./text.ts";
+import { DiagnosticCode } from "./diagnosticCodes.ts";
 import type { BookMetadata, Chapter, ParserDiagnostic } from "./types.ts";
 
 const MIN_USEFUL_WORDS = 20;
@@ -296,6 +297,7 @@ export function addTextQualityDiagnostics(
     const appearsScanned = totalPageCount > 0 && imagePageCount / totalPageCount >= 0.5;
     diagnostics.push({
       bucket: "No / unusable text",
+      code: DiagnosticCode.unusable_text,
       severity: "failure",
       message: appearsScanned
         ? "PDF appears to be scanned or image-only; OCR is out of scope for this phase"
@@ -305,6 +307,7 @@ export function addTextQualityDiagnostics(
   } else if (totalPageCount >= 4 && textPageCount / totalPageCount < 0.25 && words / totalPageCount < 20) {
     diagnostics.push({
       bucket: "No / unusable text",
+      code: DiagnosticCode.picture_heavy,
       severity: "failure",
       message: "Most PDF pages lack usable selectable text; the document likely requires OCR",
       details: { words, textPages: textPageCount, totalPages: totalPageCount },
@@ -316,6 +319,7 @@ export function addTextQualityDiagnostics(
   if (totalItems >= 20 && verticalItems / totalItems >= 0.25) {
     diagnostics.push({
       bucket: "Other",
+      code: DiagnosticCode.other_failure,
       severity: "failure",
       message: "Vertical or heavily rotated text cannot yet be reconstructed reliably",
       details: { verticalTextItems: verticalItems, textItems: totalItems },
@@ -328,6 +332,7 @@ export function addTextQualityDiagnostics(
   if (suspiciousCharacters >= 10 && suspiciousCharacters / Math.max(characters, 1) > 0.02) {
     diagnostics.push({
       bucket: "No / unusable text",
+      code: DiagnosticCode.garbled_text,
       severity: "failure",
       message: "Extracted PDF text contains too many replacement or private-use characters",
       details: { suspiciousCharacters, characters },

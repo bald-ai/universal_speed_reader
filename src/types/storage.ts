@@ -18,6 +18,12 @@ export type ImportErrorBucket =
   | "Book content not reliable"
   | "Processing timeout";
 
+/** Soft import issues kept on completed, openable books. */
+export type ProcessingWarning = {
+  code: string;
+  message: string;
+};
+
 export type StoredParagraph = {
   id: number;
   text: string;
@@ -42,6 +48,8 @@ export type BookRow = {
   size_bytes: number;
   processing_status: ProcessingStatus;
   processing_error: string | null;
+  /** Soft issues from import; null/empty when the book completed cleanly. */
+  processing_warnings: ProcessingWarning[] | null;
   total_chunks: number;
   total_paragraphs: number;
   total_words: number;

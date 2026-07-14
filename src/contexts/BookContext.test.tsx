@@ -19,6 +19,7 @@ function makeBookRow(
     size_bytes: 1024,
     processing_status: status,
     processing_error: processingError,
+    processing_warnings: null,
     total_chunks: status === "completed" ? 1 : 0,
     total_paragraphs: status === "completed" ? 2 : 0,
     total_words: status === "completed" ? 4 : 0,

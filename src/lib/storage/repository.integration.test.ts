@@ -15,6 +15,7 @@ function makeBook(id: string, status: ProcessingStatus = "queued"): BookRow {
     size_bytes: 1024,
     processing_status: status,
     processing_error: null,
+    processing_warnings: null,
     total_chunks: 0,
     total_paragraphs: 0,
     total_words: 0,

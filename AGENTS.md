@@ -53,6 +53,16 @@ and resolve a possible application-ID collision.
 - Use existing types and utilities before creating new shapes/helpers.
 - Prefer `bun` commands in this repo.
 
+## Import re-try (user-facing)
+
+Hard import failures purge the book. Users never get a Failed library row with **Retry import**.
+
+User-facing paths only:
+- Hard-fail of a new import → import the file again.
+- Re-process an existing completed book → Edit → **Restore to original**.
+
+Do not discuss, design, review, or test “Retry import” / Failed-row retry as a user flow. Prefer saying **Restore to original** or **import the file again**, not “retry/restore.” Internal `retryImport` may exist for tests/legacy only.
+
 ## Testing
 - Coverage bar: thresholds at 70% for lines, branches, functions, and statements.
 - If behavior changes or a bug is fixed, add/update tests to reflect intended behavior.

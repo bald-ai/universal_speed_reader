@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DiagnosticCode } from "./diagnosticCodes.ts";
 import { buildBook } from "./model.ts";
 import type { ParserOutput } from "./types.ts";
 import { validateParserOutput } from "./validate.ts";
@@ -37,6 +38,7 @@ describe("validateParserOutput", () => {
     expect(result.diagnostics).toContainEqual({
       bucket: "Cover missing",
       severity: "warning",
+      code: DiagnosticCode.cover_missing,
       message: "No reasonable library cover was found.",
     });
   });

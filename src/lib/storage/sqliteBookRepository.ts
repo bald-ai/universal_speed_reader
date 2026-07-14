@@ -20,6 +20,7 @@ import type {
   ImportJobPatch,
   ImportJobRow,
   ProcessingStatus,
+  ProcessingWarning,
   ReadableBookBundle,
   ReadingProgressRow,
   StorageSnapshot,
@@ -27,7 +28,7 @@ import type {
 } from "@/types/storage";
 
 const DB_NAME = "universal_speed_reader";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const SCHEMA_V1_SQL = `
   CREATE TABLE IF NOT EXISTS books (
     id TEXT PRIMARY KEY NOT NULL,
@@ -104,6 +105,10 @@ const SCHEMA_V2_SQL = `
 const SCHEMA_V3_SQL = `
   ALTER TABLE book_chapters ADD COLUMN kind TEXT NOT NULL DEFAULT 'chapter';
   ALTER TABLE book_chapters ADD COLUMN level INTEGER NOT NULL DEFAULT 2;
+`;
+
+const SCHEMA_V4_SQL = `
+  ALTER TABLE books ADD COLUMN processing_warnings TEXT;
 `;
 
 type SqlRow = Record<string, unknown>;
@@ -190,6 +195,45 @@ function parseParagraphsJson(raw: unknown): Paragraph[] {
   }
 }
 
+function parseProcessingWarnings(value: unknown): ProcessingWarning[] | null {
+  if (value == null) return null;
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return null;
+    const warnings: ProcessingWarning[] = [];
+    for (const entry of parsed) {
+      if (
+        typeof entry !== "object"
+        || entry === null
+        || typeof (entry as { code?: unknown }).code !== "string"
+        || typeof (entry as { message?: unknown }).message !== "string"
+      ) {
+        continue;
+      }
+      warnings.push({
+        code: (entry as { code: string }).code,
+        message: (entry as { message: string }).message,
+      });
+    }
+    return warnings.length > 0 ? warnings : [];
+  } catch {
+    return null;
+  }
+}
+
+function encodeProcessingWarnings(value: ProcessingWarning[] | null | undefined): string | null {
+  if (value == null) return null;
+  return JSON.stringify(value);
+}
+
+function encodeBookColumnValue(column: string, value: unknown): unknown {
+  if (column === "processing_warnings") {
+    return encodeProcessingWarnings(value as ProcessingWarning[] | null | undefined);
+  }
+  return value;
+}
+
 function toBookRow(row: SqlRow): BookRow {
   return {
     id: readRequiredString(row, "id"),
@@ -201,6 +245,7 @@ function toBookRow(row: SqlRow): BookRow {
     size_bytes: readRequiredNumber(row, "size_bytes"),
     processing_status: readProcessingStatus(row, "processing_status"),
     processing_error: readNullableString(row, "processing_error"),
+    processing_warnings: parseProcessingWarnings(row.processing_warnings),
     total_chunks: readRequiredNumber(row, "total_chunks"),
     total_paragraphs: readRequiredNumber(row, "total_paragraphs"),
     total_words: readRequiredNumber(row, "total_words"),
@@ -349,9 +394,9 @@ export class SqliteBookRepository implements BookRepository {
         `
         INSERT INTO books (
           id, title, author, cover_path, language, source_uri, size_bytes,
-          processing_status, processing_error, total_chunks, total_paragraphs,
+          processing_status, processing_error, processing_warnings, total_chunks, total_paragraphs,
           total_words, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title=excluded.title,
           author=excluded.author,
@@ -361,6 +406,7 @@ export class SqliteBookRepository implements BookRepository {
           size_bytes=excluded.size_bytes,
           processing_status=excluded.processing_status,
           processing_error=excluded.processing_error,
+          processing_warnings=excluded.processing_warnings,
           total_chunks=excluded.total_chunks,
           total_paragraphs=excluded.total_paragraphs,
           total_words=excluded.total_words,
@@ -376,6 +422,7 @@ export class SqliteBookRepository implements BookRepository {
           book.size_bytes,
           book.processing_status,
           book.processing_error,
+          encodeProcessingWarnings(book.processing_warnings),
           book.total_chunks,
           book.total_paragraphs,
           book.total_words,
@@ -398,7 +445,7 @@ export class SqliteBookRepository implements BookRepository {
       if (entries.length > 0) {
         const setClause = entries.map(([column]) => `${column} = ?`).join(", ");
         await db.run(`UPDATE books SET ${setClause} WHERE id = ?`, [
-          ...entries.map(([, value]) => value),
+          ...entries.map(([column, value]) => encodeBookColumnValue(column, value)),
           bookId,
         ]);
       }
@@ -923,7 +970,7 @@ export class SqliteBookRepository implements BookRepository {
           await db.executeSet(
             snapshot.books.map((book) => ({
               statement:
-                "INSERT INTO books (id, title, author, cover_path, language, source_uri, size_bytes, processing_status, processing_error, total_chunks, total_paragraphs, total_words, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO books (id, title, author, cover_path, language, source_uri, size_bytes, processing_status, processing_error, processing_warnings, total_chunks, total_paragraphs, total_words, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               values: [
                 book.id,
                 book.title,
@@ -934,6 +981,7 @@ export class SqliteBookRepository implements BookRepository {
                 book.size_bytes,
                 book.processing_status,
                 book.processing_error,
+                encodeProcessingWarnings(book.processing_warnings),
                 book.total_chunks,
                 book.total_paragraphs,
                 book.total_words,
@@ -1104,6 +1152,8 @@ export class SqliteBookRepository implements BookRepository {
         await db.execute(SCHEMA_V2_SQL);
       } else if (version === 3) {
         await db.execute(SCHEMA_V3_SQL);
+      } else if (version === 4) {
+        await db.execute(SCHEMA_V4_SQL);
       } else {
         throw new Error(`No SQLite migration defined for schema version ${version}`);
       }

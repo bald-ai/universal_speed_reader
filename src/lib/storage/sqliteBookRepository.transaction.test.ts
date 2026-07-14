@@ -27,6 +27,7 @@ class FakeSqliteDb {
       size_bytes: 1,
       processing_status: "queued",
       processing_error: null,
+      processing_warnings: null,
       total_chunks: 0,
       total_paragraphs: 0,
       total_words: 0,

@@ -1,0 +1,21 @@
+---
+description: Do not treat Failed-row Retry import as a user-facing path
+alwaysApply: true
+---
+
+# No user-facing Retry import
+
+Hard import failures purge the book from the library. Users do **not** get a Failed library row with **Retry import**.
+
+## User-facing re-import paths only
+
+- **New hard-fail:** import the file again (Last import / file picker).
+- **Existing completed book:** Edit → **Restore to original** (`restoreOriginalBook`).
+
+## Do not
+
+- Discuss, design, review, or test against “Retry import” / Failed-row retry as something users can do.
+- Treat `retryImport` or `processing_status === "failed"` menu/UI as a product flow.
+- Say “retry/restore” when you mean the user path — say **Restore to original**, or **import the file again**.
+
+Internal `retryImport` code may still exist for tests/legacy; do not surface it as UX.

@@ -1,5 +1,6 @@
 import { countWords, measureTextViability, normalizeText } from "./text.ts";
 import { chaptersHaveCollapsedStarts } from "./model.ts";
+import { DiagnosticCode } from "./diagnosticCodes.ts";
 import type {
   FailureBucket,
   ParsedBook,
@@ -8,7 +9,8 @@ import type {
 } from "./types.ts";
 
 const MAX_BOOK_TIME_MS = 30_000;
-const MAX_INLINE_MEDIA_LENGTH = 700_000;
+/** Shared with import sanitization — drop oversized inline media instead of storing it. */
+export const MAX_INLINE_MEDIA_LENGTH = 700_000;
 
 export interface ValidationResult {
   pass: boolean;
@@ -39,7 +41,11 @@ function validateSceneBreaks(book: ParsedBook, diagnostics: ParserDiagnostic[]):
   const breaks = book.paragraphs.filter((paragraph) => paragraph.sceneBreakBefore !== undefined);
   const invalid = breaks.filter((paragraph) => paragraph.id <= 1).length;
   if (invalid > 0) {
-    diagnostics.push(failure("Bad paragraph IDs", `${invalid} scene breaks are not anchored between real paragraphs.`));
+    diagnostics.push(failure(
+      "Bad paragraph IDs",
+      DiagnosticCode.bad_paragraph_ids,
+      `${invalid} scene breaks are not anchored between real paragraphs.`,
+    ));
   }
 
   const rawOrnaments = book.paragraphs.filter((paragraph) => {
@@ -49,8 +55,16 @@ function validateSceneBreaks(book: ParsedBook, diagnostics: ParserDiagnostic[]):
   }).length;
   if (rawOrnaments > 0) {
     const diagnostic = rawOrnaments >= 20 && rawOrnaments / Math.max(book.paragraphs.length, 1) > 0.02
-      ? failure("No / unusable text", `${rawOrnaments} isolated scene ornaments leaked into readable paragraphs.`)
-      : warning("No / unusable text", `${rawOrnaments} isolated ornament paragraph${rawOrnaments === 1 ? "" : "s"} should be manually reviewed.`);
+      ? failure(
+        "No / unusable text",
+        DiagnosticCode.ornament_junk,
+        `${rawOrnaments} isolated scene ornaments leaked into readable paragraphs.`,
+      )
+      : warning(
+        "No / unusable text",
+        DiagnosticCode.ornament_junk,
+        `${rawOrnaments} isolated ornament paragraph${rawOrnaments === 1 ? "" : "s"} should be manually reviewed.`,
+      );
     diagnostics.push(diagnostic);
   }
 
@@ -58,6 +72,7 @@ function validateSceneBreaks(book: ParsedBook, diagnostics: ParserDiagnostic[]):
   if (impossibleDensity) {
     diagnostics.push(failure(
       "No / unusable text",
+      DiagnosticCode.scene_break_density,
       `Scene-boundary density is implausible: ${breaks.length} breaks across ${book.paragraphs.length} paragraphs.`,
     ));
   }
@@ -70,11 +85,19 @@ function validateText(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
   const controlCharacters = joined.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/gu)?.length ?? 0;
 
   if (!usable) {
-    diagnostics.push(failure("No / unusable text", `Only ${words} words of usable text were extracted.`));
+    diagnostics.push(failure(
+      "No / unusable text",
+      DiagnosticCode.unusable_text,
+      `Only ${words} words of usable text were extracted.`,
+    ));
   }
 
   if (joined.length > 0 && (replacementCharacters + controlCharacters) / joined.length > 0.002) {
-    diagnostics.push(failure("No / unusable text", "Extracted text contains too many decoding/control characters."));
+    diagnostics.push(failure(
+      "No / unusable text",
+      DiagnosticCode.garbled_text,
+      "Extracted text contains too many decoding/control characters.",
+    ));
   }
 
   const paragraphWordCounts = book.paragraphs.map((paragraph) => countWords(paragraph.text));
@@ -83,6 +106,7 @@ function validateText(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
     diagnostics.push(
       failure(
         "No / unusable text",
+        DiagnosticCode.collapsed_paragraphs,
         `Paragraph boundaries collapsed: largest paragraph has ${largestParagraphWords} of ${words} words.`,
       ),
     );
@@ -90,7 +114,11 @@ function validateText(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
 
   const emptyCount = book.paragraphs.filter((paragraph) => normalizeText(paragraph.text).length === 0).length;
   if (emptyCount > 0) {
-    diagnostics.push(failure("No / unusable text", `${emptyCount} empty paragraphs were emitted.`));
+    diagnostics.push(failure(
+      "No / unusable text",
+      DiagnosticCode.empty_paragraphs,
+      `${emptyCount} empty paragraphs were emitted.`,
+    ));
   }
 }
 
@@ -101,6 +129,7 @@ function validateParagraphIds(book: ParsedBook, diagnostics: ParserDiagnostic[])
     diagnostics.push(
       failure(
         "Bad paragraph IDs",
+        DiagnosticCode.bad_paragraph_ids,
         `Paragraph index ${invalidIndex} has id ${paragraph?.id ?? "missing"}; expected ${invalidIndex + 1}.`,
       ),
     );
@@ -109,7 +138,11 @@ function validateParagraphIds(book: ParsedBook, diagnostics: ParserDiagnostic[])
 
 function validateChapters(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
   if (book.chapters.length === 0) {
-    diagnostics.push(failure("Weak / missing / nonsense chapters", "No chapter/navigation entry was extracted."));
+    diagnostics.push(failure(
+      "Weak / missing / nonsense chapters",
+      DiagnosticCode.weak_chapters,
+      "No chapter/navigation entry was extracted.",
+    ));
     return;
   }
 
@@ -132,6 +165,7 @@ function validateChapters(book: ParsedBook, diagnostics: ParserDiagnostic[]): vo
     diagnostics.push(
       failure(
         "Weak / missing / nonsense chapters",
+        DiagnosticCode.weak_chapters,
         `Chapter list contains ${nonsenseCount} nonsense titles and ${invalidStartCount} invalid starts.`,
       ),
     );
@@ -139,20 +173,32 @@ function validateChapters(book: ParsedBook, diagnostics: ParserDiagnostic[]): vo
 
   if (chaptersHaveCollapsedStarts(book.chapters)) {
     diagnostics.push(
-      failure("Weak / missing / nonsense chapters", "Chapter entries collapse to too few distinct paragraph starts."),
+      failure(
+        "Weak / missing / nonsense chapters",
+        DiagnosticCode.weak_chapters,
+        "Chapter entries collapse to too few distinct paragraph starts.",
+      ),
     );
   }
 }
 
 function validateCover(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
   if (book.cover === null || normalizeText(book.cover.src).length === 0) {
-    diagnostics.push(warning("Cover missing", "No reasonable library cover was found."));
+    diagnostics.push(warning(
+      "Cover missing",
+      DiagnosticCode.cover_missing,
+      "No reasonable library cover was found.",
+    ));
     return;
   }
 
   if (book.cover.src.startsWith("data:") && book.cover.src.length > MAX_INLINE_MEDIA_LENGTH) {
     diagnostics.push(
-      failure("Images missing / blank / badly placed", "The cover pointer contains an unexpectedly large inline payload."),
+      failure(
+        "Images missing / blank / badly placed",
+        DiagnosticCode.cover_inline_payload,
+        "The cover pointer contains an unexpectedly large inline payload.",
+      ),
     );
   }
 }
@@ -182,13 +228,18 @@ function validateImages(
 
   if (invalidCount > 0) {
     diagnostics.push(
-      failure("Images missing / blank / badly placed", `${invalidCount} images have invalid pointers or reading-order anchors.`),
+      failure(
+        "Images missing / blank / badly placed",
+        DiagnosticCode.images_invalid,
+        `${invalidCount} images have invalid pointers or reading-order anchors.`,
+      ),
     );
   }
   if (inlinePayloadCount > 0) {
     diagnostics.push(
       failure(
         "Images missing / blank / badly placed",
+        DiagnosticCode.images_inline_payload,
         `${inlinePayloadCount} in-book images were eagerly materialized as large inline payloads.`,
       ),
     );
@@ -197,6 +248,7 @@ function validateImages(
     diagnostics.push(
       failure(
         "Images missing / blank / badly placed",
+        DiagnosticCode.images_undeclared,
         `${declaredImageCount} image resources were declared but no in-book image was anchored.`,
       ),
     );
@@ -211,35 +263,44 @@ function validateTotals(book: ParsedBook, diagnostics: ParserDiagnostic[]): void
     || book.totals.images !== book.images.length
     || book.totals.sceneBreaks !== book.paragraphs.filter((paragraph) => paragraph.sceneBreakBefore !== undefined).length;
   if (mismatch) {
-    diagnostics.push(failure("Other", "Output totals do not match the emitted model arrays."));
+    diagnostics.push(failure(
+      "Other",
+      DiagnosticCode.totals_mismatch,
+      "Output totals do not match the emitted model arrays.",
+    ));
   }
 }
 
 function validateTiming(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
   if (!Number.isFinite(book.timings.totalMs) || book.timings.totalMs < 0) {
-    diagnostics.push(failure("Other", "Parser timing is missing or invalid."));
+    diagnostics.push(failure(
+      "Other",
+      DiagnosticCode.timing_invalid,
+      "Parser timing is missing or invalid.",
+    ));
   } else if (book.timings.totalMs > MAX_BOOK_TIME_MS) {
     diagnostics.push(
       failure(
         "Timeout / extreme slowness",
+        DiagnosticCode.timeout,
         `Parsing took ${Math.round(book.timings.totalMs)} ms, exceeding the 30-second ceiling.`,
       ),
     );
   }
 }
 
-function failure(bucket: FailureBucket, message: string): ParserDiagnostic {
-  return { bucket, severity: "failure", message };
+function failure(bucket: FailureBucket, code: string, message: string): ParserDiagnostic {
+  return { bucket, severity: "failure", code, message };
 }
 
-function warning(bucket: FailureBucket, message: string): ParserDiagnostic {
-  return { bucket, severity: "warning", message };
+function warning(bucket: FailureBucket, code: string, message: string): ParserDiagnostic {
+  return { bucket, severity: "warning", code, message };
 }
 
 function deduplicateDiagnostics(diagnostics: ParserDiagnostic[]): ParserDiagnostic[] {
   const seen = new Set<string>();
   return diagnostics.filter((diagnostic) => {
-    const key = `${diagnostic.bucket}\u0000${diagnostic.severity}\u0000${diagnostic.message}`;
+    const key = `${diagnostic.code ?? ""}\u0000${diagnostic.bucket}\u0000${diagnostic.severity}\u0000${diagnostic.message}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

@@ -68,9 +68,17 @@ function isStorageSnapshot(value: unknown): value is StorageSnapshot {
   );
 }
 
+function normalizeBookRow(book: BookRow): BookRow {
+  return {
+    ...book,
+    processing_warnings: book.processing_warnings ?? null,
+  };
+}
+
 function normalizeSnapshot(snapshot: StorageSnapshot): StorageSnapshot {
   return {
     ...snapshot,
+    books: snapshot.books.map(normalizeBookRow),
     book_images: snapshot.book_images ?? [],
   };
 }
@@ -178,11 +186,12 @@ export class InMemoryBookRepository implements BookRepository {
 
   async upsertBook(book: BookRow): Promise<void> {
     await this.withLock(async () => {
-      const index = this.state.books.findIndex((entry) => entry.id === book.id);
+      const normalized = normalizeBookRow(book);
+      const index = this.state.books.findIndex((entry) => entry.id === normalized.id);
       if (index === -1) {
-        this.state.books.push(clone(book));
+        this.state.books.push(clone(normalized));
       } else {
-        this.state.books[index] = clone(book);
+        this.state.books[index] = clone(normalized);
       }
       await this.persist();
     });

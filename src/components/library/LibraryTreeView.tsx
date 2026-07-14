@@ -312,9 +312,11 @@ function BookRow(props: {
 }) {
   const { entry, depth, isDeleting, isBusy, onOpen, onEdit, onMove, onSendToMood, onDelete } = props;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showWarnings, setShowWarnings] = useState(false);
   const canEdit = entry.processingStatus === "completed" || entry.processingStatus === "failed";
   const canOpen = entry.processingStatus === "completed";
   const canRetry = entry.processingStatus === "failed";
+  const hasWarnings = entry.processingWarnings.length > 0;
   const coverUrl = entry.coverUrl ?? getBookCoverPlaceholder(entry.progressPercent);
   return (
     <div
@@ -338,6 +340,18 @@ function BookRow(props: {
             <span className="text-[11px] text-neutral-500">{entry.processingStatus !== "completed" ? entry.processingStatusLabel : `${entry.progressPercent}%`}</span>
           </div>
         </button>
+        {hasWarnings ? (
+          <button
+            type="button"
+            data-testid={`library-warning-${entry.id}`}
+            aria-label="Import warnings"
+            title="Import warnings"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-amber-500/40 bg-amber-500/15 text-[11px] font-bold text-amber-200"
+            onClick={() => setShowWarnings((current) => !current)}
+          >
+            !
+          </button>
+        ) : null}
         <RowActionsMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
           {canRetry ? (
             <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onOpen(); }}>
@@ -360,6 +374,15 @@ function BookRow(props: {
           </RowActionItem>
         </RowActionsMenu>
       </div>
+      {showWarnings && hasWarnings ? (
+        <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-100">
+          {entry.processingWarnings.map((warning) => (
+            <p key={warning.code} className="leading-relaxed">
+              {warning.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

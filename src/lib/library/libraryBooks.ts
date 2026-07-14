@@ -1,6 +1,6 @@
 import { getBookRepository } from "@/lib/storage/appRepository";
 import type { BookSourceFormat, LibraryBook } from "@/types/book";
-import type { BookRow, ProcessingStatus } from "@/types/storage";
+import type { BookRow, ProcessingStatus, ProcessingWarning } from "@/types/storage";
 
 export type LibraryEntry = {
   id: string;
@@ -10,6 +10,7 @@ export type LibraryEntry = {
   processingStatus: ProcessingStatus;
   processingStatusLabel: "Queued" | "Processing" | "Completed" | "Failed";
   processingError: string | null;
+  processingWarnings: ProcessingWarning[];
   totalWords: number;
   totalParagraphs: number;
   progressPercent: number;
@@ -78,6 +79,7 @@ export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
       processingStatus: book.processing_status,
       processingStatusLabel: statusLabel(book.processing_status),
       processingError: book.processing_error,
+      processingWarnings: book.processing_warnings ?? [],
       totalWords: book.total_words,
       totalParagraphs: book.total_paragraphs,
       progressPercent,

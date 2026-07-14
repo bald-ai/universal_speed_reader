@@ -62,6 +62,8 @@ export interface ParserDiagnostic {
   bucket: FailureBucket;
   severity: "warning" | "failure";
   message: string;
+  /** Stable machine code for import soft/hard classification. */
+  code?: string;
   details?: Record<string, string | number | boolean>;
 }
 

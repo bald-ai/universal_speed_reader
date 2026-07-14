@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import { Capacitor } from "@capacitor/core";
 import { applyBookParserLibraryReset } from "@/lib/import/bookParserLibraryReset";
+import { getBookImportService } from "@/lib/import/bookImportService";
 
 function ServiceWorkerRegistrar() {
   useEffect(() => {
@@ -34,6 +35,9 @@ function BookParserResetGate(props: { children: ReactNode }) {
 
   useEffect(() => {
     void applyBookParserLibraryReset()
+      .then(async () => {
+        await getBookImportService().purgeLegacyFailedBooks();
+      })
       .catch((error) => {
         // Do not leave the entire app blank if a local storage implementation
         // temporarily fails; the next launch will retry the one-time reset.

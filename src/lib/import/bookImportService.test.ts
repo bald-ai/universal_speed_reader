@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { InMemoryBookRepository } from "@/lib/storage/inMemoryBookRepository";
-import { BookImportService } from "@/lib/import/bookImportService";
+import { BookImportService, toBookImageRows } from "@/lib/import/bookImportService";
 import { loadRawEpub } from "@/lib/import/rawEpubStore";
 import {
   __resetMoodStoreForTests,
@@ -110,10 +110,11 @@ function createStoredZip(entries: ZipInputEntry[]): Uint8Array {
 
 function createValidEpubBytes(
   title = "Import Fixture",
-  options?: { withCover?: boolean; withInlineImage?: boolean }
+  options?: { withCover?: boolean; withInlineImage?: boolean; withBrokenImages?: boolean }
 ): Uint8Array {
   const withCover = options?.withCover === true;
   const withInlineImage = options?.withInlineImage === true;
+  const withBrokenImages = options?.withBrokenImages === true;
   const container = `<?xml version="1.0" encoding="utf-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
@@ -127,6 +128,12 @@ function createValidEpubBytes(
   const inlineManifest = withInlineImage
     ? `\n    <item id="inline-image" href="images/figure.png" media-type="image/png" />`
     : "";
+  const brokenManifest = withBrokenImages
+    ? `
+    <item id="broken-a" href="images/missing-a.png" media-type="image/png" />
+    <item id="broken-b" href="images/missing-b.png" media-type="image/png" />
+    <item id="broken-c" href="images/missing-c.png" media-type="image/png" />`
+    : "";
   const opf = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -135,7 +142,7 @@ function createValidEpubBytes(
     <dc:language>en</dc:language>${coverMeta}
   </metadata>
   <manifest>
-    <item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml" />${coverManifest}${inlineManifest}
+    <item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml" />${coverManifest}${inlineManifest}${brokenManifest}
   </manifest>
   <spine>
     <itemref idref="chapter"/>
@@ -144,10 +151,16 @@ function createValidEpubBytes(
   const inlineImageMarkup = withInlineImage
     ? `\n    <img src="../images/figure.png" alt="Inline figure" />\n    <p>After the figure.</p>`
     : "";
+  const brokenImageMarkup = withBrokenImages
+    ? `
+    <img src="../images/missing-a.png" alt="Missing A" />
+    <img src="../images/missing-b.png" alt="Missing B" />
+    <img src="../images/missing-c.png" alt="Missing C" />`
+    : "";
   const chapter = `<html><body>
     <h1>Chapter One</h1>
     <p>Alpha beta gamma form a small but complete opening paragraph with enough ordinary readable words to exercise the import pipeline and its shared reading position model safely.</p>
-    <p>Delta epsilon zeta continue the fixture with additional ordinary prose so strict validation recognizes this compact example as a usable book for normal reading speed reading and speech.</p>${inlineImageMarkup}
+    <p>Delta epsilon zeta continue the fixture with additional ordinary prose so strict validation recognizes this compact example as a usable book for normal reading speed reading and speech.</p>${inlineImageMarkup}${brokenImageMarkup}
   </body></html>`;
 
   const entries: ZipInputEntry[] = [
@@ -212,6 +225,22 @@ async function waitForTerminalStatus(
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`Timed out waiting for terminal status for ${bookId}`);
+}
+
+async function waitForImportSnapshotStatus(
+  service: BookImportService,
+  bookId: string,
+  timeoutMs = 220_000
+): Promise<{ status: ProcessingStatus; error: string | null; warnings: unknown }> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const row = (await service.listImportSnapshot()).find((entry) => entry.bookId === bookId);
+    if (row && (row.status === "completed" || row.status === "failed")) {
+      return row;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for import snapshot status for ${bookId}`);
 }
 
 async function waitForCondition(
@@ -293,6 +322,18 @@ describe("book import service state machine", () => {
     expect(readable?.book.images[0]?.afterParagraphId).toBeGreaterThan(0);
   });
 
+  it("drops images anchored beyond the final paragraph", () => {
+    const result = toBookImageRows(
+      "book-with-bad-anchor",
+      [{ afterParagraphId: 3, alt: "Unreachable", src: "images/unreachable.png" }],
+      "epub",
+      2
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.droppedCount).toBe(1);
+  });
+
   it("processes an idle import from already-read bytes without reloading raw source", async () => {
     const bytes = createValidEpubBytes("Gatsby Import Fixture");
     let storeCalls = 0;
@@ -365,7 +406,7 @@ describe("book import service state machine", () => {
     expect(loadCalls).toBe(0);
   });
 
-  it("runs failure path to failed and stores error", async () => {
+  it("hard-fails unreadable books by purging them from the library", async () => {
     const corrupted = new Uint8Array([1, 2, 3, 4, 5]);
     const bookId = await service.importFromBytes({
       fileName: "broken.epub",
@@ -373,12 +414,61 @@ describe("book import service state machine", () => {
       bytes: corrupted,
     });
 
-    const terminal = await waitForTerminalStatus(repo, bookId);
-    expect(terminal).toBe("failed");
-
-    const book = await repo.getBook(bookId);
-    expect(book?.processing_error).toContain("Corrupted/Unreadable book");
+    const snapshot = await waitForImportSnapshotStatus(service, bookId);
+    expect(snapshot.status).toBe("failed");
+    expect(snapshot.error).toContain("Corrupted/Unreadable book");
+    expect(await repo.getBook(bookId)).toBeNull();
     expect(repo.transitions[repo.transitions.length - 1]?.status).toBe("failed");
+  });
+
+  it("continues queued imports when failed-book cleanup throws", async () => {
+    const cleanupFailingService = new BookImportService(Promise.resolve(repo), {
+      store: async () => undefined,
+      load: async () => null,
+      remove: async () => {
+        throw new Error("cleanup unavailable");
+      },
+    });
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+
+    try {
+      const brokenBookId = await cleanupFailingService.importFromBytes(
+        {
+          fileName: "broken-cleanup.epub",
+          mimeType: "application/epub+zip",
+          bytes: new Uint8Array([1, 2, 3]),
+        },
+        { inlineSourceMode: "bounded" }
+      );
+      const validBookId = await cleanupFailingService.importFromBytes(
+        {
+          fileName: "after-broken-cleanup.epub",
+          mimeType: "application/epub+zip",
+          bytes: createValidEpubBytes("After Broken Cleanup Fixture"),
+        },
+        { inlineSourceMode: "bounded" }
+      );
+
+      expect((await waitForImportSnapshotStatus(cleanupFailingService, brokenBookId)).status).toBe("failed");
+      expect(await waitForTerminalStatus(repo, validBookId)).toBe("completed");
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("soft-completes books with missing images and stores warnings", async () => {
+    const bookId = await service.importFromBytes({
+      fileName: "missing-images.epub",
+      mimeType: "application/epub+zip",
+      bytes: createValidEpubBytes("Missing Images Fixture", { withBrokenImages: true }),
+    });
+
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+    const book = await repo.getBook(bookId);
+    const imageWarning = book?.processing_warnings?.find((warning) => warning.code === "images_missing");
+    expect(imageWarning?.message).toBe("Some pictures are missing.");
+    expect(await repo.getReadableBook(bookId)).not.toBeNull();
   });
 
   it("increments import_jobs attempt on manual retry", async () => {
@@ -392,7 +482,7 @@ describe("book import service state machine", () => {
 
     await service.retryImport(bookId);
     expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
-    expect(repo.clearContentCalls).toBe(1);
+    expect(repo.clearContentCalls).toBe(0);
 
     const jobs = await repo.listImportJobs(bookId);
     expect(jobs.map((job) => job.attempt)).toEqual([1, 2]);
@@ -414,14 +504,10 @@ describe("book import service state machine", () => {
       bytes: new Uint8Array([1, 2, 3]),
     });
 
-    const terminal = await waitForTerminalStatus(repo, bookId);
-    expect(terminal).toBe("failed");
-
-    const book = await repo.getBook(bookId);
-    expect(book?.processing_error).toContain("failed to persist source file");
-    const jobs = await repo.listImportJobs(bookId);
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.status).toBe("failed");
+    const snapshot = await waitForImportSnapshotStatus(failingService, bookId);
+    expect(snapshot.status).toBe("failed");
+    expect(snapshot.error).toContain("failed to persist source file");
+    expect(await repo.getBook(bookId)).toBeNull();
   });
 
   it("deduplicates concurrent retry requests for the same book", async () => {
@@ -580,6 +666,68 @@ describe("book import service state machine", () => {
     const book = await repo.getBook(bookId);
     expect(book?.processing_status).toBe("completed");
     expect(await repo.getReadingProgress(bookId)).toBeNull();
+  });
+
+  it("restoreOriginalBook hard-fail keeps the existing book, content, and warnings", async () => {
+    const bookId = await service.importFromBytes({
+      fileName: "restore-keep.epub",
+      mimeType: "application/epub+zip",
+      bytes: createValidEpubBytes("Restore Keep Fixture", { withBrokenImages: true }),
+    });
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+    const before = await repo.getBook(bookId);
+    expect(before?.processing_warnings?.some((warning) => warning.code === "images_missing")).toBe(true);
+    expect(await repo.getReadableBook(bookId)).not.toBeNull();
+
+    // Simulate missing raw source so restore hard-fails after the book already exists.
+    const rawStore = {
+      store: async () => undefined,
+      load: async () => null,
+      remove: async () => undefined,
+    };
+    const restoreService = new BookImportService(Promise.resolve(repo), rawStore);
+    await expect(restoreService.restoreOriginalBook(bookId)).rejects.toThrow(/no stored source file/);
+
+    const book = await repo.getBook(bookId);
+    expect(book).not.toBeNull();
+    expect(book?.processing_status).toBe("completed");
+    expect(book?.processing_warnings?.some((warning) => warning.code === "images_missing")).toBe(true);
+    expect(await repo.getReadableBook(bookId)).not.toBeNull();
+  });
+
+  it("restoreOriginalBook does not write metadata before content replace succeeds", async () => {
+    const bytes = createValidEpubBytes("Restore Metadata Order Fixture");
+    const bookId = await service.importFromBytes({
+      fileName: "restore-metadata-order.epub",
+      mimeType: "application/epub+zip",
+      bytes,
+    });
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+    await repo.patchBook(bookId, {
+      title: "Kept Title",
+      author: "Kept Author",
+      cover_path: "data:image/png;base64,kept",
+      updated_at: Date.now(),
+    });
+
+    let replaceCalls = 0;
+    const originalReplace = repo.replaceBookContent.bind(repo);
+    repo.replaceBookContent = async () => {
+      replaceCalls += 1;
+      throw new Error("replace failed on purpose");
+    };
+
+    await expect(service.restoreOriginalBook(bookId)).rejects.toThrow(/replace failed on purpose/);
+
+    const book = await repo.getBook(bookId);
+    expect(replaceCalls).toBe(1);
+    expect(book?.processing_status).toBe("completed");
+    expect(book?.title).toBe("Kept Title");
+    expect(book?.author).toBe("Kept Author");
+    expect(book?.cover_path).toBe("data:image/png;base64,kept");
+    expect(await repo.getReadableBook(bookId)).not.toBeNull();
+
+    repo.replaceBookContent = originalReplace;
   });
 
   it("retryImport does not clear reading progress", async () => {
