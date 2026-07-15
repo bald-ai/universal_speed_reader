@@ -40,6 +40,11 @@ import {
   moveBookToFolder,
   saveLibraryLayout,
 } from "@/lib/libraryLayoutStore";
+import {
+  SUPPORT_CONTACT_EMAIL,
+  buildImportIssueMailto,
+  buildSupportMailto,
+} from "@/lib/supportContact";
 
 type PendingImportItem =
   | {
@@ -1030,6 +1035,31 @@ export default function Home() {
                 </div>
               </div>
             </div>
+            {lastImportSummary.failedCount > 0 || lastImportSummary.withIssuesCount > 0 ? (
+              <div className="mt-3 rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-3">
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Email what went wrong and attach the file if you can. I reply within 24h.
+                </p>
+                <a
+                  href={buildImportIssueMailto(
+                    lastImportSummary.books
+                      .filter(
+                        (book): book is ImportBookResult & { status: "with_issues" | "failed" } =>
+                          book.status === "with_issues" || book.status === "failed"
+                      )
+                      .map((book) => ({
+                        fileName: book.fileName,
+                        status: book.status,
+                        reason: book.reason,
+                      }))
+                  )}
+                  className="mt-2 inline-flex text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors"
+                  data-testid="last-import-report-email"
+                >
+                  Email about this import
+                </a>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
@@ -1164,13 +1194,33 @@ export default function Home() {
 
         {/* Footer */}
         <motion.footer
-          className="text-center pt-8"
+          className="text-center pt-8 space-y-2"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.6 }}
         >
           <p className="text-xs text-neutral-600">
             Offline-first mode: imports, settings, and progress are stored locally
+          </p>
+          <p className="text-xs text-neutral-500 leading-relaxed max-w-sm mx-auto">
+            Contact{" "}
+            <a
+              href={buildSupportMailto({
+                subject: "Speed Reading feedback",
+                body: [
+                  "What happened:",
+                  "",
+                  "(short description)",
+                  "",
+                  "If a book failed, attach the EPUB/PDF if you can.",
+                ].join("\n"),
+              })}
+              className="text-neutral-400 underline underline-offset-2 hover:text-neutral-300 transition-colors"
+              data-testid="home-support-email"
+            >
+              {SUPPORT_CONTACT_EMAIL}
+            </a>
+            . Send issues anytime — attach the file if one failed. I reply within 24h.
           </p>
         </motion.footer>
       </div>

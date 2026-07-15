@@ -90,6 +90,18 @@ Do not discuss, design, review, or test “Retry import” / Failed-row retry as
   - Optional install-only flow (skip build): `bun run android:upload-newest -- --skip-build`
   - Optional specific device: `bun run android:upload-newest -- --serial <device_id>`
 
+## Extended phone-control workloads
+
+Before starting an extended phone-control workload, read
+[`ADB_PHONE_CONTROL_PLAYBOOK.md`](ADB_PHONE_CONTROL_PLAYBOOK.md). This applies
+to multi-step ADB UI automation, long-running on-device processing, cross-app
+comparisons, repeated evidence capture, or another sustained phone
+investigation.
+
+Do not load the playbook for a simple one-off phone action such as installing
+or launching an app, checking ADB connectivity, or performing a basic smoke
+check.
+
 ## On-Device Control and Validation
 - The agent can control the Android app on a connected phone via USB or Wi-Fi using `adb` (install/update app, launch app, send input events, inspect UI hierarchy, and read logs).
 - This Mac runs ADB 37 with the login agent `com.michalkrsik.adb-wifi-keeper`. The keeper maintains the Nothing Phone's fixed Wi-Fi ADB endpoint on port `5555`, retries its last IP, and scans the current `en0` `/24` network when the phone's DHCP address changes.

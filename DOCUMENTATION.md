@@ -90,6 +90,14 @@ The normalized book model can also store sidecar image blocks for normal reading
 - Books imported before this change may still have materialized `data:image/...` rows; those keep working. New imports use path references.
 - SQLite schema version 2 adds the `book_images` table via a normal migration (`user_version`), not an ad-hoc create on every open.
 
+## Support contact
+
+The library home footer links to `baldai@hey.com`. Copy asks people to send issues
+(and attach a failed EPUB/PDF when they can) and states replies within 24h. After
+an import with failures or soft issues, Last import also offers **Email about this
+import** with a prefilled `mailto:`. Mail clients cannot attach files
+automatically; the user attaches them manually.
+
 ## Soft vs hard import failures
 
 Import trusts flawed-but-usable books and only hard-fails fully unusable ones.
