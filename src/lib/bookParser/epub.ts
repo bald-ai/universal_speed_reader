@@ -1,6 +1,11 @@
+import {
+  assetDataUrlFromBytes,
+  mimeFromAssetPath,
+} from "@/lib/import/epubAssetDataUrl";
+import { createCooperativeYielder } from "./cooperativeYield.ts";
 import { buildBook } from "./model.ts";
 import { measureTextViability } from "./text.ts";
-import type { ParseOptions, ParserDiagnostic, ParserOutput } from "./types.ts";
+import type { Cover, ParseOptions, ParserDiagnostic, ParserOutput } from "./types.ts";
 import {
   SelectiveZipArchive,
   checkDeadline,
@@ -33,6 +38,32 @@ import {
 
 export { EpubParseError } from "./epub-shared.ts";
 
+function throwIfEpubAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new EpubParseError("Timeout / extreme slowness", "EPUB import was cancelled");
+  }
+}
+
+/** Materialize library cover from the parse-time archive. Soft-fails to null. */
+function coverDataUrlFromArchive(
+  archive: SelectiveZipArchive,
+  cover: Cover | null,
+): string | null {
+  try {
+    const src = cover?.src?.trim();
+    if (!src || src.startsWith("data:")) return null;
+    const mime = mimeFromAssetPath(src);
+    if (!mime) return null;
+    const resolvedPath = archive.resolve(src);
+    if (resolvedPath === null) return null;
+    const bytes = archive.read(resolvedPath, MAX_CONTENT_ENTRY_BYTES);
+    if (bytes.byteLength === 0) return null;
+    return assetDataUrlFromBytes(bytes, mime);
+  } catch {
+    return null;
+  }
+}
+
 /** Parse a reflowable EPUB into the app's paragraph/chapter/image model. */
 export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
   const startedAt = performance.now();
@@ -41,12 +72,12 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
     throw new EpubParseError("Other", "EPUB timeout must be a positive number");
   }
   const deadline = startedAt + timeoutMs;
+  const maybeYield = createCooperativeYielder();
 
-  if (options.signal?.aborted) {
-    throw new EpubParseError("Timeout / extreme slowness", "EPUB import was cancelled");
-  }
+  throwIfEpubAborted(options.signal);
   const sourceBytes = options.sourceBytes;
   await options.onPhaseChange?.("extracting_metadata");
+  throwIfEpubAborted(options.signal);
   checkDeadline(deadline, timeoutMs);
 
   let archive: SelectiveZipArchive;
@@ -82,9 +113,11 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
     archive,
     diagnostics,
   );
+  throwIfEpubAborted(options.signal);
   checkDeadline(deadline, timeoutMs);
   const structureMs = performance.now() - startedAt - openMs;
 
+  throwIfEpubAborted(options.signal);
   preloadContentDocuments(archive, packageData);
   let state = createExtractionState(
     archive,
@@ -122,6 +155,7 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
   ): Promise<number> => {
     let extractedDocuments = 0;
     for (const [index, spineItem] of items.entries()) {
+      throwIfEpubAborted(options.signal);
       checkDeadline(deadline, timeoutMs);
       const documentPath = resolveManifestPath(archive, spineItem.item);
       if (documentPath === null) {
@@ -153,6 +187,7 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
         targetState,
       );
       extractedDocuments += 1;
+      await maybeYield();
     }
     return extractedDocuments;
   };
@@ -193,6 +228,7 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
     }
   }
 
+  throwIfEpubAborted(options.signal);
   if (state.paragraphs.length === 0) {
     throw new EpubParseError("No / unusable text", "EPUB contains no readable text");
   }
@@ -213,6 +249,7 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
     );
   }
 
+  throwIfEpubAborted(options.signal);
   await options.onPhaseChange?.("building_chapters");
   const chapters = chooseChapterSource(
     parseNavigationChapters(state),
@@ -237,9 +274,11 @@ export async function parseEpub(options: ParseOptions): Promise<ParserOutput> {
     diagnostics,
     timings: { totalMs, openMs, structureMs, contentMs },
   });
+  const coverDataUrl = coverDataUrlFromArchive(archive, state.cover);
 
   return {
     book,
+    coverDataUrl,
     internals: {
       sourceDocumentCount,
       // Count content-referenced resources, excluding unused manifest art and cover.

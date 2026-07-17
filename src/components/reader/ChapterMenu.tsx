@@ -1,5 +1,5 @@
 
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import type { Chapter } from "@/types/book";
 import { classifyNavigationTitle, navigationKindLabel, navigationLevel } from "@/lib/navigationHierarchy";
 
@@ -13,33 +13,34 @@ type ChapterMenuProps = {
 
 export default function ChapterMenu(props: ChapterMenuProps) {
   const { isOpen, chapters, currentChapterIndex, onSelect, onClose } = props;
+  const shouldReduceMotion = useReducedMotion();
 
   return (
     <AnimatePresence>
       {isOpen && (
         <motion.div
           className="fixed inset-0 z-30 flex items-start justify-center pt-20"
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={shouldReduceMotion ? undefined : { opacity: 0 }}
         >
           {/* Backdrop */}
           <motion.div
             className="absolute inset-0 bg-black/60 backdrop-blur-xl"
             onClick={onClose}
-            initial={{ opacity: 0 }}
+            initial={shouldReduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0 }}
           />
           
           {/* Menu Container */}
           <motion.div
             className="relative w-full max-w-md mx-4 rounded-3xl bg-neutral-950/95 border border-neutral-800 
               shadow-2xl shadow-black/50 max-h-[60vh] overflow-hidden"
-            initial={{ opacity: 0, y: -50, scale: 0.95 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: -50, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -30, scale: 0.95 }}
-            transition={{
+            exit={shouldReduceMotion ? undefined : { opacity: 0, y: -30, scale: 0.95 }}
+            transition={shouldReduceMotion ? { duration: 0 } : {
               type: "spring",
               stiffness: 300,
               damping: 30
@@ -75,9 +76,9 @@ export default function ChapterMenu(props: ChapterMenuProps) {
                     return (
                       <motion.li
                         key={chapter.index}
-                        initial={{ opacity: 0, x: -20 }}
+                        initial={shouldReduceMotion ? false : { opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{
+                        transition={shouldReduceMotion ? { duration: 0 } : {
                           delay: i * 0.03,
                           duration: 0.2,
                           ease: [0.25, 0.46, 0.45, 0.94]

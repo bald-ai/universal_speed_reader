@@ -56,6 +56,27 @@ describe("rawEpubStore", () => {
     expect(decoder.decode(secondLoad?.bytes)).toBe("immutable");
   });
 
+  it("stores a non-zero-byteOffset subarray view as that view's bytes only", async () => {
+    const bookId = `raw-subarray-${Date.now()}`;
+    const backing = new Uint8Array([0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+    const view = backing.subarray(2, 5); // [0x22, 0x33, 0x44]
+    expect(view.byteOffset).toBeGreaterThan(0);
+
+    await storeRawEpub({
+      bookId,
+      fileName: `${bookId}.epub`,
+      mimeType: "application/epub+zip",
+      sizeBytes: view.byteLength,
+      bytes: view,
+      storedAt: Date.now(),
+    });
+
+    const loaded = await loadRawEpub(bookId);
+    expect(loaded).not.toBeNull();
+    expect(Array.from(loaded!.bytes)).toEqual([0x22, 0x33, 0x44]);
+    expect(loaded!.bytes.byteLength).toBe(3);
+  });
+
   it("removes stored records when deleteRawEpub is called", async () => {
     const bookId = `raw-delete-${Date.now()}`;
     await storeRawEpub(makeRecord(bookId, "to-delete", Date.now()));

@@ -11,6 +11,7 @@ import {
   loadLibraryLayout,
   moveBookToFolder,
   moveLibraryFolder,
+  pruneEmptyFolders,
   reorderLibraryLevel,
   saveLibraryLayout,
   updateLibraryFolder,
@@ -160,6 +161,35 @@ describe("libraryLayoutStore helpers", () => {
     expect(result.layout.folders).toEqual([]);
     expect(result.layout.placements).toEqual([{ bookId: "book-root", parentId: null, order: 0 }]);
     expect(getBookIdsInFolderSubtree(layout, "parent").sort()).toEqual(["book-direct", "book-nested"]);
+  });
+
+  it("pruneEmptyFolders removes only empty folders from the provided set", () => {
+    let layout = addLibraryFolder(EMPTY_LAYOUT, { id: "keep-root", label: "Keep" }).layout;
+    layout = addLibraryFolder(layout, { id: "import-root", label: "Import" }).layout;
+    layout = addLibraryFolder(layout, {
+      id: "import-empty",
+      label: "Empty",
+      parentId: "import-root",
+    }).layout;
+    layout = addLibraryFolder(layout, {
+      id: "import-kept",
+      label: "Kept",
+      parentId: "import-root",
+    }).layout;
+    layout = moveBookToFolder(layout, "book-a", "import-kept");
+    layout = moveBookToFolder(layout, "book-unrelated", "keep-root");
+
+    const pruned = pruneEmptyFolders(layout, ["import-root", "import-empty", "import-kept"]);
+
+    expect(pruned.folders.map((folder) => folder.id).sort()).toEqual([
+      "import-kept",
+      "import-root",
+      "keep-root",
+    ]);
+    expect(pruned.placements.map((placement) => placement.bookId).sort()).toEqual([
+      "book-a",
+      "book-unrelated",
+    ]);
   });
 
   it("renames folder label/icon/color", () => {

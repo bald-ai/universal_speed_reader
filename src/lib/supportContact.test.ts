@@ -22,7 +22,7 @@ describe("supportContact", () => {
     );
   });
 
-  test("prefills import-issue details and asks for the file", () => {
+  test("prefills import-issue body only and asks for the file", () => {
     const href = buildImportIssueMailto([
       {
         fileName: "Broken.epub",
@@ -36,7 +36,8 @@ describe("supportContact", () => {
       },
     ]);
 
-    expect(href).toContain(`subject=${encodeURIComponent("Import issues (2 books)")}`);
+    expect(href.startsWith(`mailto:${SUPPORT_CONTACT_EMAIL}?`)).toBe(true);
+    expect(href).not.toContain("subject=");
     const body = decodeURIComponent(href.split("body=")[1] ?? "");
     expect(body).toContain("Attach the EPUB/PDF if you can.");
     expect(body).toContain("- Broken.epub (Failed)");
@@ -44,10 +45,12 @@ describe("supportContact", () => {
     expect(body).toContain("- Soft.pdf (With issues)");
   });
 
-  test("uses a single-file subject when only one book has issues", () => {
+  test("still omits subject for a single problem book", () => {
     const href = buildImportIssueMailto([
       { fileName: "Only.epub", status: "failed", reason: null },
     ]);
-    expect(href).toContain(`subject=${encodeURIComponent("Import issue: Only.epub")}`);
+    expect(href).not.toContain("subject=");
+    expect(href).toContain("body=");
+    expect(decodeURIComponent(href.split("body=")[1] ?? "")).toContain("- Only.epub (Failed)");
   });
 });

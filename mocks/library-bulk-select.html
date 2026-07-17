@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Library bulk select — mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /*
+      Library bulk-select mock — visual language matched to Home + LibraryTreeView:
+      neutral-950 shell, violet Import, Moods/Library pill, folder gradients,
+      book rows (cover / progress / EPUB|PDF / … menu).
+
+      Prototype change:
+      - Long-press a book or folder → enter selection mode
+      - Checkboxes appear on the right (replace …)
+      - Long-pressed item is selected
+      - Tap more rows to multi-select
+      - Sticky bulk bar: Delete / Move / Send to mood / Cancel
+    */
+    :root {
+      color-scheme: dark;
+      --bg: #0a0a0a; /* neutral-950 */
+      --raised: #171717; /* neutral-900 */
+      --text: #f5f5f5; /* neutral-100 */
+      --text-muted: #a3a3a3; /* neutral-400 */
+      --text-faint: #737373; /* neutral-500 */
+      --text-dim: #525252; /* neutral-600 */
+      --stroke: #262626; /* neutral-800 */
+      --stroke-soft: rgba(38, 38, 38, 0.7);
+      --brand-violet: #a78bfa; /* violet-400 */
+      --brand-cyan: #22d3ee; /* cyan-400 */
+      --danger: #fca5a5; /* red-300-ish */
+      --font: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --phone-w: 390px;
+      --safe-bottom: 12px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text);
+      background: #0a0a0a;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 28px 16px 72px;
+    }
+
+    .page-header { margin-bottom: 28px; max-width: 560px; }
+    .eyebrow {
+      margin: 0 0 8px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+    .page-header h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.25;
+      font-weight: 600;
+    }
+    .page-header p {
+      margin: 8px 0 0;
+      font-size: 15px;
+      color: var(--text-muted);
+      max-width: 52ch;
+    }
+    .hint {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: rgba(23, 23, 23, 0.8);
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .hint strong { color: var(--text); font-weight: 600; }
+    .hint kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 6px;
+      border: 1px solid #404040;
+      background: #262626;
+      font-size: 11px;
+      font-family: inherit;
+      color: #e5e5e5;
+    }
+
+    .stage {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 28px;
+      align-items: flex-start;
+    }
+
+    /* —— Phone = Home main column (max-w-md) —— */
+    .phone {
+      position: relative;
+      width: 100%;
+      max-width: var(--phone-w);
+      height: min(760px, calc(100vh - 32px));
+      border-radius: 24px;
+      background: var(--bg);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), inset 0 0 0 1px #262626;
+      overflow: hidden;
+    }
+
+    .phone-inner {
+      position: relative;
+      height: 100%;
+      padding: 32px 16px 40px; /* py-8 px-4 */
+      overflow-x: hidden;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #404040 transparent;
+    }
+    /* BackgroundDecoration from Home */
+    .phone-inner::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, #0a0a0a, rgba(23, 23, 23, 0.2), #0a0a0a);
+      pointer-events: none;
+    }
+    .phone-inner::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 400px;
+      background: rgba(139, 92, 246, 0.05);
+      border-radius: 9999px;
+      filter: blur(64px);
+      pointer-events: none;
+    }
+
+    .phone-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 32px; /* space-y-8 */
+    }
+
+    /* Header — Home.tsx sizes */
+    .app-header {
+      text-align: center;
+      margin-bottom: 8px; /* mb-2 */
+    }
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 64px;
+      height: 64px;
+      margin-bottom: 24px;
+      border-radius: 16px; /* rounded-2xl */
+      background: linear-gradient(to bottom right, rgba(139, 92, 246, 0.2), rgba(34, 211, 238, 0.2));
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      color: #a78bfa; /* violet-400 */
+    }
+    .logo svg { width: 32px; height: 32px; }
+    .app-title {
+      margin: 0;
+      font-size: 36px; /* text-4xl */
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #f5f5f5, #a3a3a3);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .app-sub {
+      margin: 12px auto 0; /* mt-3 */
+      max-width: 20rem;
+      font-size: 14px; /* text-sm */
+      color: #a3a3a3; /* neutral-400 */
+      line-height: 1.625;
+    }
+    .import-btn {
+      display: block;
+      width: 100%;
+      max-width: 20rem;
+      margin: 20px auto 0; /* mt-5 */
+      padding: 8px 16px;
+      border-radius: 12px; /* rounded-xl */
+      border: 1px solid rgba(167, 139, 250, 0.4);
+      background: rgba(139, 92, 246, 0.15);
+      color: #ddd6fe; /* violet-200 */
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .import-btn:hover { background: rgba(139, 92, 246, 0.25); }
+    .phone[data-selecting="true"] .import-btn {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    /* Moods / Library toggle — exact Home classes */
+    .view-toggle {
+      width: 100%;
+      height: 36px;
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid #262626;
+      background: #171717;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    .view-toggle button {
+      height: 28px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      color: #a3a3a3;
+      cursor: pointer;
+    }
+    .view-toggle button[aria-selected="true"] {
+      background: #f5f5f5;
+      color: #171717;
+    }
+    .phone[data-selecting="true"] .view-toggle {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    /* Library section */
+    .section-label {
+      margin: 0 0 16px;
+      padding: 0 4px;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #737373; /* text-neutral-500 */
+    }
+
+    .new-folder {
+      width: 100%;
+      margin-bottom: 16px; /* space-y-4 before tree */
+      padding: 12px 16px;
+      border-radius: 16px; /* rounded-2xl */
+      border: 1px dashed #404040;
+      background: rgba(23, 23, 23, 0.2);
+      color: #a3a3a3;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.15s ease, color 0.15s ease;
+    }
+    .new-folder:hover {
+      border-color: rgba(34, 211, 238, 0.4);
+      color: #a5f3fc;
+    }
+    .tree { display: flex; flex-direction: column; gap: 12px; } /* space-y-3 */
+
+    /*
+      Folder colors = folderColorClass() in LibraryTreeView
+      from-*-500/25 to-*-500/10 + border-*-400/25 + text-*-100
+    */
+    .folder-row {
+      position: relative;
+      border-radius: 12px; /* rounded-xl */
+      border: 1px solid rgba(167, 139, 250, 0.25); /* violet-400/25 */
+      background: linear-gradient(to bottom right, rgba(139, 92, 246, 0.25), rgba(34, 211, 238, 0.1));
+      padding: 8px 12px; /* py-2 px-3 */
+      color: #ede9fe; /* violet-100 */
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      transition: box-shadow 0.15s ease;
+    }
+    .folder-row[data-color="cyan"] {
+      border-color: rgba(34, 211, 238, 0.25);
+      background: linear-gradient(to bottom right, rgba(6, 182, 212, 0.25), rgba(20, 184, 166, 0.1));
+      color: #cffafe;
+    }
+    .folder-row[data-color="emerald"] {
+      border-color: rgba(52, 211, 153, 0.25);
+      background: linear-gradient(to bottom right, rgba(16, 185, 129, 0.25), rgba(132, 204, 22, 0.1));
+      color: #d1fae5;
+    }
+    .folder-row[data-color="amber"] {
+      border-color: rgba(251, 191, 36, 0.25);
+      background: linear-gradient(to bottom right, rgba(245, 158, 11, 0.25), rgba(249, 115, 22, 0.1));
+      color: #fef3c7;
+    }
+    .folder-row[data-color="rose"] {
+      border-color: rgba(251, 113, 133, 0.25);
+      background: linear-gradient(to bottom right, rgba(244, 63, 94, 0.25), rgba(236, 72, 153, 0.1));
+      color: #ffe4e6; /* rose-100 */
+    }
+    .folder-row[data-color="sky"] {
+      border-color: rgba(56, 189, 248, 0.25);
+      background: linear-gradient(to bottom right, rgba(14, 165, 233, 0.25), rgba(59, 130, 246, 0.1));
+      color: #e0f2fe;
+    }
+    /* Drop-target ring language from LibraryTreeView */
+    .folder-row.selected,
+    .folder-row.partial {
+      box-shadow: 0 0 0 1px rgba(103, 232, 249, 0.75);
+    }
+    .folder-inner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .folder-chevron {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+      border: 0;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.2);
+      color: #f5f5f5;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .folder-chevron:disabled { cursor: default; }
+    .folder-icon { font-size: 16px; line-height: 1; }
+    .folder-text { min-width: 0; flex: 1; text-align: left; }
+    .folder-text .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fafafa; /* neutral-50 */
+    }
+    .folder-text .meta {
+      font-size: 11px;
+      color: #a3a3a3; /* neutral-400 */
+    }
+
+    /* Book row */
+    .book-row {
+      position: relative;
+      border-radius: 12px;
+      border: 1px solid rgba(38, 38, 38, 0.7); /* border-neutral-800/70 */
+      background: rgba(23, 23, 23, 0.8); /* bg-neutral-900/80 */
+      padding: 8px 12px;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      transition: box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .book-row.selected {
+      box-shadow: 0 0 0 1px rgba(103, 232, 249, 0.55);
+      border-color: rgba(34, 211, 238, 0.35);
+    }
+    .book-inner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .cover {
+      width: 36px; /* w-9 */
+      height: 48px; /* h-12 */
+      flex-shrink: 0;
+      border-radius: 6px; /* rounded-md */
+      object-fit: cover;
+      background: #262626;
+    }
+    .book-text { min-width: 0; flex: 1; text-align: left; }
+    .book-title-row {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 6px; /* gap-1.5 */
+    }
+    .book-title {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 600;
+      color: #f5f5f5;
+    }
+    .format-badge {
+      flex-shrink: 0;
+      border-radius: 4px;
+      border: 1px solid #404040;
+      background: rgba(38, 38, 38, 0.7);
+      padding: 2px 6px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      color: #a3a3a3;
+    }
+    .book-author {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      color: #737373; /* neutral-500 */
+    }
+    .progress-row {
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .progress-track {
+      height: 2px; /* h-0.5 */
+      width: 64px; /* w-16 */
+      overflow: hidden;
+      border-radius: 9999px;
+      background: #262626;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 9999px;
+      background: #22d3ee; /* cyan-400 */
+    }
+    .progress-label {
+      font-size: 11px;
+      color: #737373;
+    }
+
+    /* RowActionsMenu: h-8 w-8 rounded-lg bg-black/20 */
+    .row-actions {
+      position: relative;
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .menu-btn {
+      display: flex;
+      width: 32px;
+      height: 32px;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.2);
+      color: #e5e5e5; /* neutral-200 */
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .menu-btn:hover { background: rgba(0, 0, 0, 0.35); }
+
+    /* Selection checkbox — quiet cyan, sits where … was */
+    .checkbox {
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      border: 1.5px solid #525252;
+      background: rgba(10, 10, 10, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      color: transparent;
+    }
+    .checkbox svg {
+      width: 11px;
+      height: 11px;
+      opacity: 0;
+    }
+    .phone[data-selecting="true"] .menu-btn { display: none; }
+    .phone[data-selecting="true"] .checkbox { display: flex; }
+    .book-row.selected .checkbox,
+    .folder-row.selected .checkbox {
+      border-color: rgba(34, 211, 238, 0.65);
+      background: rgba(34, 211, 238, 0.15);
+      color: #a5f3fc;
+    }
+    .book-row.selected .checkbox svg,
+    .folder-row.selected .checkbox svg { opacity: 1; }
+    .folder-row.partial .checkbox {
+      border-color: rgba(34, 211, 238, 0.5);
+      background: rgba(34, 211, 238, 0.1);
+      color: #a5f3fc;
+    }
+    .folder-row.partial .checkbox svg { display: none; }
+    .folder-row.partial .checkbox::after {
+      content: "";
+      width: 9px;
+      height: 2px;
+      border-radius: 1px;
+      background: currentColor;
+    }
+
+    /* depth * 14 — same as LibraryTreeView */
+    .nested { margin-left: 14px; display: flex; flex-direction: column; gap: 12px; }
+    .nested[hidden] { display: none; }
+
+    .row-pressing { opacity: 0.92; }
+    .press-ring { display: none; }
+
+    /* Compact one-line bulk toolbar under Your Library */
+    .bulk-bar {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 12px;
+      padding: 6px 8px;
+      border-radius: 16px;
+      border: 1px solid rgba(167, 139, 250, 0.25);
+      background: rgba(139, 92, 246, 0.1);
+    }
+    .phone[data-selecting="true"] .bulk-bar { display: flex; }
+    .phone[data-selecting="true"][data-armoring="true"] .bulk-bar {
+      pointer-events: none;
+    }
+    .bulk-bar .summary {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 600;
+      color: #ede9fe;
+    }
+    .bulk-bar .summary em {
+      font-style: normal;
+      font-weight: 600;
+      color: #ede9fe;
+    }
+    .bulk-btn {
+      flex-shrink: 0;
+      border-radius: 6px;
+      border: 1px solid rgba(64, 64, 64, 0.9);
+      background: rgba(10, 10, 10, 0.35);
+      padding: 4px 8px;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      color: #f5f5f5;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .bulk-btn:hover { background: #262626; }
+    .bulk-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .bulk-btn.ghost {
+      color: #d4d4d4;
+    }
+    .bulk-btn.danger {
+      border-color: rgba(251, 113, 133, 0.35);
+      background: rgba(244, 63, 94, 0.1);
+      color: #fecdd3;
+    }
+    .bulk-btn.select-all {
+      border: 0;
+      background: transparent;
+      color: #ddd6fe;
+      padding: 4px 6px;
+    }
+    .phone[data-selecting="true"] .new-folder { display: none; }
+    .phone[data-selecting="true"] .phone-inner {
+      padding-bottom: 40px;
+    }
+
+    .app-footer {
+      text-align: center;
+      padding-top: 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .app-footer p {
+      margin: 0;
+      font-size: 12px;
+      color: #525252; /* neutral-600 */
+    }
+    .app-footer .support {
+      color: #737373;
+      line-height: 1.625;
+      max-width: 24rem;
+      margin: 0 auto;
+    }
+    .app-footer a {
+      color: #a3a3a3;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .phone[data-selecting="true"] .app-footer {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 212px;
+      transform: translateX(-50%) translateY(6px);
+      z-index: 30;
+      max-width: calc(100% - 32px);
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid #262626;
+      background: #171717;
+      color: #e5e5e5;
+      font-size: 12px;
+      font-weight: 500;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      text-align: center;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Side legend */
+    .legend {
+      flex: 1;
+      min-width: 260px;
+      max-width: 360px;
+    }
+    .legend h2 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #737373;
+    }
+    .legend ol {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-muted);
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .legend li strong { color: var(--text); font-weight: 600; }
+    .legend code {
+      font-size: 12px;
+      color: #d4d4d4;
+    }
+    .state-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 20px;
+    }
+    .state-pills button {
+      border-radius: 9999px;
+      border: 1px solid var(--stroke);
+      background: transparent;
+      color: var(--text-muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    .state-pills button:hover { border-color: #525252; color: var(--text); }
+    .state-pills button[aria-pressed="true"] {
+      border-color: rgba(167, 139, 250, 0.45);
+      background: rgba(139, 92, 246, 0.15);
+      color: #ddd6fe;
+    }
+
+    .footer-note {
+      margin-top: 28px;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <p class="eyebrow">Visual prototype</p>
+      <h1>Library bulk select</h1>
+      <p>
+        Long-press a book or folder to enter selection mode: checkboxes appear on the right,
+        the pressed item is marked, then multi-select and run bulk actions.
+        Nested folders use <strong>cascade select</strong> in this mock (see proposal at right).
+      </p>
+      <div class="hint">
+        <strong>Try it:</strong> press and hold (~0.45s) any book or folder — try <strong>Classics</strong> or <strong>Russian</strong>.
+        On desktop you can also <kbd>right-click</kbd>. Folder check = whole subtree; partial = dash.
+      </div>
+    </header>
+
+    <div class="stage">
+      <div class="phone" id="phone" data-selecting="false">
+        <div class="phone-inner">
+          <div class="phone-content">
+            <header class="app-header">
+              <div class="logo" aria-hidden="true">
+                <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                </svg>
+              </div>
+              <h1 class="app-title">Speed Reading</h1>
+              <p class="app-sub">
+                Practice rapid serial visual presentation (RSVP) and switch to normal reading whenever you need more context.
+              </p>
+              <button type="button" class="import-btn">Import</button>
+            </header>
+
+            <div class="view-toggle" role="tablist" aria-label="Library views">
+              <button type="button" role="tab" aria-selected="false">Moods</button>
+              <button type="button" role="tab" aria-selected="true">Library</button>
+            </div>
+
+            <section>
+              <h2 class="section-label">Your Library</h2>
+
+              <div class="bulk-bar" id="bulk-bar" role="toolbar" aria-label="Bulk actions">
+                <span class="summary" id="bulk-summary"><em>1 selected</em></span>
+                <button type="button" class="bulk-btn select-all" id="select-all" data-action="select-all">All</button>
+                <button type="button" class="bulk-btn" data-action="move">Move</button>
+                <button type="button" class="bulk-btn" data-action="mood">Mood</button>
+                <button type="button" class="bulk-btn ghost" data-action="cancel">Cancel</button>
+                <button type="button" class="bulk-btn danger" data-action="delete">Delete</button>
+              </div>
+
+              <button type="button" class="new-folder">+ New folder</button>
+
+              <!--
+                Tree (3 levels):
+                Classics
+                  British → Pride, Moby
+                  Russian → Tolstoy → Anna, War and Peace · Crime
+                Dune, Sapiens
+                Work reads → Reports (empty)
+              -->
+              <div class="tree" id="tree">
+                <div class="folder-row" data-color="violet" data-id="folder:classics" data-kind="folder" data-label="Classics" data-kids="classics-kids">
+                  <div class="press-ring"></div>
+                  <div class="folder-inner">
+                    <button type="button" class="folder-chevron" data-toggle="classics-kids" aria-label="Collapse folder">⌄</button>
+                    <span class="folder-icon">✨</span>
+                    <div class="folder-text">
+                      <div class="name">Classics</div>
+                      <div class="meta">2 items</div>
+                    </div>
+                    <div class="row-actions">
+                      <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                      <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="nested" id="classics-kids">
+                  <!-- British -->
+                  <div class="folder-row" data-color="emerald" data-id="folder:british" data-kind="folder" data-label="British" data-kids="british-kids">
+                    <div class="press-ring"></div>
+                    <div class="folder-inner">
+                      <button type="button" class="folder-chevron" data-toggle="british-kids" aria-label="Collapse folder">⌄</button>
+                      <span class="folder-icon">🌿</span>
+                      <div class="folder-text">
+                        <div class="name">British</div>
+                        <div class="meta">2 items</div>
+                      </div>
+                      <div class="row-actions">
+                        <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                        <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="nested" id="british-kids">
+                    <div class="book-row" data-id="book:pride" data-kind="book" data-label="Pride and Prejudice">
+                      <div class="press-ring"></div>
+                      <div class="book-inner">
+                        <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%234c1d95' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%23c4b5fd' font-family='Georgia' font-size='10'%3EP%26P%3C/text%3E%3C/svg%3E" />
+                        <div class="book-text">
+                          <div class="book-title-row">
+                            <div class="book-title">Pride and Prejudice</div>
+                            <span class="format-badge">EPUB</span>
+                          </div>
+                          <div class="book-author">Jane Austen</div>
+                          <div class="progress-row">
+                            <div class="progress-track"><div class="progress-fill" style="width: 62%"></div></div>
+                            <span class="progress-label">62%</span>
+                          </div>
+                        </div>
+                        <div class="row-actions">
+                          <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                          <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="book-row" data-id="book:moby" data-kind="book" data-label="Moby-Dick">
+                      <div class="press-ring"></div>
+                      <div class="book-inner">
+                        <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%230f766e' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%2399f6e4' font-family='Georgia' font-size='10'%3EMoby%3C/text%3E%3C/svg%3E" />
+                        <div class="book-text">
+                          <div class="book-title-row">
+                            <div class="book-title">Moby-Dick</div>
+                            <span class="format-badge">EPUB</span>
+                          </div>
+                          <div class="book-author">Herman Melville</div>
+                          <div class="progress-row">
+                            <div class="progress-track"><div class="progress-fill" style="width: 18%"></div></div>
+                            <span class="progress-label">18%</span>
+                          </div>
+                        </div>
+                        <div class="row-actions">
+                          <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                          <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Russian -->
+                  <div class="folder-row" data-color="cyan" data-id="folder:russian" data-kind="folder" data-label="Russian" data-kids="russian-kids">
+                    <div class="press-ring"></div>
+                    <div class="folder-inner">
+                      <button type="button" class="folder-chevron" data-toggle="russian-kids" aria-label="Collapse folder">⌄</button>
+                      <span class="folder-icon">❄️</span>
+                      <div class="folder-text">
+                        <div class="name">Russian</div>
+                        <div class="meta">2 items</div>
+                      </div>
+                      <div class="row-actions">
+                        <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                        <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="nested" id="russian-kids">
+                    <!-- Tolstoy (depth 3) -->
+                    <div class="folder-row" data-color="rose" data-id="folder:tolstoy" data-kind="folder" data-label="Tolstoy" data-kids="tolstoy-kids">
+                      <div class="press-ring"></div>
+                      <div class="folder-inner">
+                        <button type="button" class="folder-chevron" data-toggle="tolstoy-kids" aria-label="Collapse folder">⌄</button>
+                        <span class="folder-icon">🪶</span>
+                        <div class="folder-text">
+                          <div class="name">Tolstoy</div>
+                          <div class="meta">2 items</div>
+                        </div>
+                        <div class="row-actions">
+                          <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                          <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="nested" id="tolstoy-kids">
+                      <div class="book-row" data-id="book:anna" data-kind="book" data-label="Anna Karenina">
+                        <div class="press-ring"></div>
+                        <div class="book-inner">
+                          <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%239f1239' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%23fecdd3' font-family='Georgia' font-size='10'%3EAnna%3C/text%3E%3C/svg%3E" />
+                          <div class="book-text">
+                            <div class="book-title-row">
+                              <div class="book-title">Anna Karenina</div>
+                              <span class="format-badge">EPUB</span>
+                            </div>
+                            <div class="book-author">Leo Tolstoy</div>
+                            <div class="progress-row">
+                              <div class="progress-track"><div class="progress-fill" style="width: 0%"></div></div>
+                              <span class="progress-label">0%</span>
+                            </div>
+                          </div>
+                          <div class="row-actions">
+                            <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                            <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="book-row" data-id="book:war" data-kind="book" data-label="War and Peace">
+                        <div class="press-ring"></div>
+                        <div class="book-inner">
+                          <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%237f1d1d' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%23fecaca' font-family='Georgia' font-size='9'%3EWar%3C/text%3E%3C/svg%3E" />
+                          <div class="book-text">
+                            <div class="book-title-row">
+                              <div class="book-title">War and Peace</div>
+                              <span class="format-badge">EPUB</span>
+                            </div>
+                            <div class="book-author">Leo Tolstoy</div>
+                            <div class="progress-row">
+                              <div class="progress-track"><div class="progress-fill" style="width: 7%"></div></div>
+                              <span class="progress-label">7%</span>
+                            </div>
+                          </div>
+                          <div class="row-actions">
+                            <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                            <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="book-row" data-id="book:crime" data-kind="book" data-label="Crime and Punishment">
+                      <div class="press-ring"></div>
+                      <div class="book-inner">
+                        <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%231e3a5f' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%23bae6fd' font-family='Georgia' font-size='9'%3ECrime%3C/text%3E%3C/svg%3E" />
+                        <div class="book-text">
+                          <div class="book-title-row">
+                            <div class="book-title">Crime and Punishment</div>
+                            <span class="format-badge">PDF</span>
+                          </div>
+                          <div class="book-author">Fyodor Dostoevsky</div>
+                          <div class="progress-row">
+                            <div class="progress-track"><div class="progress-fill" style="width: 41%"></div></div>
+                            <span class="progress-label">41%</span>
+                          </div>
+                        </div>
+                        <div class="row-actions">
+                          <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                          <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Root books -->
+                <div class="book-row" data-id="book:dune" data-kind="book" data-label="Dune">
+                  <div class="press-ring"></div>
+                  <div class="book-inner">
+                    <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%23b45309' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%23fde68a' font-family='Georgia' font-size='11'%3EDune%3C/text%3E%3C/svg%3E" />
+                    <div class="book-text">
+                      <div class="book-title-row">
+                        <div class="book-title">Dune</div>
+                        <span class="format-badge">EPUB</span>
+                      </div>
+                      <div class="book-author">Frank Herbert</div>
+                      <div class="progress-row">
+                        <div class="progress-track"><div class="progress-fill" style="width: 87%"></div></div>
+                        <span class="progress-label">87%</span>
+                      </div>
+                    </div>
+                    <div class="row-actions">
+                      <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                      <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="book-row" data-id="book:sapiens" data-kind="book" data-label="Sapiens">
+                  <div class="press-ring"></div>
+                  <div class="book-inner">
+                    <img class="cover" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='96'%3E%3Crect fill='%23165e3a' width='72' height='96'/%3E%3Ctext x='36' y='52' text-anchor='middle' fill='%23bbf7d0' font-family='Georgia' font-size='9'%3ESap.%3C/text%3E%3C/svg%3E" />
+                    <div class="book-text">
+                      <div class="book-title-row">
+                        <div class="book-title">Sapiens</div>
+                        <span class="format-badge">PDF</span>
+                      </div>
+                      <div class="book-author">Yuval Noah Harari</div>
+                      <div class="progress-row">
+                        <div class="progress-track"><div class="progress-fill" style="width: 33%"></div></div>
+                        <span class="progress-label">33%</span>
+                      </div>
+                    </div>
+                    <div class="row-actions">
+                      <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                      <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="folder-row" data-color="amber" data-id="folder:work" data-kind="folder" data-label="Work reads" data-kids="work-kids">
+                  <div class="press-ring"></div>
+                  <div class="folder-inner">
+                    <button type="button" class="folder-chevron" data-toggle="work-kids" aria-label="Expand folder">›</button>
+                    <span class="folder-icon">☕</span>
+                    <div class="folder-text">
+                      <div class="name">Work reads</div>
+                      <div class="meta">1 items</div>
+                    </div>
+                    <div class="row-actions">
+                      <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                      <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="nested" id="work-kids" hidden>
+                  <div class="folder-row" data-color="sky" data-id="folder:reports" data-kind="folder" data-label="Reports" data-kids="">
+                    <div class="press-ring"></div>
+                    <div class="folder-inner">
+                      <button type="button" class="folder-chevron" aria-label="Empty folder" disabled style="opacity:0.4">›</button>
+                      <span class="folder-icon">📁</span>
+                      <div class="folder-text">
+                        <div class="name">Reports</div>
+                        <div class="meta">0 items</div>
+                      </div>
+                      <div class="row-actions">
+                        <button type="button" class="menu-btn" aria-label="Actions">...</button>
+                        <span class="checkbox" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2L5 8.7L9.5 3.5" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <footer class="app-footer">
+              <p>Offline-first mode: imports, settings, and progress are stored locally</p>
+              <p class="support">
+                Contact <a href="mailto:baldai@hey.com">baldai@hey.com</a>.
+                Send issues anytime — attach the file if one failed. I reply within 24h.
+              </p>
+            </footer>
+          </div>
+        </div>
+
+        <div class="toast" id="toast" role="status"></div>
+      </div>
+
+      <aside class="legend">
+        <h2>Interaction</h2>
+        <ol>
+          <li><strong>Idle</strong> — same Library as today: folders, books, <code>…</code> menus.</li>
+          <li><strong>Long-press</strong> — checkboxes on the right; pressed row checked.</li>
+          <li><strong>Folder tap</strong> — selects / clears the whole subtree (demo’d here).</li>
+          <li><strong>Partial</strong> — parent shows a dash when only some children are checked.</li>
+          <li><strong>Chevrons</strong> — still expand/collapse while selecting (so you can reach nested rows).</li>
+        </ol>
+
+        <h2 style="margin-top: 28px">Nested folders — proposal</h2>
+        <ol>
+          <li>
+            <strong>A · Cascade (mocked)</strong> —
+            checking a folder checks every descendant book + folder.
+            Unchecking clears the subtree. Parents go indeterminate when mixed.
+            Best for “delete this whole branch.”
+          </li>
+          <li>
+            <strong>B · Folder as unit</strong> —
+            folder checkbox only marks the folder itself; children stay independent.
+            Matches today’s single-folder delete choice, but weaker for bulk cleanup.
+          </li>
+          <li>
+            <strong>C · Visible-only cascade</strong> —
+            folder selects only expanded/visible children. Collapsed books stay out.
+            Safer, easier to miss nested items.
+          </li>
+        </ol>
+        <p style="margin: 14px 0 0; font-size: 13px; color: var(--text-muted); line-height: 1.45">
+          <strong style="color: var(--text)">Bulk Delete:</strong> if any selected folder has books,
+          reuse the existing sheet — “Delete folders only” vs “Delete folders + contents” —
+          scoped to the selected set (not one folder at a time).
+        </p>
+        <p style="margin: 10px 0 0; font-size: 13px; color: var(--text-muted); line-height: 1.45">
+          <strong style="color: var(--text)">Count label:</strong> prefer
+          “2 folders · 5 books” over raw row count when folders are included.
+        </p>
+
+        <div class="state-pills" role="group" aria-label="Jump to state">
+          <button type="button" id="jump-idle" aria-pressed="true">Show idle</button>
+          <button type="button" id="jump-select" aria-pressed="false">Show selecting</button>
+          <button type="button" id="jump-partial" aria-pressed="false">Show partial</button>
+        </div>
+      </aside>
+    </div>
+
+    <p class="footer-note">Prototype only — not wired into the app. Path: mocks/library-bulk-select.html</p>
+  </div>
+
+  <script>
+    const LONG_PRESS_MS = 450;
+    const MOVE_CANCEL_PX = 10;
+
+    const phone = document.getElementById("phone");
+    const tree = document.getElementById("tree");
+    const bulkSummaryEl = document.getElementById("bulk-summary");
+    const selectAllBtn = document.getElementById("select-all");
+    const toastEl = document.getElementById("toast");
+    const jumpIdle = document.getElementById("jump-idle");
+    const jumpSelect = document.getElementById("jump-select");
+    const jumpPartial = document.getElementById("jump-partial");
+
+    /** Explicit selection set (cascade writes descendants into this). */
+    /** @type {Set<string>} */
+    const selected = new Set();
+    let selecting = false;
+    let toastTimer = 0;
+    /** Ignore synthetic click / release after a long-press enters selection. */
+    let ignoreInputUntil = 0;
+    let armorTimer = 0;
+
+    function armAgainstGhostClick() {
+      ignoreInputUntil = performance.now() + 450;
+      phone.dataset.armoring = "true";
+      window.clearTimeout(armorTimer);
+      armorTimer = window.setTimeout(() => {
+        delete phone.dataset.armoring;
+      }, 450);
+    }
+
+    function isInputArmored() {
+      return performance.now() < ignoreInputUntil;
+    }
+
+    function rows() {
+      return Array.from(tree.querySelectorAll("[data-id]"));
+    }
+
+    function rowById(id) {
+      return tree.querySelector(`[data-id="${CSS.escape(id)}"]`);
+    }
+
+    /** Immediate nested container under a folder row (siblings in DOM: row, then .nested). */
+    function kidsContainer(folderRow) {
+      const kidsId = folderRow.dataset.kids;
+      if (!kidsId) return null;
+      return document.getElementById(kidsId);
+    }
+
+    /** All descendant rows (books + folders) under a folder. */
+    function descendants(folderRow) {
+      const container = kidsContainer(folderRow);
+      if (!container) return [];
+      return Array.from(container.querySelectorAll("[data-id]"));
+    }
+
+    function showToast(message) {
+      toastEl.textContent = message;
+      toastEl.classList.add("show");
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => toastEl.classList.remove("show"), 1600);
+    }
+
+    function countLabel() {
+      let folders = 0;
+      let books = 0;
+      selected.forEach((id) => {
+        const row = rowById(id);
+        if (!row) return;
+        if (row.dataset.kind === "folder") folders += 1;
+        else books += 1;
+      });
+      const parts = [];
+      if (folders) parts.push(`${folders} folder${folders === 1 ? "" : "s"}`);
+      if (books) parts.push(`${books} book${books === 1 ? "" : "s"}`);
+      if (!parts.length) return "0 selected";
+      return parts.join(" · ");
+    }
+
+    /** Derive parent folder checked / partial from descendants. */
+    function syncFolderStates() {
+      const folders = Array.from(tree.querySelectorAll(".folder-row[data-id]")).reverse();
+      folders.forEach((folder) => {
+        const kids = descendants(folder);
+        folder.classList.remove("selected", "partial");
+        if (kids.length === 0) {
+          if (selected.has(folder.dataset.id)) folder.classList.add("selected");
+          return;
+        }
+        const selectedKids = kids.filter((k) => selected.has(k.dataset.id));
+        if (selectedKids.length === kids.length) {
+          selected.add(folder.dataset.id);
+          folder.classList.add("selected");
+        } else if (selectedKids.length > 0) {
+          selected.delete(folder.dataset.id);
+          folder.classList.add("partial");
+        } else {
+          selected.delete(folder.dataset.id);
+        }
+      });
+    }
+
+    function syncUi() {
+      syncFolderStates();
+      phone.dataset.selecting = selecting ? "true" : "false";
+      rows().forEach((row) => {
+        if (row.dataset.kind === "book") {
+          row.classList.toggle("selected", selected.has(row.dataset.id));
+        }
+      });
+      const label = countLabel();
+      bulkSummaryEl.innerHTML = `<em>${label}</em>`;
+
+      const allSelected = rows().every((row) => selected.has(row.dataset.id));
+      selectAllBtn.textContent = allSelected ? "Clear" : "All";
+    }
+
+    function setSubtree(folderRow, on) {
+      const id = folderRow.dataset.id;
+      if (on) selected.add(id);
+      else selected.delete(id);
+      descendants(folderRow).forEach((row) => {
+        if (on) selected.add(row.dataset.id);
+        else selected.delete(row.dataset.id);
+      });
+    }
+
+    function enterSelecting(id) {
+      selecting = true;
+      selected.clear();
+      const row = id ? rowById(id) : null;
+      if (row) {
+        if (row.dataset.kind === "folder") setSubtree(row, true);
+        else selected.add(id);
+      }
+      armAgainstGhostClick();
+      syncUi();
+    }
+
+    function exitSelecting() {
+      selecting = false;
+      selected.clear();
+      rows().forEach((row) => row.classList.remove("selected", "partial"));
+      syncUi();
+    }
+
+    function toggleRow(id) {
+      if (!selecting) return;
+      const row = rowById(id);
+      if (!row) return;
+
+      if (row.dataset.kind === "folder") {
+        const kids = descendants(row);
+        const fullyOn =
+          selected.has(id) ||
+          (kids.length > 0 && kids.every((k) => selected.has(k.dataset.id)));
+        setSubtree(row, !fullyOn);
+      } else if (selected.has(id)) {
+        selected.delete(id);
+      } else {
+        selected.add(id);
+      }
+
+      syncFolderStates();
+      if (selected.size === 0 && !tree.querySelector(".folder-row.partial")) {
+        exitSelecting();
+        return;
+      }
+      syncUi();
+    }
+
+    // Expand/collapse works in idle and selecting (need to reach nested rows)
+    tree.addEventListener("click", (event) => {
+      if (isInputArmored()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const toggle = event.target.closest("[data-toggle]");
+      if (toggle) {
+        event.stopPropagation();
+        const target = document.getElementById(toggle.getAttribute("data-toggle"));
+        if (!target) return;
+        const willHide = !target.hidden;
+        target.hidden = willHide;
+        toggle.textContent = willHide ? "›" : "⌄";
+        toggle.setAttribute("aria-label", willHide ? "Expand folder" : "Collapse folder");
+        return;
+      }
+
+      if (event.target.closest(".menu-btn")) {
+        event.stopPropagation();
+        showToast("Single-item menu (unchanged in idle)");
+        return;
+      }
+
+      const row = event.target.closest("[data-id]");
+      if (!row) return;
+
+      if (selecting) {
+        event.preventDefault();
+        toggleRow(row.dataset.id);
+        return;
+      }
+
+      if (row.dataset.kind === "book") {
+        showToast(`Open “${row.dataset.label}”`);
+      }
+    });
+
+    let pressTimer = 0;
+    let pressRow = null;
+    let startX = 0;
+    let startY = 0;
+    let pressFired = false;
+
+    function clearPress() {
+      window.clearTimeout(pressTimer);
+      pressTimer = 0;
+      if (pressRow) pressRow.classList.remove("row-pressing");
+      pressRow = null;
+    }
+
+    function beginPress(row, clientX, clientY) {
+      if (selecting || isInputArmored()) return;
+      clearPress();
+      pressRow = row;
+      pressFired = false;
+      startX = clientX;
+      startY = clientY;
+      row.classList.add("row-pressing");
+      pressTimer = window.setTimeout(() => {
+        if (!pressRow) return;
+        pressFired = true;
+        const id = pressRow.dataset.id;
+        const kind = pressRow.dataset.kind;
+        const label = pressRow.dataset.label;
+        clearPress();
+        enterSelecting(id);
+        showToast(
+          kind === "folder"
+            ? `Selected “${label}” + contents`
+            : "Selection mode"
+        );
+        if (navigator.vibrate) navigator.vibrate(12);
+      }, LONG_PRESS_MS);
+    }
+
+    function movePress(clientX, clientY) {
+      if (!pressRow) return;
+      const dx = Math.abs(clientX - startX);
+      const dy = Math.abs(clientY - startY);
+      if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearPress();
+    }
+
+    tree.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest(".menu-btn, .folder-chevron, [data-toggle]")) return;
+      const row = event.target.closest("[data-id]");
+      if (!row) return;
+      beginPress(row, event.clientX, event.clientY);
+    });
+
+    tree.addEventListener("pointermove", (event) => {
+      movePress(event.clientX, event.clientY);
+    });
+
+    tree.addEventListener("pointerup", () => {
+      if (pressFired) {
+        pressFired = false;
+        return;
+      }
+      clearPress();
+    });
+    tree.addEventListener("pointercancel", () => {
+      pressFired = false;
+      clearPress();
+    });
+
+    tree.addEventListener("contextmenu", (event) => {
+      const row = event.target.closest("[data-id]");
+      if (!row) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (isInputArmored()) return;
+      if (selecting) {
+        toggleRow(row.dataset.id);
+        return;
+      }
+      enterSelecting(row.dataset.id);
+      showToast(
+        row.dataset.kind === "folder"
+          ? `Selected “${row.dataset.label}” + contents`
+          : "Selection mode"
+      );
+    });
+
+    selectAllBtn.addEventListener("click", () => {
+      if (isInputArmored()) return;
+      const all = rows();
+      const allSelected = all.every((row) => selected.has(row.dataset.id));
+      if (allSelected) {
+        exitSelecting();
+        return;
+      }
+      selecting = true;
+      selected.clear();
+      all.forEach((row) => selected.add(row.dataset.id));
+      syncUi();
+    });
+
+    document.getElementById("bulk-bar").addEventListener(
+      "click",
+      (event) => {
+        if (isInputArmored()) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        const btn = event.target.closest("[data-action]");
+        if (!btn || btn.disabled) return;
+        const action = btn.getAttribute("data-action");
+        if (action === "cancel") {
+          exitSelecting();
+          return;
+        }
+        if (selected.size === 0) return;
+        const label = countLabel();
+        if (action === "delete") {
+          const hasFolder = Array.from(selected).some((id) => rowById(id)?.dataset.kind === "folder");
+          showToast(
+            hasFolder
+              ? `Delete sheet: folders only vs + contents (${label})`
+              : `Delete ${label} (prototype)`
+          );
+          exitSelecting();
+          return;
+        }
+        if (action === "move") {
+          showToast(`Move ${label}… (prototype sheet)`);
+          return;
+        }
+        if (action === "mood") {
+          showToast(`Send books from selection to mood…`);
+        }
+      },
+      true
+    );
+
+    // Capture-phase guard: swallow the ghost click that follows long-press
+    phone.addEventListener(
+      "click",
+      (event) => {
+        if (!isInputArmored()) return;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      true
+    );
+
+    jumpIdle.addEventListener("click", () => {
+      exitSelecting();
+      jumpIdle.setAttribute("aria-pressed", "true");
+    });
+
+    jumpSelect.addEventListener("click", () => {
+      // Full Classics subtree selected
+      selecting = true;
+      selected.clear();
+      const classics = rowById("folder:classics");
+      if (classics) setSubtree(classics, true);
+      selected.add("book:dune");
+      syncUi();
+      jumpSelect.setAttribute("aria-pressed", "true");
+      jumpIdle.setAttribute("aria-pressed", "false");
+      jumpPartial.setAttribute("aria-pressed", "false");
+    });
+
+    jumpPartial.addEventListener("click", () => {
+      // Only Tolstoy books → Russian + Classics show partial dash
+      selecting = true;
+      selected.clear();
+      selected.add("book:anna");
+      selected.add("book:war");
+      syncUi();
+      jumpPartial.setAttribute("aria-pressed", "true");
+      jumpIdle.setAttribute("aria-pressed", "false");
+      jumpSelect.setAttribute("aria-pressed", "false");
+      showToast("Partial: Classics / Russian show a dash");
+    });
+
+    syncUi();
+  </script>
+</body>
+</html>

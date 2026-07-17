@@ -11,6 +11,8 @@ import type {
 const MAX_BOOK_TIME_MS = 30_000;
 /** Shared with import sanitization — drop oversized inline media instead of storing it. */
 export const MAX_INLINE_MEDIA_LENGTH = 700_000;
+/** Hard product/safety ceiling for normalized paragraph count per imported book. */
+export const MAX_BOOK_PARAGRAPHS = 50_000;
 
 export interface ValidationResult {
   pass: boolean;
@@ -20,6 +22,19 @@ export interface ValidationResult {
 export function validateParserOutput(output: ParserOutput): ValidationResult {
   const generated: ParserDiagnostic[] = [];
   const { book, internals } = output;
+
+  if (book.paragraphs.length > MAX_BOOK_PARAGRAPHS) {
+    const limitDiagnostic = failure(
+      "Other",
+      DiagnosticCode.too_many_paragraphs,
+      `This book has ${book.paragraphs.length} paragraphs; maximum supported is ${MAX_BOOK_PARAGRAPHS}.`,
+    );
+    const diagnostics = deduplicateDiagnostics([...book.diagnostics, limitDiagnostic]);
+    return {
+      pass: false,
+      diagnostics,
+    };
+  }
 
   validateText(book, generated);
   validateParagraphIds(book, generated);
@@ -101,7 +116,10 @@ function validateText(book: ParsedBook, diagnostics: ParserDiagnostic[]): void {
   }
 
   const paragraphWordCounts = book.paragraphs.map((paragraph) => countWords(paragraph.text));
-  const largestParagraphWords = Math.max(0, ...paragraphWordCounts);
+  let largestParagraphWords = 0;
+  for (const count of paragraphWordCounts) {
+    if (count > largestParagraphWords) largestParagraphWords = count;
+  }
   if (words >= 1_000 && (book.paragraphs.length === 1 || largestParagraphWords > 5_000 || largestParagraphWords / words > 0.9)) {
     diagnostics.push(
       failure(

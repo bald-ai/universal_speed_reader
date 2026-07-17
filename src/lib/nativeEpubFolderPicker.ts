@@ -78,8 +78,11 @@ export async function readNativeEpubFolderFile(file: NativeEpubFolderFile): Prom
   });
 }
 
-export async function readNativeEpubFolderBytes(file: NativeEpubFolderFile): Promise<Uint8Array> {
-  const response = await fetch(Capacitor.convertFileSrc(file.uri));
+export async function readNativeEpubFolderBytes(
+  file: NativeEpubFolderFile,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  const response = await fetch(Capacitor.convertFileSrc(file.uri), { signal });
   if (!response.ok) {
     throw new Error(`Could not read ${file.name}`);
   }

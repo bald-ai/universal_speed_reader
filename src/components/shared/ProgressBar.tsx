@@ -1,5 +1,5 @@
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useMemo } from "react";
 import { useSettings } from "@/contexts/SettingsContext";
 import { PROGRESS_BAR_THEMES } from "@/contexts/SettingsContext";
@@ -13,6 +13,7 @@ export default function ProgressBar(props: ProgressBarProps) {
   const { value, className = "" } = props;
   const clamped = Math.max(0, Math.min(100, Math.round(value)));
   const { settings } = useSettings();
+  const shouldReduceMotion = useReducedMotion();
 
   const theme = useMemo(
     () => PROGRESS_BAR_THEMES.find((t) => t.name === settings.progressBarTheme) ?? PROGRESS_BAR_THEMES[0],
@@ -26,9 +27,9 @@ export default function ProgressBar(props: ProgressBarProps) {
         style={{
           background: `linear-gradient(to right, ${theme.from}, ${theme.via}, ${theme.to})`,
         }}
-        initial={{ width: 0 }}
+        initial={shouldReduceMotion ? false : { width: 0 }}
         animate={{ width: `${clamped}%` }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
+        transition={{ duration: shouldReduceMotion ? 0 : 0.3, ease: "easeOut" }}
       />
       {/* Glow effect at leading edge */}
       {clamped > 0 && (
@@ -38,9 +39,9 @@ export default function ProgressBar(props: ProgressBarProps) {
             left: `calc(${clamped}% - 8px)`,
             backgroundColor: `${theme.glow}80`,
           }}
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
+          transition={{ duration: shouldReduceMotion ? 0 : 0.3 }}
         />
       )}
     </div>

@@ -1,6 +1,6 @@
 
 import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { Book } from "@/types/book";
 import type {
   TtsRegexPreviewStats,
@@ -67,6 +67,7 @@ export default function TtsRegexRulesModal(props: Props) {
   const [form, setForm] = useState<RuleFormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
+  const shouldReduceMotion = useReducedMotion();
 
   const bookId = book?.id;
 
@@ -220,16 +221,16 @@ export default function TtsRegexRulesModal(props: Props) {
       {isOpen ? (
         <motion.div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={shouldReduceMotion ? undefined : { opacity: 0 }}
         >
           <motion.div
             className="absolute inset-0 bg-black/75 backdrop-blur-md"
             onClick={onClose}
-            initial={{ opacity: 0 }}
+            initial={shouldReduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0 }}
           />
 
           <motion.div
@@ -238,10 +239,12 @@ export default function TtsRegexRulesModal(props: Props) {
               maxHeight: "calc(100vh - env(safe-area-inset-top, 0px) - 8px)",
               paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
             }}
-            initial={{ y: "100%", opacity: 0, scale: 0.96 }}
+            initial={shouldReduceMotion ? false : { y: "100%", opacity: 0, scale: 0.96 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
-            exit={{ y: "100%", opacity: 0, scale: 0.96 }}
-            transition={{ type: "spring", stiffness: 280, damping: 30 }}
+            exit={shouldReduceMotion ? undefined : { y: "100%", opacity: 0, scale: 0.96 }}
+            transition={shouldReduceMotion
+              ? { duration: 0 }
+              : { type: "spring", stiffness: 280, damping: 30 }}
           >
             <div className="border-b border-neutral-800 px-5 py-4">
               <div className="flex items-center justify-between gap-3">
@@ -490,16 +493,17 @@ export default function TtsRegexRulesModal(props: Props) {
             {pendingSave ? (
               <motion.div
                 className="fixed inset-0 z-[60] flex items-center justify-center px-4"
-                initial={{ opacity: 0 }}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
               >
                 <div className="absolute inset-0 bg-black/70" onClick={() => setPendingSave(null)} />
                 <motion.div
                   className="relative w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-950 p-4 shadow-2xl shadow-black/60"
-                  initial={{ scale: 0.95, opacity: 0 }}
+                  initial={shouldReduceMotion ? false : { scale: 0.95, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.95, opacity: 0 }}
+                  exit={shouldReduceMotion ? undefined : { scale: 0.95, opacity: 0 }}
+                  transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
                 >
                   <h4 className="text-sm font-semibold text-neutral-100">Preview Before Save</h4>
                   <div className="mt-3 space-y-1 text-xs text-neutral-300">

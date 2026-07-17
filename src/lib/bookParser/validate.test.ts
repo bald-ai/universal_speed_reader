@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DiagnosticCode } from "./diagnosticCodes.ts";
 import { buildBook } from "./model.ts";
 import type { ParserOutput } from "./types.ts";
-import { validateParserOutput } from "./validate.ts";
+import { MAX_BOOK_PARAGRAPHS, validateParserOutput } from "./validate.ts";
 
 function validOutput(): ParserOutput {
   const paragraphs = Array.from({ length: 20 }, (_, index) => ({
@@ -50,7 +50,69 @@ describe("validateParserOutput", () => {
     output.book.totals.paragraphs = 1;
     const result = validateParserOutput(output);
     expect(result.pass).toBe(false);
-    expect(result.diagnostics.some((diagnostic) => diagnostic.bucket === "No / unusable text")).toBe(true);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: DiagnosticCode.collapsed_paragraphs,
+      severity: "failure",
+    }));
+  });
+
+  test("accepts books at the paragraph cap", () => {
+    const paragraphs = Array.from({ length: MAX_BOOK_PARAGRAPHS }, (_, index) => ({
+      id: index + 1,
+      text: "word",
+    }));
+    const output: ParserOutput = {
+      book: buildBook({
+        format: "epub",
+        metadata: { title: "Cap Boundary", authors: ["Tester"] },
+        paragraphs,
+        chapters: [{ title: "Chapter One", startParagraphId: 1 }],
+        images: [],
+        cover: { src: "OPS/images/cover.jpg", mediaType: "image/jpeg" },
+        timings: { totalMs: 25 },
+      }),
+      internals: {},
+    };
+    const result = validateParserOutput(output);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === DiagnosticCode.too_many_paragraphs)).toBe(false);
+  });
+
+  test("short-circuits above the paragraph cap", () => {
+    const paragraphs = Array.from({ length: MAX_BOOK_PARAGRAPHS + 1 }, (_, index) => ({
+      id: index + 1,
+      text: "word",
+    }));
+    const preSeeded = {
+      bucket: "Cover missing" as const,
+      severity: "warning" as const,
+      code: DiagnosticCode.cover_missing,
+      message: "No reasonable library cover was found.",
+    };
+    const output: ParserOutput = {
+      book: buildBook({
+        format: "epub",
+        metadata: { title: "Over Cap", authors: ["Tester"] },
+        paragraphs,
+        chapters: [],
+        images: [],
+        cover: null,
+        diagnostics: [preSeeded],
+        timings: { totalMs: 25 },
+      }),
+      internals: {},
+    };
+    const result = validateParserOutput(output);
+    expect(result.pass).toBe(false);
+    expect(result.diagnostics).toContainEqual(preSeeded);
+    expect(result.diagnostics).toContainEqual({
+      bucket: "Other",
+      severity: "failure",
+      code: DiagnosticCode.too_many_paragraphs,
+      message: `This book has ${MAX_BOOK_PARAGRAPHS + 1} paragraphs; maximum supported is ${MAX_BOOK_PARAGRAPHS}.`,
+    });
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === DiagnosticCode.weak_chapters)).toBe(false);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === DiagnosticCode.timing_invalid)).toBe(false);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === DiagnosticCode.totals_mismatch)).toBe(false);
   });
 
   test("rejects chapter lists collapsed onto too few paragraph starts", () => {

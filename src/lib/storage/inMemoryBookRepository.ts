@@ -501,6 +501,10 @@ export class InMemoryBookRepository implements BookRepository {
     });
   }
 
+  async listReadingProgress(): Promise<ReadingProgressRow[]> {
+    return this.withLock(async () => clone(this.state.reading_progress));
+  }
+
   async deleteReadingProgress(bookId: string): Promise<void> {
     await this.withLock(async () => {
       this.state.reading_progress = this.state.reading_progress.filter(

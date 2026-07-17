@@ -57,15 +57,14 @@ function estimateProgressPercent(totalParagraphs: number, paragraphId: number): 
 
 export async function loadLibraryEntries(): Promise<LibraryEntry[]> {
   const repository = await getBookRepository();
-  const books = await repository.listBooks();
-  const progressRows = await Promise.all(
-    books.map(async (book) => ({
-      book,
-      progress: await repository.getReadingProgress(book.id),
-    }))
-  );
+  const [books, progressRows] = await Promise.all([
+    repository.listBooks(),
+    repository.listReadingProgress(),
+  ]);
+  const progressByBookId = new Map(progressRows.map((progress) => [progress.book_id, progress]));
 
-  return progressRows.map(({ book, progress }) => {
+  return books.map((book) => {
+    const progress = progressByBookId.get(book.id) ?? null;
     const progressPercent = progress
       ? estimateProgressPercent(book.total_paragraphs, progress.paragraph_id)
       : 0;

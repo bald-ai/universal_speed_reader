@@ -248,6 +248,11 @@ describe("book repository integration", () => {
       updated_at: 11,
     });
 
+    expect((await repository.listReadingProgress()).map((progress) => progress.book_id).sort()).toEqual([
+      firstBook,
+      secondBook,
+    ]);
+
     await repository.deleteReadingProgress(firstBook);
 
     expect(await repository.getReadingProgress(firstBook)).toBeNull();

@@ -45,6 +45,8 @@ That cost is intentional because it buys a richer and more reliable reading mode
 
 Future improvements should preserve the normalized model while reducing the wait, for example by making books readable after the first usable content is available and continuing deeper processing in the background.
 
+Imports hard-fail above 50,000 paragraphs. Oversized new imports are purged from the library and reported in Last import; use a smaller or split source file. Restore to original keeps the previous completed book if restore hits the same limit.
+
 ## Normal reading toolbar
 
 Normal reading keeps a quiet edge caption as its resting state: the current
@@ -69,6 +71,12 @@ Scroll-driven visibility requires deliberate movement rather than touch jitter:
 The caption and expanded controls are one morphing element with a constant
 reading offset, so expanding and collapsing does not move the prose. The offset
 animates away only when the toolbar is fully hidden for TTS.
+
+## Motion preferences
+
+CSS transitions and Framer Motion animations both honor the system
+`prefers-reduced-motion` setting. Normal-motion users keep the existing motion;
+users requesting reduced motion receive simplified state changes.
 
 ## In-book images
 
@@ -95,8 +103,8 @@ The normalized book model can also store sidecar image blocks for normal reading
 The library home footer links to `baldai@hey.com`. Copy asks people to send issues
 (and attach a failed EPUB/PDF when they can) and states replies within 24h. After
 an import with failures or soft issues, Last import also offers **Email about this
-import** with a prefilled `mailto:`. Mail clients cannot attach files
-automatically; the user attaches them manually.
+import** with a `mailto:` that prefills the message body only (no subject). Mail
+clients cannot attach files automatically; the user attaches them manually.
 
 ## Soft vs hard import failures
 
@@ -105,13 +113,23 @@ Import trusts flawed-but-usable books and only hard-fails fully unusable ones.
 - **Soft issues** (missing/broken images, garbled decoding text, missing cover, weak chapters, ornament junk, picture-heavy/low-text) complete as `processing_status: "completed"` with `books.processing_warnings` (`{ code, message }` JSON). The library row stays openable and shows a warning mark with plain explanations such as “Some pictures are missing.”
 - **Hard failures** (unreadable/unsupported/too large, almost no usable text, broken paragraph IDs, timeout/save failure, unsafe model integrity) are recorded under **Last import** only for new imports. The book is deleted from the library and storage the same way as a user delete — no dead Failed rows remain. There is no user-facing Failed-row **Retry import**. Re-processing an existing book is **Restore to original** (Edit); if that hard-fails, the book is **not** deleted — prior content and soft warnings stay, and the book remains completed/openable while the UI reports the restore error. Metadata (title/cover/warnings) is only written after content replace succeeds, so a failed restore cannot mix a new cover/title onto the old body.
 - Soft image issues drop invalid or oversized inline image payloads instead of storing them, and warn that some pictures are missing.
-- Last import reports per-book **OK** / **With issues** / **Failed**, plus counts and timing. For a purged hard-fail, try again by importing the file again.
+- Last import is a dismissible compact accordion: outcome summary and timing in the header, with collapsible **Failed** / **With issues** / **Canceled** / **OK** buckets (Failed opens by default when present). There is no duplicate sticky failure banner under the library for batch results. For a purged hard-fail, try again by importing the file again. Canceled books are not failures; they are omitted from the support-email body.
 - Soft vs hard classification uses stable diagnostic `code` values (with message fallbacks for older uncoded diagnostics).
 - Schema version 4 adds `processing_warnings`. A one-time startup cleanup removes any leftover `processing_status = "failed"` rows from older imports.
 
+## Library bulk select
+
+Long-press (or right-click) a library book or folder to enter multi-select. Checkboxes
+replace the row `…` menu; the pressed item is selected. Folder selection uses cascade:
+checking a folder selects its whole subtree, and parents show a partial (dash) state when
+only some children are selected. Chevrons still expand/collapse while selecting. A compact
+top bar under Your Library shows the selection count plus a one-line action row (Move,
+Mood, Cancel, Delete). Bulk delete reuses the existing folders-only vs folders+contents
+choice when folders with books are selected. Drag-and-drop reorder is disabled while selecting.
+
 ## Library covers
 
-On import, the app materializes the library cover into a `data:image/...;base64,...` string and stores that in `books.cover_path` so library UI can use it directly as an `<img src>`. EPUB covers come from the raw EPUB archive. PDF covers are rendered from the first page. SVG covers are supported for EPUBs.
+On import, the app materializes the library cover into a `data:image/...;base64,...` string and stores that in `books.cover_path` so library UI can use it directly as an `<img src>`. Covers are rendered during parse from the already-open EPUB archive or PDF document (no second zip/PDF open). SVG covers are supported for EPUBs.
 
 Library and Mood book rows show a compact `EPUB` or `PDF` badge derived from the
 stored `books.source_uri`. This uses existing import metadata and requires no
@@ -119,9 +137,32 @@ database migration.
 
 Manual cover edits already store data URLs the same way. Books imported before this change may still have a bare zip path (broken in the library); **Restore to original** re-runs import and repairs the cover. There is no automatic backfill for old rows.
 
+## Foreground import session
+
+A started batch import is a locked foreground session on Library:
+
+- The import card uses the same compact report chrome as **Last import** (progress head, outcome buckets, foot helper). **Cancel** replaces Dismiss while the batch runs.
+- Library/Mood interactions stay inert; Import and view switching are disabled. The only exit is **Cancel import** (with confirmation) or waiting until the batch finishes.
+- While the session is locked, the library grid does not reload on every import event — the session card is the live source of truth. One library refresh runs when the session unlocks.
+- Per-book status during parse is coarse (**Processing**); fine-grained extract phases are not persisted mid-parse.
+- Batch file reads are serialized with parsing so each book parses under solo-equivalent conditions (no overlapping read of the next file while the current book parses).
+- The phone screen is kept awake for the session. Copy tells the user to keep the app open — leaving or switching apps can stop the import. Background import while minimized is not supported (see `Dev/REVISIT.md`).
+- When the batch ends, the session card closes and the existing **Last import** report appears.
+
 ## Deleting books during import
 
-Library delete is always available, including while a book shows Processing. Delete cancels the active/queued import for that book, removes its DB rows and raw EPUB, and ignores any late write from the cancelled worker.
+Outside an active batch session, library delete remains available for a book that shows Processing (for example a lone restore). Delete cancels that book’s active/queued work, removes its DB rows and raw EPUB/PDF, and ignores any late write from the cancelled worker. During a locked batch session the library is inert, so per-book delete is unavailable; use **Cancel import** instead. If a book is removed mid-batch by other means, it counts as **Canceled** in Last import so the batch can finish.
+
+## Canceling a batch import
+
+While a multi-book import is running, **Cancel** on the session card stops the batch immediately after confirmation:
+
+- Books that already finished stay in the library (and keep folder placement for folder imports).
+- The book currently processing and every book still waiting are removed, including partial content and raw source files.
+- Files still being read are discarded when the read returns; native reads are aborted when possible.
+- Last import shows separate **Canceled** counts/rows. Progress shows **Canceling**, then the usual Last import summary.
+- Empty folder branches created for this folder import are pruned; unrelated existing layout is left alone.
+- Cancel only affects the selected batch. Unrelated restore/import work keeps running.
 
 ## Android file selection
 

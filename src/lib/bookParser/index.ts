@@ -1,6 +1,8 @@
 import { parseEpub } from "./epub.ts";
 import type { ParseOptions, ParserOutput } from "./types.ts";
-import { validateParserOutput } from "./validate.ts";
+import { MAX_BOOK_PARAGRAPHS, validateParserOutput } from "./validate.ts";
+
+export { MAX_BOOK_PARAGRAPHS };
 
 export type BookSourceFormat = "epub" | "pdf";
 
@@ -34,6 +36,7 @@ export async function parseBookBytes(options: ParseOptions): Promise<ParserOutpu
   const output = format === "epub"
     ? await parseEpub(options)
     : await (await import("./pdf.ts")).parsePdf(options);
+  // Always resolves: validation failures become diagnostics, not thrown errors.
   output.book.diagnostics = validateParserOutput(output).diagnostics;
   return output;
 }

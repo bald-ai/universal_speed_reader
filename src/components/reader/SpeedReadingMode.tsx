@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useBook } from "@/contexts/BookContext";
 import { useReading } from "@/contexts/ReadingContext";
 import { useSettings } from "@/contexts/SettingsContext";
@@ -12,7 +12,7 @@ import {
   syncPlaybackTempoState,
   type PlaybackTempoState,
 } from "@/lib/reader/speedReaderTempo";
-import { startSpeedModeKeepAwake } from "@/lib/screenAwake";
+import { startKeepAwake } from "@/lib/screenAwake";
 import { findChapterForParagraph } from "@/lib/utils/bookHelpers";
 import { getNextPosition, getWordAtPosition } from "@/lib/utils/bookHelpers";
 import type { Position } from "@/types/reading";
@@ -32,6 +32,7 @@ export default function SpeedReadingMode() {
   const { book } = useBook();
   const { position, setMode, setPosition, setHighlightedWord, saveProgress } = useReading();
   const { settings, updateSettings } = useSettings();
+  const shouldReduceMotion = useReducedMotion();
 
   const [displayedWord, setDisplayedWord] = useState<string>("");
   const [isPaused, setIsPaused] = useState<boolean>(false);
@@ -51,7 +52,7 @@ export default function SpeedReadingMode() {
   }, [position, isPaused]);
 
   useEffect(() => {
-    const stopKeepingScreenAwake = startSpeedModeKeepAwake();
+    const stopKeepingScreenAwake = startKeepAwake();
     return () => {
       stopKeepingScreenAwake();
     };
@@ -237,6 +238,19 @@ export default function SpeedReadingMode() {
       ? "font-mono"
       : "font-sans";
 
+  const displayedWordContent = settings.orpHighlight
+    ? (() => {
+        const { before, middle, after } = splitWordMiddle(displayedWord);
+        return (
+          <span>
+            {before}
+            <span style={{ color: settings.orpHighlightColor }}>{middle}</span>
+            {after}
+          </span>
+        );
+      })()
+    : <span>{displayedWord}</span>;
+
   return (
     <motion.div
       className="relative flex h-screen flex-col bg-neutral-950 text-neutral-100 overflow-hidden"
@@ -245,9 +259,9 @@ export default function SpeedReadingMode() {
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}
       onClick={handleToggleControls}
-      initial={{ opacity: 0 }}
+      initial={shouldReduceMotion ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.3 }}
+      transition={{ duration: shouldReduceMotion ? 0 : 0.3 }}
     >
       {/* Background gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-neutral-950 via-neutral-900/30 to-neutral-950 pointer-events-none" />
@@ -255,34 +269,24 @@ export default function SpeedReadingMode() {
       {/* Word Display Area - always crisp and clear at base level */}
       <div className="flex-1 flex items-center justify-center relative z-10" style={{ paddingLeft: settings.horizontalPadding, paddingRight: settings.horizontalPadding }}>
         <div className={`text-4xl sm:text-6xl md:text-7xl font-semibold tracking-tight text-center ${fontFamilyClass}`}>
-          <AnimatePresence mode="wait">
-            {displayedWord ? (
-              <motion.span
-                key={wordKey}
-                initial={{ opacity: 0, scale: 0.9, y: 5 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 1.05, y: -5 }}
-                transition={{ duration: 0.08, ease: "easeOut" }}
-                className="inline-block"
-              >
-                {(() => {
-                  if (!settings.orpHighlight) {
-                    return <span>{displayedWord}</span>;
-                  }
-                  const { before, middle, after } = splitWordMiddle(displayedWord);
-                  return (
-                    <span>
-                      {before}
-                      <span style={{ color: settings.orpHighlightColor }}>
-                        {middle}
-                      </span>
-                      {after}
-                    </span>
-                  );
-                })()}
-              </motion.span>
-            ) : null}
-          </AnimatePresence>
+          {shouldReduceMotion ? (
+            displayedWord ? <span className="inline-block">{displayedWordContent}</span> : null
+          ) : (
+            <AnimatePresence mode="wait">
+              {displayedWord ? (
+                <motion.span
+                  key={wordKey}
+                  initial={{ opacity: 0, scale: 0.9, y: 5 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 1.05, y: -5 }}
+                  transition={{ duration: 0.08, ease: "easeOut" }}
+                  className="inline-block"
+                >
+                  {displayedWordContent}
+                </motion.span>
+              ) : null}
+            </AnimatePresence>
+          )}
         </div>
         
         {/* Focus indicator line */}
@@ -295,10 +299,10 @@ export default function SpeedReadingMode() {
           <motion.header 
             className="absolute top-0 left-0 right-0 z-30 px-6 pb-4"
             style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
-            initial={{ y: -20, opacity: 0 }}
+            initial={shouldReduceMotion ? false : { y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -20, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            exit={shouldReduceMotion ? undefined : { y: -20, opacity: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
             onClick={(event) => event.stopPropagation()}
           >
             {/* Glassmorphism background for header only */}
@@ -337,7 +341,7 @@ export default function SpeedReadingMode() {
               
               <motion.div 
                 key={settings.wpm}
-                initial={{ scale: 1.2 }}
+                initial={shouldReduceMotion ? false : { scale: 1.2 }}
                 animate={{ scale: 1 }}
                 className="text-sm font-medium text-violet-400 bg-violet-500/10 px-3 py-1.5 rounded-lg"
               >
@@ -354,10 +358,10 @@ export default function SpeedReadingMode() {
           <motion.footer
             className="absolute bottom-0 left-0 right-0 z-30 px-6 pt-4"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
-            initial={{ y: 20, opacity: 0 }}
+            initial={shouldReduceMotion ? false : { y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 20, opacity: 0 }}
-            transition={{ duration: 0.2, delay: 0.05 }}
+            exit={shouldReduceMotion ? undefined : { y: 20, opacity: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.05 }}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/95 to-neutral-950/70 backdrop-blur-xl" />
@@ -367,10 +371,10 @@ export default function SpeedReadingMode() {
                 {!isPaused ? (
                   <motion.div
                     key="playing"
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.15 }}
+                    exit={shouldReduceMotion ? undefined : { opacity: 0, y: -10 }}
+                    transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
                   >
                     <SpeedReaderWpmControls
                       wpm={settings.wpm}
@@ -384,10 +388,10 @@ export default function SpeedReadingMode() {
                 ) : (
                   <motion.div
                     key="paused"
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.15 }}
+                    exit={shouldReduceMotion ? undefined : { opacity: 0, y: -10 }}
+                    transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
                   >
                     <SpeedReaderWpmControls
                       wpm={settings.wpm}

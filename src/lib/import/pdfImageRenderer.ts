@@ -1,6 +1,6 @@
 import { loadRawBook } from "@/lib/import/rawEpubStore";
 
-type PdfDocument = {
+export type PdfDocument = {
   getPage(pageNumber: number): Promise<PdfPage>;
   destroy(): Promise<void>;
 };
@@ -24,8 +24,8 @@ type PdfPointer = {
 const documentPromises = new Map<string, Promise<PdfDocument>>();
 let runtimePromise: Promise<PdfRuntime> | null = null;
 const PDF_WORKER_URL = typeof window === "undefined"
-  ? new URL("../../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString()
-  : new URL("pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString();
+  ? new URL("../../../node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString()
+  : new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
 
 async function getRuntime(): Promise<PdfRuntime> {
   if (!runtimePromise) {
@@ -57,6 +57,8 @@ function parsePointer(source: string): PdfPointer | null {
 async function openDocument(bytes: Uint8Array): Promise<PdfDocument> {
   const runtime = await getRuntime();
   return runtime.getDocument({
+    // PDF.js transfers/detaches the buffer it is given. Copy so the raw-store
+    // memory cache (and any other shared view of these bytes) is not corrupted.
     data: new Uint8Array(bytes),
     isImageDecoderSupported: false,
     isOffscreenCanvasSupported: false,
@@ -64,13 +66,24 @@ async function openDocument(bytes: Uint8Array): Promise<PdfDocument> {
   }).promise;
 }
 
-async function getBookDocument(bookId: string, bytes: Uint8Array): Promise<PdfDocument> {
+async function getBookDocument(bookId: string): Promise<PdfDocument | null> {
   let pending = documentPromises.get(bookId);
   if (!pending) {
-    pending = openDocument(bytes);
+    pending = loadRawBook(bookId).then((record) => {
+      if (!record || !record.fileName.toLowerCase().endsWith(".pdf")) {
+        throw new Error("Stored book source is not a PDF");
+      }
+      return openDocument(record.bytes);
+    });
     documentPromises.set(bookId, pending);
+    pending.catch(() => {
+      if (documentPromises.get(bookId) === pending) {
+        documentPromises.delete(bookId);
+      }
+    });
   }
-  return pending;
+
+  return pending.catch(() => null);
 }
 
 function canvasContext(width: number, height: number): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } | null {
@@ -142,19 +155,23 @@ async function renderPointer(
 export async function resolvePdfBookImage(bookId: string, source: string): Promise<string | null> {
   const pointer = parsePointer(source);
   if (!pointer) return null;
-  const record = await loadRawBook(bookId);
-  if (!record || !record.fileName.toLowerCase().endsWith(".pdf")) return null;
-  const document = await getBookDocument(bookId, record.bytes);
+  const document = await getBookDocument(bookId);
+  if (!document) return null;
   const canvas = await renderPointer(document, pointer, 1_400);
   return canvas ? canvasToObjectUrl(canvas) : null;
+}
+
+/** Render page-1 cover from an already-open PDF document. Soft-fails to null. */
+export async function pdfCoverDataUrlFromDocument(document: PdfDocument): Promise<string | null> {
+  const canvas = await renderPointer(document, { pageNumber: 1, crop: null }, 700);
+  return canvas ? canvasToDataUrl(canvas) : null;
 }
 
 /** A single materialized cover is cheap and lets normal library <img> rendering work. */
 export async function createPdfCoverDataUrl(bytes: Uint8Array): Promise<string | null> {
   const document = await openDocument(bytes);
   try {
-    const canvas = await renderPointer(document, { pageNumber: 1, crop: null }, 700);
-    return canvas ? canvasToDataUrl(canvas) : null;
+    return await pdfCoverDataUrlFromDocument(document);
   } finally {
     await document.destroy().catch(() => undefined);
   }

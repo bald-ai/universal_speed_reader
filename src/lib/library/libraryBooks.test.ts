@@ -3,6 +3,21 @@ import { getBookSourceFormat, loadLibraryEntries } from "./libraryBooks";
 import { InMemoryBookRepository } from "@/lib/storage/inMemoryBookRepository";
 import { setBookRepositoryForTests } from "@/lib/storage/appRepository";
 
+class ProgressTrackingRepository extends InMemoryBookRepository {
+  getReadingProgressCalls = 0;
+  listReadingProgressCalls = 0;
+
+  override async getReadingProgress(bookId: string) {
+    this.getReadingProgressCalls += 1;
+    return super.getReadingProgress(bookId);
+  }
+
+  override async listReadingProgress() {
+    this.listReadingProgressCalls += 1;
+    return super.listReadingProgress();
+  }
+}
+
 describe("library book source format", () => {
   test("derives EPUB and PDF from stored source URIs", () => {
     expect(getBookSourceFormat("indexeddb://raw_books/id/title.epub")).toBe("EPUB");
@@ -12,6 +27,49 @@ describe("library book source format", () => {
 
   test("does not invent a format for an unknown legacy source", () => {
     expect(getBookSourceFormat("memory://book-without-extension")).toBeNull();
+  });
+});
+
+describe("library progress loading", () => {
+  test("loads all progress rows in one repository operation", async () => {
+    const repository = new ProgressTrackingRepository();
+    await repository.init();
+    setBookRepositoryForTests(repository);
+
+    try {
+      await repository.upsertBook({
+        id: "progress-book",
+        title: "Progress Book",
+        author: "Author",
+        cover_path: null,
+        language: "en",
+        source_uri: "indexeddb://raw_books/progress-book/progress.epub",
+        size_bytes: 10,
+        processing_status: "completed",
+        processing_error: null,
+        processing_warnings: null,
+        total_chunks: 1,
+        total_paragraphs: 5,
+        total_words: 100,
+        created_at: 1,
+        updated_at: 1,
+      });
+      await repository.saveReadingProgress({
+        book_id: "progress-book",
+        paragraph_id: 3,
+        word_index: 4,
+        mode: "normal",
+        updated_at: 2,
+      });
+
+      const entries = await loadLibraryEntries();
+
+      expect(entries[0]?.progressPercent).toBe(40);
+      expect(repository.listReadingProgressCalls).toBe(1);
+      expect(repository.getReadingProgressCalls).toBe(0);
+    } finally {
+      setBookRepositoryForTests(null);
+    }
   });
 });
 

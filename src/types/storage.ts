@@ -14,6 +14,7 @@ export type ProcessingStatus =
 export type ImportErrorBucket =
   | "Unsupported format"
   | "File too large"
+  | "Book too large"
   | "Corrupted/Unreadable book"
   | "Book content not reliable"
   | "Processing timeout";

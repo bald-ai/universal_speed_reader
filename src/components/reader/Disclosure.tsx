@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 type DisclosureProps = {
   label: string;
@@ -10,6 +10,7 @@ type DisclosureProps = {
 
 export default function Disclosure(props: DisclosureProps) {
   const [open, setOpen] = useState(false);
+  const shouldReduceMotion = useReducedMotion();
   const accent = props.accentColor ?? "#a78bfa";
 
   return (
@@ -29,7 +30,9 @@ export default function Disclosure(props: DisclosureProps) {
       >
         <motion.div
           animate={{ rotate: open ? 90 : 0 }}
-          transition={{ type: "spring", stiffness: 300, damping: 25 }}
+          transition={shouldReduceMotion
+            ? { duration: 0 }
+            : { type: "spring", stiffness: 300, damping: 25 }}
           className="flex h-5 w-5 shrink-0 items-center justify-center"
         >
           <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
@@ -49,10 +52,12 @@ export default function Disclosure(props: DisclosureProps) {
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
+            initial={shouldReduceMotion ? false : { height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 280, damping: 28 }}
+            exit={shouldReduceMotion ? undefined : { height: 0, opacity: 0 }}
+            transition={shouldReduceMotion
+              ? { duration: 0 }
+              : { type: "spring", stiffness: 280, damping: 28 }}
             className="overflow-hidden"
           >
             <div className="px-4 pb-4 pt-1 space-y-5">{props.children}</div>

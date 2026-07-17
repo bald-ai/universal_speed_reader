@@ -43,7 +43,7 @@ export async function epubAssetBytes(
   }
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
   if (typeof btoa !== "function") {
     throw new Error("Base64 encoder is unavailable");
   }
@@ -54,6 +54,16 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
+}
+
+/** Builds a data URL from already-extracted asset bytes. Soft-fails to null. */
+export function assetDataUrlFromBytes(bytes: Uint8Array, mimeType: string): string | null {
+  try {
+    if (bytes.byteLength === 0) return null;
+    return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -67,11 +77,7 @@ export async function epubAssetDataUrl(
 ): Promise<string | null> {
   const asset = await epubAssetBytes(epubBytes, assetPath, zip);
   if (!asset) return null;
-  try {
-    return `data:${asset.mimeType};base64,${bytesToBase64(asset.bytes)}`;
-  } catch {
-    return null;
-  }
+  return assetDataUrlFromBytes(asset.bytes, asset.mimeType);
 }
 
 /**

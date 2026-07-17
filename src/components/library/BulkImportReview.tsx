@@ -6,11 +6,6 @@ type BulkImportFile = {
 type BulkImportReviewProps = {
   files: BulkImportFile[];
   description?: string;
-  completedCount: number;
-  failedCount: number;
-  isImporting: boolean;
-  elapsedMs?: number;
-  processedBytes?: number;
   onStart: () => void;
   onCancel: () => void;
 };
@@ -31,47 +26,11 @@ function estimateLocalStorageBytes(sourceBytes: number): number {
   return Math.ceil(sourceBytes * 1.18);
 }
 
-function formatDuration(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes === 0) {
-    return `${seconds}s`;
-  }
-  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
-}
-
-function formatTimingValue(milliseconds: number | null): string {
-  if (milliseconds === null || !Number.isFinite(milliseconds)) {
-    return "--";
-  }
-  if (milliseconds < 1000) {
-    return `${Math.max(1, Math.round(milliseconds))} ms`;
-  }
-  return `${(milliseconds / 1000).toFixed(1)} s`;
-}
-
 export default function BulkImportReview(props: BulkImportReviewProps) {
-  const {
-    files,
-    description,
-    completedCount,
-    failedCount,
-    isImporting,
-    elapsedMs = 0,
-    processedBytes = 0,
-    onStart,
-    onCancel,
-  } = props;
+  const { files, description, onStart, onCancel } = props;
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
   const estimatedStorageBytes = estimateLocalStorageBytes(totalBytes);
   const remainingPreviewCount = Math.max(0, files.length - PREVIEW_LIMIT);
-  const finishedCount = completedCount + failedCount;
-  const progressPercent = files.length > 0 ? Math.round((finishedCount / files.length) * 100) : 0;
-  const averageBookMs = finishedCount > 0 ? elapsedMs / finishedCount : null;
-  const processedMb = processedBytes / (1024 * 1024);
-  const averageMbMs = processedMb > 0 ? elapsedMs / processedMb : null;
-  const shouldShowTiming = isImporting || elapsedMs > 0;
 
   return (
     <section
@@ -111,42 +70,6 @@ export default function BulkImportReview(props: BulkImportReviewProps) {
           </div>
         </div>
 
-        {isImporting ? (
-          <div className="mt-4">
-            <div className="flex items-center justify-between text-xs text-neutral-400">
-              <span>Processing {finishedCount} of {files.length}</span>
-              <span>{progressPercent}%</span>
-            </div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-[width]"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {shouldShowTiming ? (
-          <div className="grid grid-cols-2 gap-2 mt-4">
-            <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Elapsed</div>
-              <div className="mt-1 text-sm font-semibold text-neutral-100">{formatDuration(elapsedMs)}</div>
-            </div>
-            <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per book</div>
-              <div className="mt-1 text-sm font-semibold text-neutral-100">{formatTimingValue(averageBookMs)}</div>
-            </div>
-            <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per MB</div>
-              <div className="mt-1 text-sm font-semibold text-neutral-100">{formatTimingValue(averageMbMs)}</div>
-            </div>
-            <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Processed</div>
-              <div className="mt-1 text-sm font-semibold text-neutral-100">{formatBytes(processedBytes)}</div>
-            </div>
-          </div>
-        ) : null}
-
         <div className="mt-4 rounded-xl border border-neutral-800 bg-neutral-950/35 overflow-hidden">
           {files.slice(0, PREVIEW_LIMIT).map((file) => (
             <div key={`${file.name}-${file.size}`} className="flex items-center gap-3 px-3 py-2 border-b border-neutral-800/70 last:border-b-0">
@@ -174,7 +97,8 @@ export default function BulkImportReview(props: BulkImportReviewProps) {
         <button
           type="button"
           onClick={onCancel}
-          disabled={isImporting}
+          disabled={files.length === 0}
+          data-testid="bulk-import-cancel"
           className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm font-semibold text-neutral-300 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Cancel
@@ -182,10 +106,11 @@ export default function BulkImportReview(props: BulkImportReviewProps) {
         <button
           type="button"
           onClick={onStart}
-          disabled={isImporting || files.length === 0}
+          disabled={files.length === 0}
+          data-testid="bulk-import-start"
           className="rounded-xl border border-violet-400/50 bg-violet-500/20 px-3 py-2 text-sm font-semibold text-violet-200 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {isImporting ? "Processing..." : "Start import"}
+          Start import
         </button>
       </div>
     </section>

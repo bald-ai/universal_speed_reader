@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { InMemoryBookRepository } from "@/lib/storage/inMemoryBookRepository";
-import { BookImportService, toBookImageRows } from "@/lib/import/bookImportService";
+import {
+  __setParseBookBytesForTests,
+  BookImportService,
+  toBookImageRows,
+} from "@/lib/import/bookImportService";
+import type { ParserOutput } from "@/lib/bookParser";
+import * as pdfImageRenderer from "@/lib/import/pdfImageRenderer";
+import { ZipArchive } from "@/lib/epub/zipArchive";
 import { loadRawEpub } from "@/lib/import/rawEpubStore";
 import {
   __resetMoodStoreForTests,
@@ -231,11 +238,11 @@ async function waitForImportSnapshotStatus(
   service: BookImportService,
   bookId: string,
   timeoutMs = 220_000
-): Promise<{ status: ProcessingStatus; error: string | null; warnings: unknown }> {
+): Promise<{ status: ProcessingStatus | "canceled"; error: string | null; warnings: unknown }> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const row = (await service.listImportSnapshot()).find((entry) => entry.bookId === bookId);
-    if (row && (row.status === "completed" || row.status === "failed")) {
+    if (row && (row.status === "completed" || row.status === "failed" || row.status === "canceled")) {
       return row;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -244,12 +251,12 @@ async function waitForImportSnapshotStatus(
 }
 
 async function waitForCondition(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 1000
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Timed out waiting for condition");
@@ -278,16 +285,33 @@ describe("book import service state machine", () => {
     expect(terminal).toBe("completed");
 
     const transitionStatuses = repo.transitions.map((entry) => entry.status);
-    expect(transitionStatuses).toContain("validating");
-    expect(transitionStatuses).toContain("extracting_metadata");
-    expect(transitionStatuses).toContain("extracting_text");
-    expect(transitionStatuses).toContain("building_chapters");
-    expect(transitionStatuses[transitionStatuses.length - 1]).toBe("completed");
+    // Coarse persistence only: validating at parse start, completed at terminal.
+    expect(transitionStatuses).toEqual(["validating", "completed"]);
 
     for (let i = 1; i < repo.transitions.length; i += 1) {
       expect(repo.transitions[i].updatedAt).toBeGreaterThanOrEqual(repo.transitions[i - 1].updatedAt);
     }
     expect(repo.clearContentCalls).toBe(0);
+  });
+
+  it("persists status only at validating and completed for a successful import", async () => {
+    const bytes = createValidEpubBytes("Status Write Budget");
+    let statusWriteCount = 0;
+    const original = repo.setBookAndImportStatus.bind(repo);
+    repo.setBookAndImportStatus = async (...args) => {
+      statusWriteCount += 1;
+      return original(...args);
+    };
+
+    const bookId = await service.importFromBytes({
+      fileName: "status-write-budget.epub",
+      mimeType: "application/epub+zip",
+      bytes,
+    });
+
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+    expect(statusWriteCount).toBe(2);
+    expect(repo.transitions.map((entry) => entry.status)).toEqual(["validating", "completed"]);
   });
 
   it("stores imported cover as a data URL instead of a zip-relative path", async () => {
@@ -303,6 +327,31 @@ describe("book import service state machine", () => {
     expect(book?.cover_path).toBeTruthy();
     expect(book?.cover_path?.startsWith("data:image/png;base64,")).toBe(true);
     expect(book?.cover_path?.includes("OEBPS/")).toBe(false);
+  });
+
+  it("does not reopen PDF or EPUB archives for library covers during import", async () => {
+    const pdfCoverSpy = spyOn(pdfImageRenderer, "createPdfCoverDataUrl").mockResolvedValue(
+      "data:image/jpeg;base64,SHOULD_NOT_USE"
+    );
+    const zipSpy = spyOn(ZipArchive, "fromBytes");
+
+    try {
+      const epubBytes = createValidEpubBytes("No Second Open", { withCover: true });
+      const epubId = await service.importFromBytes({
+        fileName: "no-second-open.epub",
+        mimeType: "application/epub+zip",
+        bytes: epubBytes,
+      });
+      expect(await waitForTerminalStatus(repo, epubId)).toBe("completed");
+      expect(zipSpy).not.toHaveBeenCalled();
+      expect(pdfCoverSpy).not.toHaveBeenCalled();
+
+      const book = await repo.getBook(epubId);
+      expect(book?.cover_path?.startsWith("data:image/png;base64,")).toBe(true);
+    } finally {
+      pdfCoverSpy.mockRestore();
+      zipSpy.mockRestore();
+    }
   });
 
   it("stores in-book images as zip-relative paths on import", async () => {
@@ -776,6 +825,134 @@ describe("book import service state machine", () => {
     expect(await repo.getBook(bookId)).toBeNull();
   });
 
+  it("cancelBooks purges an in-flight book and records a canceled outcome", async () => {
+    const bookId = await service.importFromBytes({
+      fileName: "cancel-active.epub",
+      mimeType: "application/epub+zip",
+      bytes: createValidEpubBytes("Cancel Active Fixture"),
+    });
+
+    await service.cancelBooks([bookId]);
+
+    expect(await repo.getBook(bookId)).toBeNull();
+    expect(await repo.getBookAggregate(bookId)).toBeNull();
+    expect(await loadRawEpub(bookId)).toBeNull();
+    expect((await service.listImportSnapshot()).find((row) => row.bookId === bookId)?.status).toBe(
+      "canceled"
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await repo.getBook(bookId)).toBeNull();
+  });
+
+  it("cancelBooks stops all queued targets before awaiting slow cleanup", async () => {
+    const rawById = new Map<
+      string,
+      {
+        bookId: string;
+        fileName: string;
+        mimeType: string;
+        sizeBytes: number;
+        bytes: Uint8Array;
+        storedAt: number;
+      }
+    >();
+    let firstRemoveStarted!: () => void;
+    const firstRemoveStartedPromise = new Promise<void>((resolve) => {
+      firstRemoveStarted = resolve;
+    });
+    let releaseFirstRemove!: () => void;
+    const firstRemoveHold = new Promise<void>((resolve) => {
+      releaseFirstRemove = resolve;
+    });
+    let removeCalls = 0;
+
+    const slowService = new BookImportService(Promise.resolve(repo), {
+      store: async (record) => {
+        rawById.set(record.bookId, record);
+      },
+      load: async (bookId) => rawById.get(bookId) ?? null,
+      remove: async (bookId) => {
+        removeCalls += 1;
+        if (removeCalls === 1) {
+          firstRemoveStarted();
+          await firstRemoveHold;
+        }
+        rawById.delete(bookId);
+      },
+    });
+
+    const firstId = await slowService.importFromBytes(
+      {
+        fileName: "cancel-first.epub",
+        mimeType: "application/epub+zip",
+        bytes: createValidEpubBytes("Cancel First Fixture"),
+      },
+      { inlineSourceMode: "bounded" }
+    );
+    const secondId = await slowService.importFromBytes(
+      {
+        fileName: "cancel-second.epub",
+        mimeType: "application/epub+zip",
+        bytes: createValidEpubBytes("Cancel Second Fixture"),
+      },
+      { inlineSourceMode: "bounded" }
+    );
+
+    // Ensure both rows exist and the second is at least queued before cancel.
+    await waitForCondition(async () => {
+      const first = await repo.getBook(firstId);
+      const second = await repo.getBook(secondId);
+      return Boolean(first && second);
+    });
+
+    const cancelPromise = slowService.cancelBooks([firstId, secondId]);
+    await firstRemoveStartedPromise;
+    // While the first book's raw delete is held, the old bug let the queue
+    // finish the second book. Give it time to race, then release cleanup.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    releaseFirstRemove();
+    await cancelPromise;
+
+    expect(await repo.getBook(firstId)).toBeNull();
+    expect(await repo.getBook(secondId)).toBeNull();
+    const snapshot = await slowService.listImportSnapshot();
+    expect(snapshot.find((row) => row.bookId === firstId)?.status).toBe("canceled");
+    expect(snapshot.find((row) => row.bookId === secondId)?.status).toBe("canceled");
+  });
+
+  it("cancelBooks leaves completed books alone", async () => {
+    const bookId = await service.importFromBytes({
+      fileName: "keep-completed.epub",
+      mimeType: "application/epub+zip",
+      bytes: createValidEpubBytes("Keep Completed Fixture"),
+    });
+    expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+
+    await service.cancelBooks([bookId]);
+
+    expect(await repo.getBook(bookId)).not.toBeNull();
+    expect((await repo.getBook(bookId))?.processing_status).toBe("completed");
+  });
+
+  it("importFromBytes aborts cleanly when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      service.importFromBytes(
+        {
+          fileName: "aborted-upfront.epub",
+          mimeType: "application/epub+zip",
+          bytes: createValidEpubBytes("Aborted Upfront Fixture"),
+        },
+        { signal: controller.signal }
+      )
+    ).rejects.toMatchObject({ name: "ImportCancelledError" });
+
+    expect(await repo.listBooks()).toEqual([]);
+  });
+
   it("blocks restoreOriginalBook while the same book is processing", async () => {
     const bytes = createValidEpubBytes("Shelley Import Fixture");
     const bookId = await service.importFromBytes({
@@ -788,5 +965,91 @@ describe("book import service state machine", () => {
       "Book is currently processing and cannot be restored"
     );
     expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+  });
+
+  describe("waitForIdle", () => {
+    afterEach(() => {
+      __setParseBookBytesForTests(null);
+    });
+
+    const gatedParsedBook = (title: string): ParserOutput => ({
+      book: {
+        schemaVersion: 2,
+        format: "epub",
+        metadata: { title, authors: [] },
+        cover: null,
+        chapters: [{ title: "One", startParagraphId: 1, kind: "chapter", level: 1 }],
+        paragraphs: [
+          {
+            id: 1,
+            text: "Alpha beta gamma delta epsilon zeta eta theta iota kappa.",
+          },
+        ],
+        images: [],
+        totals: { words: 10, paragraphs: 1, chapters: 1, images: 0, sceneBreaks: 0 },
+        diagnostics: [],
+        timings: { totalMs: 1 },
+      },
+      internals: {},
+    });
+
+    it("resolves immediately when the queue is idle", async () => {
+      await expect(service.waitForIdle()).resolves.toBeUndefined();
+    });
+
+    it("resolves after a queued task finishes", async () => {
+      let releaseParse!: () => void;
+      const parseGate = new Promise<void>((resolve) => {
+        releaseParse = resolve;
+      });
+      __setParseBookBytesForTests(async () => {
+        await parseGate;
+        return gatedParsedBook("Idle Gate");
+      });
+
+      const bookId = await service.importFromBytes({
+        fileName: "idle-gate.epub",
+        mimeType: "application/epub+zip",
+        bytes: createValidEpubBytes("Idle Gate"),
+      });
+
+      let idleResolved = false;
+      const idlePromise = service.waitForIdle().then(() => {
+        idleResolved = true;
+      });
+      await waitForCondition(() => (repo.transitions.some((t) => t.status === "validating")));
+      expect(idleResolved).toBe(false);
+
+      releaseParse();
+      await idlePromise;
+      expect(idleResolved).toBe(true);
+      expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+    });
+
+    it("resolves on abort without rejecting", async () => {
+      let releaseParse!: () => void;
+      const parseGate = new Promise<void>((resolve) => {
+        releaseParse = resolve;
+      });
+      __setParseBookBytesForTests(async () => {
+        await parseGate;
+        return gatedParsedBook("Abort Idle");
+      });
+
+      const bookId = await service.importFromBytes({
+        fileName: "abort-idle.epub",
+        mimeType: "application/epub+zip",
+        bytes: createValidEpubBytes("Abort Idle"),
+      });
+      await waitForCondition(() => repo.transitions.some((t) => t.status === "validating"));
+
+      const controller = new AbortController();
+      const idlePromise = service.waitForIdle(controller.signal);
+      controller.abort();
+      await expect(idlePromise).resolves.toBeUndefined();
+
+      releaseParse();
+      expect(await waitForTerminalStatus(repo, bookId)).toBe("completed");
+    });
   });
 });

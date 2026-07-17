@@ -7,6 +7,8 @@ import {
   type PDFDocumentProxy,
 } from "pdfjs-dist/legacy/build/pdf.mjs";
 
+import { pdfCoverDataUrlFromDocument } from "@/lib/import/pdfImageRenderer";
+import { createCooperativeYielder } from "./cooperativeYield.ts";
 import { buildBook } from "./model.ts";
 import {
   buildImages,
@@ -43,8 +45,8 @@ const MIN_QUARTER_TURN_ITEMS = 20;
 const MIN_QUARTER_TURN_CHARACTERS = 120;
 const MIN_QUARTER_TURN_CHARACTER_RATIO = 0.8;
 const PDF_WORKER_URL = typeof window === "undefined"
-  ? new URL("../../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString()
-  : new URL("pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString();
+  ? new URL("../../../node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString()
+  : new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
 
 interface PositionedText {
   text: string;
@@ -86,11 +88,17 @@ class PdfDeadlineError extends Error {
   }
 }
 
+function throwIfPdfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("PDF import was cancelled");
+  }
+}
+
 /** Parse a selectable-text PDF into the app-owned logical reading model. */
 export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
   const sourceName = options.sourceName.trim();
   if (sourceName.length === 0) throw new Error("A PDF filename is required");
-  if (options.signal?.aborted) throw new Error("PDF import was cancelled");
+  throwIfPdfAborted(options.signal);
   await options.onPhaseChange?.("extracting_metadata");
 
   const startedAt = performance.now();
@@ -110,8 +118,13 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
   let imageFailureCount = 0;
   const textFailurePages: number[] = [];
   const imageFailurePages: number[] = [];
+  let coverDataUrl: string | null = null;
+  const maybeYield = createCooperativeYielder();
 
   try {
+    throwIfPdfAborted(options.signal);
+    // PDF.js transfers/detaches the buffer it is given. Copy so the raw source
+    // persisted after parse (ensureTaskSourcePersisted) is not corrupted.
     const data = new Uint8Array(options.sourceBytes);
     GlobalWorkerOptions.workerSrc = PDF_WORKER_URL;
     loadingTask = getDocument({
@@ -124,6 +137,7 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
       verbosity: VerbosityLevel.ERRORS,
     });
     const document = await beforeDeadline(loadingTask.promise, deadline, timeoutMs);
+    throwIfPdfAborted(options.signal);
     totalPageCount = document.numPages;
     timings.openMs = roundedMs(performance.now() - startedAt);
 
@@ -133,6 +147,7 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
       deadline,
       timeoutMs,
     );
+    throwIfPdfAborted(options.signal);
 
     if (metadataResult.status === "fulfilled") {
       metadata = metadataFromPdf(metadataResult.value, document, sourceName);
@@ -168,6 +183,7 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
     await options.onPhaseChange?.("extracting_text");
     const contentStartedAt = performance.now();
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      throwIfPdfAborted(options.signal);
       const extracted = await extractPage(document, pageNumber, deadline, timeoutMs);
       pages.push(extracted.data);
       if (extracted.textError !== null) {
@@ -178,8 +194,21 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
         imageFailureCount += 1;
         imageFailurePages.push(pageNumber);
       }
+      await maybeYield();
     }
     timings.contentMs = roundedMs(performance.now() - contentStartedAt);
+
+    // Library cover from the live document before finally destroys the loading task.
+    if (!options.signal?.aborted) {
+      try {
+        // PDFDocumentProxy is structurally compatible at runtime with PdfDocument.
+        coverDataUrl = await pdfCoverDataUrlFromDocument(
+          document as unknown as Parameters<typeof pdfCoverDataUrlFromDocument>[0],
+        );
+      } catch {
+        coverDataUrl = null;
+      }
+    }
   } catch (error) {
     if (!(error instanceof PdfDeadlineError)) throw error;
     timedOut = true;
@@ -257,6 +286,7 @@ export async function parsePdf(options: ParseOptions): Promise<ParserOutput> {
 
   return {
     book,
+    coverDataUrl,
     internals: {
       sourceDocumentCount: 1,
       textPageCount: pages.filter((page) => page.lines.some((line) => countWords(line.text) > 0)).length,

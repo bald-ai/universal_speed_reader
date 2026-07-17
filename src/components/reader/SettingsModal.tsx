@@ -1,5 +1,5 @@
 
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@/contexts/SettingsContext";
 import { useSettings, PROGRESS_BAR_THEMES } from "@/contexts/SettingsContext";
@@ -130,6 +130,7 @@ function pickUpToTwo(entries: VoiceEntry[]): VoiceEntry[] {
 export default function SettingsModal(props: SettingsModalProps) {
   const { isOpen, onClose, book } = props;
   const { settings, updateSettings } = useSettings();
+  const shouldReduceMotion = useReducedMotion();
 
   const [voices, setVoices] = useState<NativeTtsVoice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -200,17 +201,17 @@ export default function SettingsModal(props: SettingsModalProps) {
       {isOpen && (
         <motion.div
           className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={shouldReduceMotion ? undefined : { opacity: 0 }}
         >
           {/* Backdrop */}
           <motion.div
             className="absolute inset-0 bg-black/70 backdrop-blur-xl"
             onClick={onClose}
-            initial={{ opacity: 0 }}
+            initial={shouldReduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0 }}
           />
 
           {/* Modal */}
@@ -221,10 +222,10 @@ export default function SettingsModal(props: SettingsModalProps) {
               maxHeight: "calc(100vh - env(safe-area-inset-top, 0px) - 4px)",
               paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
             }}
-            initial={{ y: "100%", opacity: 0, scale: 0.95 }}
+            initial={shouldReduceMotion ? false : { y: "100%", opacity: 0, scale: 0.95 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
-            exit={{ y: "100%", opacity: 0, scale: 0.95 }}
-            transition={{
+            exit={shouldReduceMotion ? undefined : { y: "100%", opacity: 0, scale: 0.95 }}
+            transition={shouldReduceMotion ? { duration: 0 } : {
               type: "spring",
               stiffness: 300,
               damping: 30
@@ -322,7 +323,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                   <span className="font-medium text-neutral-200">Text padding</span>
                   <motion.span
                     key={settings.horizontalPadding}
-                    initial={{ scale: 1.2, color: "#a78bfa" }}
+                    initial={shouldReduceMotion ? false : { scale: 1.2, color: "#a78bfa" }}
                     animate={{ scale: 1, color: "#a78bfa" }}
                     className="text-xs text-violet-400 font-medium"
                   >
@@ -379,17 +380,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <motion.div
                       className="absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-md"
                       animate={{ x: settings.orpHighlight ? 18 : 0 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                      transition={shouldReduceMotion
+                        ? { duration: 0 }
+                        : { type: "spring", stiffness: 500, damping: 30 }}
                     />
                   </motion.button>
                 </div>
                 <AnimatePresence>
                   {settings.orpHighlight && (
                     <motion.div
-                      initial={{ height: 0, opacity: 0 }}
+                      initial={shouldReduceMotion ? false : { height: 0, opacity: 0 }}
                       animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
+                      exit={shouldReduceMotion ? undefined : { height: 0, opacity: 0 }}
+                      transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
                       className="overflow-hidden"
                     >
                       <div className="mt-3 flex items-center gap-2">
@@ -599,7 +602,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <span className="font-medium text-neutral-200">TTS speed</span>
                     <motion.span
                       key={settings.ttsPlaybackRate}
-                      initial={{ scale: 1.2, color: "#fbbf24" }}
+                      initial={shouldReduceMotion ? false : { scale: 1.2, color: "#fbbf24" }}
                       animate={{ scale: 1, color: "#fbbf24" }}
                       className="text-xs font-medium"
                     >

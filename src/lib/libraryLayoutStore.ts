@@ -516,6 +516,50 @@ export function deleteLibraryFolderWithContents(
   };
 }
 
+/**
+ * Removes empty folders that are in `folderIds` (deepest first).
+ * Leaves folders that still have child folders or book placements.
+ * Folders outside `folderIds` are never removed.
+ */
+export function pruneEmptyFolders(
+  layout: LibraryLayout,
+  folderIds: Iterable<string>
+): LibraryLayout {
+  const removable = new Set(Array.from(folderIds).filter((id) => id.trim().length > 0));
+  if (removable.size === 0) return normalizeLibraryLayout(layout);
+
+  let next = normalizeLibraryLayout(layout);
+  let removedAny = true;
+  while (removedAny) {
+    removedAny = false;
+    const childFolderCounts = new Map<string, number>();
+    for (const folder of next.folders) {
+      if (folder.parentId === null) continue;
+      childFolderCounts.set(folder.parentId, (childFolderCounts.get(folder.parentId) ?? 0) + 1);
+    }
+    const bookCounts = new Map<string, number>();
+    for (const placement of next.placements) {
+      if (placement.parentId === null) continue;
+      bookCounts.set(placement.parentId, (bookCounts.get(placement.parentId) ?? 0) + 1);
+    }
+
+    const emptyIds = next.folders
+      .filter((folder) => removable.has(folder.id))
+      .filter((folder) => (childFolderCounts.get(folder.id) ?? 0) === 0)
+      .filter((folder) => (bookCounts.get(folder.id) ?? 0) === 0)
+      .map((folder) => folder.id);
+
+    if (emptyIds.length === 0) break;
+    const emptySet = new Set(emptyIds);
+    next = normalizeLibraryLayout({
+      folders: next.folders.filter((folder) => !emptySet.has(folder.id)),
+      placements: next.placements,
+    });
+    removedAny = true;
+  }
+  return next;
+}
+
 export function reorderLibraryLevel(
   layout: LibraryLayout,
   parentId: string | null,

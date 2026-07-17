@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, Reorder, useDragControls } from "framer-motion";
+import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from "framer-motion";
 import AddLibraryFolderToMoodSheet from "@/components/library/AddLibraryFolderToMoodSheet";
 import {
   DndContext,
@@ -146,8 +146,9 @@ function ReorderableBookRow(props: {
   book: LibraryBook;
   isSelected: boolean;
   onSelect: () => void;
+  onReorderEnd: () => void;
 }) {
-  const { value, book, isSelected, onSelect } = props;
+  const { value, book, isSelected, onSelect, onReorderEnd } = props;
   const controls = useDragControls();
 
   return (
@@ -155,6 +156,7 @@ function ReorderableBookRow(props: {
       value={value}
       dragListener={false}
       dragControls={controls}
+      onDragEnd={onReorderEnd}
       className={`flex items-center rounded-lg border transition-colors ${
         isSelected
           ? "border-violet-500/20 bg-violet-500/15"
@@ -194,7 +196,29 @@ function FolderBookPickerOverlay(props: {
 }) {
   const { books, orderedBookIds, selectedId, onSelect, onReorder, onClose } = props;
   const [query, setQuery] = useState("");
+  const shouldReduceMotion = useReducedMotion();
+  const [draftBookIds, setDraftBookIds] = useState(orderedBookIds);
+  const draftBookIdsRef = useRef(draftBookIds);
   const bookById = useMemo(() => new Map(books.map((book) => [book.id, book])), [books]);
+
+  draftBookIdsRef.current = draftBookIds;
+
+  useEffect(() => {
+    setDraftBookIds((current) => {
+      const unchanged = current.length === orderedBookIds.length
+        && current.every((bookId, index) => bookId === orderedBookIds[index]);
+      if (unchanged) return current;
+      draftBookIdsRef.current = orderedBookIds;
+      return orderedBookIds;
+    });
+  }, [orderedBookIds]);
+
+  const commitReorder = useCallback(() => {
+    const nextBookIds = draftBookIdsRef.current;
+    const unchanged = nextBookIds.length === orderedBookIds.length
+      && nextBookIds.every((bookId, index) => bookId === orderedBookIds[index]);
+    if (!unchanged) onReorder(nextBookIds);
+  }, [onReorder, orderedBookIds]);
 
   const filteredBooks = useMemo(() => {
     if (!query.trim()) return books;
@@ -209,10 +233,10 @@ function FolderBookPickerOverlay(props: {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
+      initial={shouldReduceMotion ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
+      exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+      transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
       onPointerDown={(event) => event.stopPropagation()}
       className="absolute inset-0 z-10 flex flex-col overflow-hidden rounded-2xl bg-neutral-900/[0.97] backdrop-blur-sm"
     >
@@ -270,8 +294,16 @@ function FolderBookPickerOverlay(props: {
             ))}
           </div>
         ) : (
-          <Reorder.Group axis="y" values={orderedBookIds} onReorder={onReorder} className="space-y-0.5">
-            {orderedBookIds.map((bookId) => {
+          <Reorder.Group
+            axis="y"
+            values={draftBookIds}
+            onReorder={(nextBookIds) => {
+              draftBookIdsRef.current = nextBookIds;
+              setDraftBookIds(nextBookIds);
+            }}
+            className="space-y-0.5"
+          >
+            {draftBookIds.map((bookId) => {
               const book = bookById.get(bookId);
               if (!book) return null;
 
@@ -282,6 +314,7 @@ function FolderBookPickerOverlay(props: {
                   book={book}
                   isSelected={book.id === selectedId}
                   onSelect={() => onSelect(book.id)}
+                  onReorderEnd={commitReorder}
                 />
               );
             })}
@@ -366,6 +399,7 @@ function AddBookToMoodSheet(props: {
 
 export default function MoodView(props: MoodViewProps) {
   const { books, libraryLayout, onOpenBook } = props;
+  const shouldReduceMotion = useReducedMotion();
   const [folders, setFolders] = useState<Mood[]>([]);
   const [recent, setRecentMap] = useState<Record<string, string>>({});
   const [newEditId, setNewEditId] = useState<string | null>(null);
@@ -550,9 +584,11 @@ export default function MoodView(props: MoodViewProps) {
 
   return (
    <motion.section
-     initial={{ opacity: 0, y: 14 }}
+     initial={shouldReduceMotion ? false : { opacity: 0, y: 14 }}
      animate={{ opacity: 1, y: 0 }}
-     transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
+     transition={shouldReduceMotion
+       ? { duration: 0 }
+       : { duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
      className="space-y-6 mt-2"
    >
      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -661,6 +697,7 @@ function FolderCard(props: {
     onAddBook,
   } = props;
 
+  const shouldReduceMotion = useReducedMotion();
   const [menuState, setMenuState] = useState<LocalMenuState>(startInEditMode ? "edit" : "closed");
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState(folder.label);
@@ -773,10 +810,10 @@ function FolderCard(props: {
             <AnimatePresence>
               {isMenuOpen ? (
                 <motion.div
-                  initial={{ opacity: 0, y: -6, scale: 0.95 }}
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: -6, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -6, scale: 0.95 }}
-                  transition={{ duration: 0.15 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0, y: -6, scale: 0.95 }}
+                  transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
                   className="absolute right-0 top-[calc(100%+6px)] z-20 w-36 rounded-xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-xl shadow-black/50 overflow-hidden"
                 >
                   <button
@@ -838,10 +875,10 @@ function FolderCard(props: {
             <AnimatePresence mode="wait">
               <motion.button
                 key={selectedBook.id}
-                initial={{ opacity: 0, scale: 0.96 }}
+                initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.96 }}
-                transition={{ duration: 0.2 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.96 }}
+                transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
                 type="button"
                 onClick={() => onOpenRecent(folder.id, selectedBook.id)}
                 className="flex flex-1 flex-col rounded-xl border border-white/5 bg-black/20 px-3 py-3 text-left transition-all duration-150 hover:border-white/10 hover:bg-black/30 active:scale-[0.98]"
@@ -898,10 +935,10 @@ function FolderCard(props: {
         <AnimatePresence initial={false}>
           {isEditing ? (
             <motion.div
-              initial={{ opacity: 0 }}
+              initial={shouldReduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
+              exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
               className="absolute inset-0 z-10 bg-neutral-900/[0.97] backdrop-blur-sm rounded-2xl flex flex-col overflow-hidden"
             >
               <div className="px-3 pt-3 pb-2">
@@ -976,10 +1013,10 @@ function FolderCard(props: {
         <AnimatePresence initial={false}>
           {isManagingBooks ? (
             <motion.div
-              initial={{ opacity: 0 }}
+              initial={shouldReduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
+              exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
               className="absolute inset-0 z-10 bg-neutral-900/[0.97] backdrop-blur-sm rounded-2xl flex flex-col overflow-hidden"
             >
               <div className="px-3 pt-3 pb-2 flex items-center justify-between">
@@ -1027,10 +1064,10 @@ function FolderCard(props: {
         <AnimatePresence initial={false}>
           {isDeleting ? (
             <motion.div
-              initial={{ opacity: 0 }}
+              initial={shouldReduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
+              exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
               className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm rounded-2xl px-4"
             >
               <div className="text-sm text-neutral-200 text-center">

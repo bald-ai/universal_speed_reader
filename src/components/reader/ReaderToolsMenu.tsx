@@ -1,6 +1,6 @@
 
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 type ToolItem = {
   id: string;
@@ -23,6 +23,7 @@ export { PRONUNCIATION_ICON };
 
 export default function ReaderToolsMenu({ tools }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const shouldReduceMotion = useReducedMotion();
 
   if (tools.length === 0) return null;
 
@@ -32,10 +33,10 @@ export default function ReaderToolsMenu({ tools }: Props) {
         {isExpanded && (
           <motion.div
             className="flex flex-col items-center gap-1.5"
-            initial={{ opacity: 0, y: 8, scale: 0.95 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 8, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.95 }}
-            transition={{ duration: 0.18 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0, y: 8, scale: 0.95 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.18 }}
           >
             {tools.map((tool) => (
               <motion.button
@@ -67,7 +68,7 @@ export default function ReaderToolsMenu({ tools }: Props) {
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         animate={{ rotate: isExpanded ? 45 : 0 }}
-        transition={{ duration: 0.2 }}
+        transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
         className="flex h-8 w-8 items-center justify-center rounded-full 
           bg-neutral-800/60 border border-neutral-700/50 backdrop-blur-md
           text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 

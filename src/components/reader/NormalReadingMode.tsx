@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback, memo } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useLocation } from "wouter";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useBook } from "@/contexts/BookContext";
@@ -234,6 +234,7 @@ export default function NormalReadingMode() {
   const { book } = useBook();
   const { position, highlightedWord, setMode, setPosition, setHighlightedWord, saveProgress, progressLoaded } = useReading();
   const { settings } = useSettings();
+  const shouldReduceMotion = useReducedMotion();
   const tts = useTts();
   const { createRule, store: ttsRegexStore } = useTtsRegex();
 
@@ -263,7 +264,12 @@ export default function NormalReadingMode() {
   const skipWordSheetResumeRef = useRef(false);
   const pendingResumeNeedsRuleCommitRef = useRef(false);
   const regexStoreSnapshotBeforeSaveRef = useRef(ttsRegexStore);
+  const highlightedWordRef = useRef(highlightedWord);
+  const ttsStatusRef = useRef(tts.status);
   const [pendingTtsResume, setPendingTtsResume] = useState<Position | null>(null);
+
+  highlightedWordRef.current = highlightedWord;
+  ttsStatusRef.current = tts.status;
 
   useEffect(() => {
     if (!highlightedWord) {
@@ -603,16 +609,17 @@ export default function NormalReadingMode() {
   const handleWordClick = useCallback((paragraphId: number, wordIndex: number) => {
     // When TTS is playing, don't allow changing the current word via clicks.
     // User must pause/stop first, then pick a word, then play again.
-    if (tts.status === "playing") {
+    if (ttsStatusRef.current === "playing") {
       return;
     }
-    if (highlightedWord && highlightedWord.paragraphId === paragraphId && highlightedWord.wordIndex === wordIndex) {
+    const currentHighlight = highlightedWordRef.current;
+    if (currentHighlight?.paragraphId === paragraphId && currentHighlight.wordIndex === wordIndex) {
       setHighlightedWord(null);
     } else {
       setHighlightedWord({ paragraphId, wordIndex });
       setPosition({ paragraphId, wordIndex });
     }
-  }, [highlightedWord, setHighlightedWord, setPosition, tts]);
+  }, [setHighlightedWord, setPosition]);
 
   const handleResumeSpeedReading = useCallback(() => {
     if (!book) return;
@@ -897,9 +904,9 @@ export default function NormalReadingMode() {
                 onClick={handleResumeSpeedReading}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                initial={{ opacity: 0, y: 20 }}
+                initial={shouldReduceMotion ? false : { opacity: 0, y: 20 }}
                 animate={{ opacity: 0.9, y: 0 }}
-                transition={{ delay: 0.3, duration: 0.25 }}
+                transition={{ delay: shouldReduceMotion ? 0 : 0.3, duration: shouldReduceMotion ? 0 : 0.25 }}
                 className="flex items-center gap-2 rounded-xl bg-neutral-800/80
                   text-sm font-medium backdrop-blur-md
                   px-4 py-2 border border-neutral-600/50 hover:border-neutral-500
@@ -918,9 +925,9 @@ export default function NormalReadingMode() {
                   onClick={() => setIsTtsBarOpen((v) => !v)}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 20 }}
                   animate={{ opacity: 0.9, y: 0 }}
-                  transition={{ delay: 0.35, duration: 0.25 }}
+                  transition={{ delay: shouldReduceMotion ? 0 : 0.35, duration: shouldReduceMotion ? 0 : 0.25 }}
                   className={`flex items-center gap-2 rounded-xl bg-neutral-800/80
                     text-sm font-medium backdrop-blur-md
                     px-4 py-2 border border-neutral-600/50 hover:border-neutral-500

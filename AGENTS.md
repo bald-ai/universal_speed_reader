@@ -70,6 +70,7 @@ Do not discuss, design, review, or test “Retry import” / Failed-row retry as
 - Prefer adding tests over loosening assertions.
 - Never delete/disable tests just to get green; any test change needs a short rationale in handoff.
 - Until automated tests are fully set up in this repo, include a short manual verification checklist in handoff.
+- **Never use Bun `mock.module`.** It replaces whole modules and does not reliably restore across test files in this suite, even after `mock.restore()` — later tests get poisoned (fake parsers, false hard-fails, timeouts). Prefer `spyOn` + `mock.restore()`, existing `__set…ForTests` overrides, or real fixtures. Do not put `mock.module` in plans or reviews as the stubbing approach.
 
 ## Handoff
 - Update docs when behavior changes (short note in existing docs).

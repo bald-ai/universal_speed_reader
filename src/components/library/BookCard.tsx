@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { getBookCoverPlaceholder } from "@/lib/library/coverPlaceholders";
 
 type BookCardProps = {
@@ -41,6 +41,7 @@ export default function BookCard(props: BookCardProps) {
     onDelete,
     index = 0,
   } = props;
+  const shouldReduceMotion = useReducedMotion();
   const clampedProgress = Math.max(0, Math.min(100, Math.round(progress)));
   const [coverLoadFailed, setCoverLoadFailed] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -74,9 +75,9 @@ export default function BookCard(props: BookCardProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={shouldReduceMotion ? false : { opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{
+      transition={shouldReduceMotion ? { duration: 0 } : {
         duration: 0.35,
         delay: index * 0.06,
         ease: [0.25, 0.46, 0.45, 0.94],
@@ -131,9 +132,11 @@ export default function BookCard(props: BookCardProps) {
               <div className="h-1 w-14 rounded-full bg-neutral-800 overflow-hidden">
                 <motion.div
                   className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400"
-                  initial={{ width: 0 }}
+                  initial={shouldReduceMotion ? false : { width: 0 }}
                   animate={{ width: `${clampedProgress}%` }}
-                  transition={{ duration: 0.6, delay: index * 0.06 + 0.15, ease: "easeOut" }}
+                  transition={shouldReduceMotion
+                    ? { duration: 0 }
+                    : { duration: 0.6, delay: index * 0.06 + 0.15, ease: "easeOut" }}
                 />
               </div>
               <span className="text-[11px] font-medium text-neutral-500 tabular-nums w-7 text-right">

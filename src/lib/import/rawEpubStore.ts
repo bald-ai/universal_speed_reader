@@ -1,4 +1,8 @@
-/** Original source file retained for retries and on-demand media. Supports EPUB and PDF. */
+/**
+ * Original source file retained for retries and on-demand media. Supports EPUB and PDF.
+ * Ownership: bytes handed to `store()` / `storeRawBook()` are owned by the store and must
+ * not be mutated or detached by callers afterward.
+ */
 export type RawBookRecord = {
   bookId: string;
   fileName: string;
@@ -83,21 +87,27 @@ class IndexedDbRawStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
 
   async put(record: RawBookRecord): Promise<void> {
-    const cloned = cloneRecord(record);
-    this.memory.set(cloned.bookId, cloned);
+    // Callers transfer ownership of `record.bytes`; keep the same view in the
+    // memory cache (no clone). IndexedDB structured-clone still copies once.
+    this.memory.set(record.bookId, record);
     this.pruneMemoryCache();
 
     if (!hasIndexedDb()) return;
     const db = await this.getDb();
+    const { bytes } = record;
+    const isExactView =
+      bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+    // Exact views: pass the buffer and let structured clone copy once.
+    // Subarray views: slice so we do not persist the entire underlying buffer.
+    const idbBytes = isExactView
+      ? bytes.buffer
+      : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
       const request = store.put({
-        ...cloned,
-        bytes: cloned.bytes.buffer.slice(
-          cloned.bytes.byteOffset,
-          cloned.bytes.byteOffset + cloned.bytes.byteLength
-        ),
+        ...record,
+        bytes: idbBytes,
       });
       request.onerror = () => reject(request.error ?? new Error("Failed to write raw EPUB"));
       request.onsuccess = () => resolve();

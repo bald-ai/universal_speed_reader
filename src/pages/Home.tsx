@@ -10,15 +10,31 @@ import {
 import { useLocation } from "wouter";
 import BulkImportReview from "@/components/library/BulkImportReview";
 import EditBookModal, { type EditBookModalSavePayload } from "@/components/library/EditBookModal";
-import LibraryTreeView from "@/components/library/LibraryTreeView";
+import ImportSessionReport, {
+  type ImportSessionCurrent,
+} from "@/components/library/ImportSessionReport";
+import LastImportReport from "@/components/library/LastImportReport";
+import LibraryTreeView, {
+  type BulkLibraryDeleteRequest,
+} from "@/components/library/LibraryTreeView";
 import MoodView from "@/components/library/MoodView";
 import NestedPickPrune from "@/components/library/NestedPickPrune";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import type { LibraryBook } from "@/types/book";
 import type { LibraryLayout } from "@/types/libraryLayout";
 import { loadLibraryEntries, type LibraryEntry } from "@/lib/library/libraryBooks";
-import { getBookImportService, type ImportPayload } from "@/lib/import/bookImportService";
+import {
+  getBookImportService,
+  isImportAbortError,
+  type ImportPayload,
+} from "@/lib/import/bookImportService";
+import {
+  stopBatchImportAfterFailure,
+  watchBatchImportAbort,
+} from "@/lib/import/batchImportCancellation";
+import { importPhaseLabel, isActiveImportStatus } from "@/lib/import/importPhaseLabel";
 import { isSupportedBookFile } from "@/lib/import/bookFileSelection";
+import { startKeepAwake } from "@/lib/screenAwake";
 import {
   buildFolderImportPreview,
   flattenFolderImportBooks,
@@ -38,11 +54,11 @@ import {
   deleteLibraryFolderWithContents,
   loadLibraryLayout,
   moveBookToFolder,
+  pruneEmptyFolders,
   saveLibraryLayout,
 } from "@/lib/libraryLayoutStore";
 import {
   SUPPORT_CONTACT_EMAIL,
-  buildImportIssueMailto,
   buildSupportMailto,
 } from "@/lib/supportContact";
 
@@ -66,7 +82,7 @@ type BatchImportTiming = {
   processedBytes: number;
 };
 
-type ImportBookResultStatus = "ok" | "with_issues" | "failed";
+type ImportBookResultStatus = "ok" | "with_issues" | "failed" | "canceled";
 
 type ImportBookResult = {
   /** Stable row id: book id after enqueue, or a synthetic id for pre-queue failures. */
@@ -82,6 +98,7 @@ type ImportTimingSummary = {
   completedCount: number;
   withIssuesCount: number;
   failedCount: number;
+  canceledCount: number;
   totalBytes: number;
   elapsedMs: number;
   books: ImportBookResult[];
@@ -102,7 +119,8 @@ const EMPTY_LIBRARY_LAYOUT: LibraryLayout = {
   folders: [],
   placements: [],
 };
-const BATCH_IMPORT_READ_CONCURRENCY = 2;
+/** One at a time so each batch book parses under solo-equivalent conditions (see plan H). */
+const BATCH_IMPORT_READ_CONCURRENCY = 1;
 
 type PreparedFolderImportLayout = {
   layout: LibraryLayout;
@@ -144,31 +162,44 @@ function prepareFolderImportLayout(
   return { layout, folderIdByPath };
 }
 
-async function loadPendingImportPayload(item: PendingImportItem): Promise<ImportPayload> {
+async function loadPendingImportPayload(
+  item: PendingImportItem,
+  signal?: AbortSignal
+): Promise<ImportPayload> {
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+
   if (item.kind === "file") {
+    const bytes = new Uint8Array(await item.file.arrayBuffer());
+    if (signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
     return {
       fileName: item.file.name,
       mimeType: item.file.type || "application/octet-stream",
-      bytes: new Uint8Array(await item.file.arrayBuffer()),
+      bytes,
     };
   }
 
   return {
     fileName: item.nativeFile.name,
     mimeType: item.nativeFile.type ?? "application/octet-stream",
-    bytes: await readNativeEpubFolderBytes(item.nativeFile),
+    bytes: await readNativeEpubFolderBytes(item.nativeFile, signal),
   };
 }
 
 async function runWithLimitedConcurrency<T>(
   items: T[],
   concurrency: number,
-  worker: (item: T) => Promise<void>
+  worker: (item: T) => Promise<void>,
+  signal?: AbortSignal
 ): Promise<void> {
   let nextIndex = 0;
   const workerCount = Math.min(concurrency, items.length);
   const runners = Array.from({ length: workerCount }, async () => {
     while (nextIndex < items.length) {
+      if (signal?.aborted) return;
       const item = items[nextIndex];
       nextIndex += 1;
       if (item !== undefined) {
@@ -176,43 +207,19 @@ async function runWithLimitedConcurrency<T>(
       }
     }
   });
-  await Promise.all(runners);
+  const results = await Promise.allSettled(runners);
+  const rejected = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected"
+  );
+  if (rejected) {
+    throw rejected.reason;
+  }
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
-}
-
-function formatSummaryBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  }
-  if (bytes < 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
-  }
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function formatSummaryDuration(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes === 0) {
-    return `${seconds}s`;
-  }
-  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
-}
-
-function formatSummaryRate(milliseconds: number): string {
-  if (!Number.isFinite(milliseconds)) {
-    return "--";
-  }
-  if (milliseconds < 1000) {
-    return `${Math.max(1, Math.round(milliseconds))} ms`;
-  }
-  return `${(milliseconds / 1000).toFixed(1)} s`;
 }
 
 const BackgroundDecoration = memo(function BackgroundDecoration() {
@@ -226,6 +233,7 @@ const BackgroundDecoration = memo(function BackgroundDecoration() {
 
 export default function Home() {
   const [, setLocation] = useLocation();
+  const shouldReduceMotion = useReducedMotion();
   const [view, setView] = useState<"mood" | "library">("mood");
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -241,15 +249,28 @@ export default function Home() {
   const [pendingImportDescription, setPendingImportDescription] = useState<string | null>(null);
   const [isImportChooserOpen, setIsImportChooserOpen] = useState(false);
   const [isImportingBatch, setIsImportingBatch] = useState(false);
-  const [batchImportProgress, setBatchImportProgress] = useState({ completed: 0, failed: 0 });
+  const [isCancelingBatch, setIsCancelingBatch] = useState(false);
+  const [isCancelImportConfirmOpen, setIsCancelImportConfirmOpen] = useState(false);
+  const [batchImportProgress, setBatchImportProgress] = useState({
+    completed: 0,
+    withIssues: 0,
+    failed: 0,
+    canceled: 0,
+  });
   const [batchImportTiming, setBatchImportTiming] = useState<BatchImportTiming>({
     startedAtMs: null,
     elapsedMs: 0,
     processedBytes: 0,
   });
+  const [batchLiveBooks, setBatchLiveBooks] = useState<ImportBookResult[]>([]);
+  const [batchCurrent, setBatchCurrent] = useState<ImportSessionCurrent | null>(null);
+  const [batchTotalCount, setBatchTotalCount] = useState(0);
   const [lastImportSummary, setLastImportSummary] = useState<ImportTimingSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importRefreshTimeoutRef = useRef<number | null>(null);
+  const batchAbortControllerRef = useRef<AbortController | null>(null);
+  /** Ref so the import-service subscribe callback (registered once) sees live batch lock. */
+  const isImportingBatchRef = useRef(false);
   const importService = useMemo(() => getBookImportService(), []);
 
   const refreshLibrary = useCallback(async (options?: { showLoading?: boolean }) => {
@@ -287,6 +308,7 @@ export default function Home() {
   useEffect(() => {
     void refreshLibrary({ showLoading: true });
     const unsubscribe = importService.subscribe(() => {
+      if (isImportingBatchRef.current) return;
       scheduleRefreshFromImport();
     });
     return () => {
@@ -320,6 +342,14 @@ export default function Home() {
     };
   }, [batchImportTiming.startedAtMs, isImportingBatch]);
 
+  useEffect(() => {
+    if (!isImportingBatch) return undefined;
+    const stopKeepingScreenAwake = startKeepAwake();
+    return () => {
+      stopKeepingScreenAwake();
+    };
+  }, [isImportingBatch]);
+
   const entryById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
   const editingEntry = useMemo(
     () => (editingBookId ? entryById.get(editingBookId) ?? null : null),
@@ -341,6 +371,23 @@ export default function Home() {
         })),
     [entries]
   );
+  const batchEstimatedRemainingMs = useMemo(() => {
+    const total = batchTotalCount || pendingImportItems.length;
+    const finished =
+      batchImportProgress.completed + batchImportProgress.failed + batchImportProgress.canceled;
+    const remaining = Math.max(0, total - finished);
+    if (finished <= 0 || remaining <= 0 || batchImportTiming.elapsedMs <= 0) {
+      return null;
+    }
+    return (batchImportTiming.elapsedMs / finished) * remaining;
+  }, [
+    batchImportProgress.canceled,
+    batchImportProgress.completed,
+    batchImportProgress.failed,
+    batchImportTiming.elapsedMs,
+    batchTotalCount,
+    pendingImportItems.length,
+  ]);
 
   useEffect(() => {
     if (!editingBookId) return;
@@ -373,7 +420,10 @@ export default function Home() {
         nativeFile: file,
       })));
       setPendingImportDescription("Android picked the files. Review the batch before adding it to your library.");
-      setBatchImportProgress({ completed: 0, failed: 0 });
+      setBatchImportProgress({ completed: 0, withIssues: 0, failed: 0, canceled: 0 });
+      setBatchLiveBooks([]);
+      setBatchCurrent(null);
+      setBatchTotalCount(0);
       setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
       setLastImportSummary(null);
       setView("library");
@@ -410,7 +460,10 @@ export default function Home() {
       file,
     })));
     setPendingImportDescription("Android picked the files. Review the batch before adding it to your library.");
-    setBatchImportProgress({ completed: 0, failed: 0 });
+    setBatchImportProgress({ completed: 0, withIssues: 0, failed: 0, canceled: 0 });
+    setBatchLiveBooks([]);
+    setBatchCurrent(null);
+    setBatchTotalCount(0);
     setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
     setLastImportSummary(null);
     setImportError(null);
@@ -435,7 +488,10 @@ export default function Home() {
         setPendingImportItems([]);
         setPendingFolderImport(null);
         setPendingImportDescription(null);
-        setBatchImportProgress({ completed: 0, failed: 0 });
+        setBatchImportProgress({ completed: 0, withIssues: 0, failed: 0, canceled: 0 });
+        setBatchLiveBooks([]);
+        setBatchCurrent(null);
+        setBatchTotalCount(0);
         setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
         setImportError("No EPUB or PDF books found in that folder.");
         return;
@@ -454,7 +510,10 @@ export default function Home() {
         preview: buildFolderImportPreview(outcome.files, outcome.folderName),
       });
       setPendingImportDescription(null);
-      setBatchImportProgress({ completed: 0, failed: 0 });
+      setBatchImportProgress({ completed: 0, withIssues: 0, failed: 0, canceled: 0 });
+      setBatchLiveBooks([]);
+      setBatchCurrent(null);
+      setBatchTotalCount(0);
       setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
       setLastImportSummary(null);
       setView("library");
@@ -464,13 +523,30 @@ export default function Home() {
   }, [isImportingBatch]);
 
   const handleCancelPendingImport = useCallback(() => {
-    if (isImportingBatch) return;
+    if (isImportingBatch) {
+      if (isCancelingBatch) return;
+      setIsCancelImportConfirmOpen(true);
+      return;
+    }
     setPendingImportItems([]);
     setPendingFolderImport(null);
     setPendingImportDescription(null);
-    setBatchImportProgress({ completed: 0, failed: 0 });
+    setBatchImportProgress({ completed: 0, withIssues: 0, failed: 0, canceled: 0 });
+    setBatchLiveBooks([]);
+    setBatchCurrent(null);
+    setBatchTotalCount(0);
     setBatchImportTiming({ startedAtMs: null, elapsedMs: 0, processedBytes: 0 });
-  }, [isImportingBatch]);
+  }, [isCancelingBatch, isImportingBatch]);
+
+  const handleConfirmCancelImport = useCallback(() => {
+    if (!isImportingBatch || isCancelingBatch) {
+      setIsCancelImportConfirmOpen(false);
+      return;
+    }
+    setIsCancelImportConfirmOpen(false);
+    setIsCancelingBatch(true);
+    batchAbortControllerRef.current?.abort();
+  }, [isCancelingBatch, isImportingBatch]);
 
   const runImportBatch = useCallback(async (
     items: PendingImportItem[],
@@ -483,64 +559,196 @@ export default function Home() {
     const totalPendingImports = items.length;
     const totalBytes = items.reduce((sum, item) => sum + item.size, 0);
     const startedAtMs = Date.now();
-    const immediateFailures: string[] = [];
+    const abortController = new AbortController();
+    batchAbortControllerRef.current = abortController;
+    const signal = abortController.signal;
     const immediateFailedResults: ImportBookResult[] = [];
+    const immediateCanceledResults: ImportBookResult[] = [];
     const trackedBooks: TrackedImportBook[] = [];
+    const handledItems = new Set<PendingImportItem>();
     let immediateFailureSeq = 0;
+    let immediateCanceledSeq = 0;
     let completedCount = 0;
     let withIssuesCount = 0;
     let failedCount = 0;
+    let canceledCount = 0;
     let processedBytes = 0;
     let bookResults: ImportBookResult[] = [];
+    let cancelCleanupStarted = false;
+    let outcomesCollected = false;
     importService.clearTerminalOutcomes();
+    setImportError(null);
+    isImportingBatchRef.current = true;
     setIsImportingBatch(true);
-    setBatchImportProgress({ completed: 0, failed: 0 });
+    // Drop any refresh queued just before lock so it cannot fire mid-batch.
+    if (importRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(importRefreshTimeoutRef.current);
+      importRefreshTimeoutRef.current = null;
+    }
+    setIsCancelingBatch(false);
+    setView("library");
+    setEditingBookId(null);
+    setIsImportChooserOpen(false);
+    setBatchImportProgress({ completed: 0, withIssues: 0, failed: 0, canceled: 0 });
+    setBatchLiveBooks([]);
+    setBatchCurrent(null);
+    setBatchTotalCount(totalPendingImports);
     setBatchImportTiming({ startedAtMs, elapsedMs: 0, processedBytes: 0 });
 
-    try {
-      await runWithLimitedConcurrency(items, BATCH_IMPORT_READ_CONCURRENCY, async (item) => {
-        try {
-          const payload = await loadPendingImportPayload(item);
-          const bookId = await importService.importFromBytes(payload, {
-            inlineSourceMode: "bounded",
-          });
-          await options?.onBookImported?.(bookId, item);
-          trackedBooks.push({ bookId, item });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Import failed";
-          immediateFailures.push(`${item.name}: ${message}`);
-          immediateFailureSeq += 1;
-          immediateFailedResults.push({
-            id: `prequeue-${immediateFailureSeq}`,
-            fileName: item.name,
-            status: "failed",
-            reason: message,
-            sizeBytes: item.size,
-          });
-        } finally {
-          setBatchImportTiming((current) => ({
-            ...current,
-            elapsedMs: Date.now() - startedAtMs,
-          }));
-        }
+    const pushCanceledResult = (item: PendingImportItem, idPrefix: string) => {
+      immediateCanceledSeq += 1;
+      immediateCanceledResults.push({
+        id: `${idPrefix}-${immediateCanceledSeq}`,
+        fileName: item.name,
+        status: "canceled",
+        reason: null,
+        sizeBytes: item.size,
       });
+    };
 
-      while (completedCount + failedCount < totalPendingImports) {
+    const trackBook = (bookId: string, item: PendingImportItem) => {
+      trackedBooks.push({ bookId, item });
+      // importFromBytes is no longer tied to this signal after it returns, so a
+      // book enqueued just before/after abort must be canceled explicitly.
+      if (signal.aborted) {
+        void importService.cancelBooks([bookId]);
+      }
+    };
+
+    const stopWatchingAbort = watchBatchImportAbort(
+      signal,
+      () => trackedBooks.map((tracked) => tracked.bookId),
+      async (bookIds) => {
+        setIsCancelingBatch(true);
+        await importService.cancelBooks(bookIds);
+      }
+    );
+
+    try {
+      await runWithLimitedConcurrency(
+        items,
+        BATCH_IMPORT_READ_CONCURRENCY,
+        async (item) => {
+          handledItems.add(item);
+          if (signal.aborted) {
+            pushCanceledResult(item, "canceled-skip");
+            return;
+          }
+          let bookId: string;
+          try {
+            // Wait until the previous book's parse finishes before reading this file.
+            await importService.waitForIdle(signal);
+            if (signal.aborted) {
+              pushCanceledResult(item, "canceled-skip");
+              return;
+            }
+            const payload = await loadPendingImportPayload(item, signal);
+            if (signal.aborted) {
+              pushCanceledResult(item, "canceled-load");
+              return;
+            }
+            bookId = await importService.importFromBytes(payload, {
+              inlineSourceMode: "bounded",
+              signal,
+            });
+            if (signal.aborted) {
+              trackBook(bookId, item);
+              return;
+            }
+          } catch (error) {
+            if (signal.aborted || isImportAbortError(error)) {
+              pushCanceledResult(item, "canceled-prequeue");
+              return;
+            }
+            const message = error instanceof Error ? error.message : "Import failed";
+            immediateFailureSeq += 1;
+            immediateFailedResults.push({
+              id: `prequeue-${immediateFailureSeq}`,
+              fileName: item.name,
+              status: "failed",
+              reason: message,
+              sizeBytes: item.size,
+            });
+            return;
+          } finally {
+            setBatchImportTiming((current) => ({
+              ...current,
+              elapsedMs: Date.now() - startedAtMs,
+            }));
+          }
+
+          trackBook(bookId, item);
+          try {
+            await options?.onBookImported?.(bookId, item);
+          } catch (error) {
+            // Stop sibling reads immediately; the outer catch awaits scoped
+            // importer cleanup before the foreground session unlocks.
+            stopWatchingAbort();
+            abortController.abort();
+            throw error;
+          }
+        },
+        signal
+      );
+
+      for (const item of items) {
+        if (!handledItems.has(item)) {
+          pushCanceledResult(item, "canceled-unstarted");
+        }
+      }
+
+      while (completedCount + failedCount + canceledCount < totalPendingImports) {
+        if (signal.aborted && !cancelCleanupStarted) {
+          cancelCleanupStarted = true;
+          setIsCancelingBatch(true);
+          const snapshotForCancel = await importService.listImportSnapshot();
+          const statusByBookId = new Map(snapshotForCancel.map((row) => [row.bookId, row]));
+          const toCancel = trackedBooks
+            .filter((tracked) => {
+              const row = statusByBookId.get(tracked.bookId);
+              if (!row) return true;
+              return (
+                row.status !== "completed" &&
+                row.status !== "failed" &&
+                row.status !== "canceled"
+              );
+            })
+            .map((tracked) => tracked.bookId);
+          if (toCancel.length > 0) {
+            await importService.cancelBooks(toCancel);
+          }
+        }
+
         const snapshot = await importService.listImportSnapshot();
         const statusByBookId = new Map(snapshot.map((row) => [row.bookId, row]));
-        const failedProcessingMessages: string[] = [];
-        const nextResults: ImportBookResult[] = [...immediateFailedResults];
+        const nextResults: ImportBookResult[] = [
+          ...immediateFailedResults,
+          ...immediateCanceledResults,
+        ];
         let nextCompletedCount = 0;
         let nextWithIssuesCount = 0;
         let nextFailedCount = immediateFailedResults.length;
-        let nextProcessedBytes = immediateFailedResults.reduce(
+        let nextCanceledCount = immediateCanceledResults.length;
+        let nextProcessedBytes = [...immediateFailedResults, ...immediateCanceledResults].reduce(
           (sum, result) => sum + result.sizeBytes,
           0
         );
 
         for (const trackedBook of trackedBooks) {
           const row = statusByBookId.get(trackedBook.bookId);
-          if (!row) continue;
+          if (!row) {
+            // Library delete mid-batch or cancel purge without a retained outcome.
+            nextCanceledCount += 1;
+            nextProcessedBytes += trackedBook.item.size;
+            nextResults.push({
+              id: trackedBook.bookId,
+              fileName: trackedBook.item.name,
+              status: "canceled",
+              reason: null,
+              sizeBytes: trackedBook.item.size,
+            });
+            continue;
+          }
 
           if (row.status === "completed") {
             nextCompletedCount += 1;
@@ -571,12 +779,24 @@ export default function Home() {
             nextFailedCount += 1;
             nextProcessedBytes += trackedBook.item.size;
             const reason = row.error ?? "Import failed during processing";
-            failedProcessingMessages.push(`${trackedBook.item.name}: ${reason}`);
             nextResults.push({
               id: trackedBook.bookId,
               fileName: trackedBook.item.name,
               status: "failed",
               reason,
+              sizeBytes: trackedBook.item.size,
+            });
+            continue;
+          }
+
+          if (row.status === "canceled") {
+            nextCanceledCount += 1;
+            nextProcessedBytes += trackedBook.item.size;
+            nextResults.push({
+              id: trackedBook.bookId,
+              fileName: trackedBook.item.name,
+              status: "canceled",
+              reason: null,
               sizeBytes: trackedBook.item.size,
             });
           }
@@ -585,65 +805,112 @@ export default function Home() {
         completedCount = nextCompletedCount;
         withIssuesCount = nextWithIssuesCount;
         failedCount = nextFailedCount;
+        canceledCount = nextCanceledCount;
         processedBytes = nextProcessedBytes;
         bookResults = nextResults;
-        setBatchImportProgress({ completed: completedCount, failed: failedCount });
+
+        let nextCurrent: ImportSessionCurrent | null = null;
+        for (const trackedBook of trackedBooks) {
+          const row = statusByBookId.get(trackedBook.bookId);
+          if (!row || !isActiveImportStatus(row.status)) continue;
+          nextCurrent = {
+            fileName: trackedBook.item.name,
+            phaseLabel: importPhaseLabel(row.status),
+          };
+          break;
+        }
+
+        setBatchImportProgress({
+          completed: completedCount,
+          withIssues: withIssuesCount,
+          failed: failedCount,
+          canceled: canceledCount,
+        });
+        setBatchLiveBooks(nextResults);
+        setBatchCurrent(nextCurrent);
         setBatchImportTiming((current) => ({
           ...current,
           elapsedMs: Date.now() - startedAtMs,
           processedBytes,
         }));
 
-        if (completedCount + failedCount >= totalPendingImports) {
-          immediateFailures.push(...failedProcessingMessages);
+        if (completedCount + failedCount + canceledCount >= totalPendingImports) {
           break;
         }
 
-        await delay(1000);
+        await delay(signal.aborted ? 200 : 1000);
       }
 
-      await options?.onBeforeRefresh?.();
-      await refreshLibrary({ showLoading: false });
+      outcomesCollected = true;
+    } catch (error) {
+      if (!outcomesCollected) {
+        stopWatchingAbort();
+        setIsCancelingBatch(true);
+        try {
+          await stopBatchImportAfterFailure(
+            abortController,
+            () => trackedBooks.map((tracked) => tracked.bookId),
+            (bookIds) => importService.cancelBooks(bookIds)
+          );
+        } catch (cleanupError) {
+          console.warn("Could not fully clean up the failed import batch:", cleanupError);
+        }
+      }
+      throw error;
     } finally {
+      stopWatchingAbort();
       const elapsedMs = Date.now() - startedAtMs;
+      if (batchAbortControllerRef.current === abortController) {
+        batchAbortControllerRef.current = null;
+      }
+      // One library refresh on every exit path (success, cancel, error) before unlock.
+      try {
+        if (outcomesCollected) {
+          await options?.onBeforeRefresh?.();
+        }
+        await refreshLibrary({ showLoading: false });
+      } catch (refreshError) {
+        console.warn("Could not refresh library after import batch:", refreshError);
+      }
+      isImportingBatchRef.current = false;
       setIsImportingBatch(false);
+      setIsCancelingBatch(false);
+      setIsCancelImportConfirmOpen(false);
+      setBatchCurrent(null);
+      setBatchLiveBooks([]);
+      setBatchTotalCount(0);
       setBatchImportTiming({
         startedAtMs: null,
         elapsedMs,
         processedBytes,
       });
-      setLastImportSummary({
-        bookCount: totalPendingImports,
-        completedCount,
-        withIssuesCount,
-        failedCount,
-        totalBytes,
-        elapsedMs,
-        books: bookResults,
-      });
+      if (outcomesCollected) {
+        setLastImportSummary({
+          bookCount: totalPendingImports,
+          completedCount,
+          withIssuesCount,
+          failedCount,
+          canceledCount,
+          totalBytes,
+          elapsedMs,
+          books: bookResults,
+        });
+      }
     }
 
-    if (immediateFailures.length === 0) {
-      setImportError(null);
-      return;
-    }
-
-    if (immediateFailures.length === 1) {
-      setImportError(immediateFailures[0]);
-      return;
-    }
-
-    setImportError(`${immediateFailures.length} of ${totalPendingImports} imports failed. First error: ${immediateFailures[0]}`);
+    // Batch outcomes (including failures) live in Last import — no duplicate footer banner.
+    setImportError(null);
   }, [importService, isImportingBatch, refreshLibrary]);
 
   const handleStartPendingImport = useCallback(async () => {
     if (pendingImportItems.length === 0 || isImportingBatch) return;
     try {
       await runImportBatch(pendingImportItems);
-      setPendingImportItems([]);
-      setPendingImportDescription(null);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      setPendingImportItems([]);
+      setPendingImportDescription(null);
     }
   }, [isImportingBatch, pendingImportItems, runImportBatch]);
 
@@ -679,7 +946,13 @@ export default function Home() {
       );
     }
 
+    const createdFolderIds = new Set(prepared.folderIdByPath.values());
+
     try {
+      setPendingImportItems(selectedItems);
+      setPendingImportDescription(
+        `Importing from ${pendingFolderImport.sourceFolderName}. Finished books keep their folder placement.`
+      );
       const importedBookIds = new Set<string>();
       await runImportBatch(selectedItems, {
         onBookImported: (bookId, item) => {
@@ -693,8 +966,8 @@ export default function Home() {
               .filter((row) => importedBookIds.has(row.bookId) && row.status === "completed")
               .map((row) => row.bookId)
           );
-          // Drop placements only for books from this folder import that hard-failed
-          // (and were purged). Leave every other library placement alone.
+          // Keep placements only for books from this folder import that completed.
+          // Drop canceled/failed placements and prune empty folders created for this import.
           nextLayout = {
             ...nextLayout,
             placements: nextLayout.placements.filter((placement) => {
@@ -702,17 +975,22 @@ export default function Home() {
               return completedInBatch.has(placement.bookId);
             }),
           };
+          nextLayout = pruneEmptyFolders(nextLayout, createdFolderIds);
           await saveLibraryLayout(nextLayout);
         },
       });
-      setPendingFolderImport(null);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Folder import failed");
+    } finally {
+      setPendingFolderImport(null);
+      setPendingImportItems([]);
+      setPendingImportDescription(null);
     }
   }, [importService, isImportingBatch, pendingFolderImport, runImportBatch]);
 
   const handleOpenOrRetry = useCallback(
     async (entry: LibraryEntry) => {
+      if (isImportingBatch) return;
       if (entry.processingStatus === "completed") {
         setLocation(`/reader/${entry.id}`);
         return;
@@ -722,7 +1000,7 @@ export default function Home() {
         await refreshLibrary();
       }
     },
-    [importService, refreshLibrary, setLocation]
+    [importService, isImportingBatch, refreshLibrary, setLocation]
   );
 
   const handleDelete = useCallback(
@@ -835,6 +1113,60 @@ export default function Home() {
     }
   }, [handleLibraryLayoutChange, importService, libraryLayout, refreshLibrary]);
 
+  const handleBulkDelete = useCallback(async (request: BulkLibraryDeleteRequest) => {
+    if (request.mode === "books") {
+      if (request.bookIds.length === 0) return;
+      const confirmed =
+        typeof window === "undefined"
+          ? true
+          : window.confirm(
+              `Delete ${request.bookIds.length} book${request.bookIds.length === 1 ? "" : "s"} from your library?\n\nThis removes the uploaded files, reading progress, and import history.`
+            );
+      if (!confirmed) return;
+      try {
+        for (const bookId of request.bookIds) {
+          await importService.deleteBook(bookId);
+        }
+        await refreshLibrary({ showLoading: false });
+      } catch (error) {
+        setImportError(error instanceof Error ? error.message : "Failed to delete books");
+        await refreshLibrary({ showLoading: false });
+      }
+      return;
+    }
+
+    if (request.mode === "folders-only") {
+      let next = libraryLayout;
+      for (const folderId of request.folderIds) {
+        if (!next.folders.some((folder) => folder.id === folderId)) continue;
+        next = deleteLibraryFolderOnly(next, folderId);
+      }
+      await handleLibraryLayoutChange(next);
+      return;
+    }
+
+    let next = libraryLayout;
+    const removedBookIds = new Set(request.bookIds);
+    for (const folderId of request.folderIds) {
+      if (!next.folders.some((folder) => folder.id === folderId)) continue;
+      const result = deleteLibraryFolderWithContents(next, folderId);
+      next = result.layout;
+      for (const bookId of result.removedBookIds) {
+        removedBookIds.add(bookId);
+      }
+    }
+    try {
+      for (const bookId of removedBookIds) {
+        await importService.deleteBook(bookId);
+      }
+      await handleLibraryLayoutChange(next);
+      await refreshLibrary({ showLoading: false });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Failed to delete selection");
+      await refreshLibrary({ showLoading: false });
+    }
+  }, [handleLibraryLayoutChange, importService, libraryLayout, refreshLibrary]);
+
   return (
     <main className="min-h-screen flex flex-col items-center px-4 py-8 bg-neutral-950 text-neutral-100 relative overflow-hidden">
       <BackgroundDecoration />
@@ -853,14 +1185,16 @@ export default function Home() {
         {/* Header */}
         <motion.header
           className="text-center mb-2"
-          initial={{ opacity: 0, y: -20 }}
+          initial={shouldReduceMotion ? false : { opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+          transition={shouldReduceMotion
+            ? { duration: 0 }
+            : { duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
         >
           <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={shouldReduceMotion ? false : { scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.6, delay: shouldReduceMotion ? 0 : 0.1 }}
             className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 border border-violet-500/20 mb-6"
           >
             <svg
@@ -876,33 +1210,34 @@ export default function Home() {
 
           <motion.h1
             className="text-4xl font-bold tracking-tight bg-gradient-to-r from-neutral-100 to-neutral-400 bg-clip-text text-transparent"
-            initial={{ opacity: 0, y: 10 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.5, delay: shouldReduceMotion ? 0 : 0.2 }}
           >
             Speed Reading
           </motion.h1>
 
           <motion.p
             className="text-sm text-neutral-400 mt-3 max-w-xs mx-auto leading-relaxed"
-            initial={{ opacity: 0, y: 10 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.5, delay: shouldReduceMotion ? 0 : 0.3 }}
           >
             Practice rapid serial visual presentation (RSVP) and switch to normal reading whenever you need more context.
           </motion.p>
 
           <motion.div
             className="mt-5"
-            initial={{ opacity: 0, y: 10 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, delay: 0.35 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.35, delay: shouldReduceMotion ? 0 : 0.35 }}
           >
             <div className="mx-auto max-w-xs">
               <button
                 type="button"
                 onClick={openImportChooser}
-                className="w-full rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors"
+                disabled={isImportingBatch}
+                className="w-full rounded-xl border border-violet-400/40 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-violet-500/15"
               >
                 Import
               </button>
@@ -912,17 +1247,23 @@ export default function Home() {
 
         {/* View Toggle */}
         <motion.div
-          initial={{ opacity: 0, y: 14 }}
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, delay: 0.38, ease: [0.25, 0.46, 0.45, 0.94] }}
+          transition={shouldReduceMotion
+            ? { duration: 0 }
+            : { duration: 0.45, delay: 0.38, ease: [0.25, 0.46, 0.45, 0.94] }}
           className="flex justify-center"
         >
           <div className="w-full rounded-xl bg-neutral-900 border border-neutral-800 p-1 h-9 flex items-center">
             <div className="relative w-full grid grid-cols-2" role="tablist" aria-label="Library views">
               <button
                 type="button"
-                onClick={() => setView("mood")}
-                className="relative h-7 rounded-lg"
+                onClick={() => {
+                  if (isImportingBatch) return;
+                  setView("mood");
+                }}
+                disabled={isImportingBatch}
+                className="relative h-7 rounded-lg disabled:cursor-not-allowed"
                 role="tab"
                 id="home-tab-mood"
                 aria-selected={view === "mood"}
@@ -933,7 +1274,9 @@ export default function Home() {
                   <motion.div
                     layoutId="home-view-pill"
                     className="absolute inset-0 rounded-lg bg-neutral-100"
-                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                    transition={shouldReduceMotion
+                      ? { duration: 0 }
+                      : { type: "spring", stiffness: 420, damping: 32 }}
                   />
                 ) : null}
                 <span
@@ -946,8 +1289,12 @@ export default function Home() {
               </button>
               <button
                 type="button"
-                onClick={() => setView("library")}
-                className="relative h-7 rounded-lg"
+                onClick={() => {
+                  if (isImportingBatch) return;
+                  setView("library");
+                }}
+                disabled={isImportingBatch}
+                className="relative h-7 rounded-lg disabled:cursor-not-allowed"
                 role="tab"
                 id="home-tab-library"
                 aria-selected={view === "library"}
@@ -958,7 +1305,9 @@ export default function Home() {
                   <motion.div
                     layoutId="home-view-pill"
                     className="absolute inset-0 rounded-lg bg-neutral-100"
-                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                    transition={shouldReduceMotion
+                      ? { duration: 0 }
+                      : { type: "spring", stiffness: 420, damping: 32 }}
                   />
                 ) : null}
                 <span
@@ -973,105 +1322,33 @@ export default function Home() {
           </div>
         </motion.div>
 
-        {lastImportSummary && pendingImportItems.length === 0 && !pendingFolderImport ? (
-          <section className="rounded-2xl border border-emerald-400/25 bg-neutral-900/75 p-4 shadow-xl shadow-black/20">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-neutral-100">Last import</h2>
-                <p className="mt-1 text-sm text-neutral-400">
-                  {lastImportSummary.completedCount - lastImportSummary.withIssuesCount} OK
-                  {lastImportSummary.withIssuesCount > 0
-                    ? `, ${lastImportSummary.withIssuesCount} with issues`
-                    : ""}
-                  {lastImportSummary.failedCount > 0 ? `, ${lastImportSummary.failedCount} failed` : ""}
-                  {" "}from {formatSummaryBytes(lastImportSummary.totalBytes)}
-                </p>
-              </div>
-              <div className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-200">
-                {formatSummaryDuration(lastImportSummary.elapsedMs)}
-              </div>
-            </div>
-            {lastImportSummary.books.length > 0 ? (
-              <ul className="mt-3 space-y-2">
-                {lastImportSummary.books.map((book) => (
-                  <li
-                    key={book.id}
-                    className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-neutral-100">{book.fileName}</div>
-                        {book.reason ? (
-                          <p className="mt-1 text-xs text-neutral-400">{book.reason}</p>
-                        ) : null}
-                      </div>
-                      <span
-                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
-                          book.status === "ok"
-                            ? "border border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                            : book.status === "with_issues"
-                              ? "border border-amber-400/30 bg-amber-500/10 text-amber-100"
-                              : "border border-rose-400/30 bg-rose-500/10 text-rose-100"
-                        }`}
-                      >
-                        {book.status === "ok" ? "OK" : book.status === "with_issues" ? "With issues" : "Failed"}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per book</div>
-                <div className="mt-1 text-sm font-semibold text-neutral-100">
-                  {formatSummaryRate(lastImportSummary.elapsedMs / Math.max(1, lastImportSummary.bookCount))}
-                </div>
-              </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-2">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-neutral-500">Per MB</div>
-                <div className="mt-1 text-sm font-semibold text-neutral-100">
-                  {formatSummaryRate(lastImportSummary.elapsedMs / Math.max(0.001, lastImportSummary.totalBytes / (1024 * 1024)))}
-                </div>
-              </div>
-            </div>
-            {lastImportSummary.failedCount > 0 || lastImportSummary.withIssuesCount > 0 ? (
-              <div className="mt-3 rounded-xl border border-neutral-800 bg-neutral-950/45 px-3 py-3">
-                <p className="text-xs text-neutral-400 leading-relaxed">
-                  Email what went wrong and attach the file if you can. I reply within 24h.
-                </p>
-                <a
-                  href={buildImportIssueMailto(
-                    lastImportSummary.books
-                      .filter(
-                        (book): book is ImportBookResult & { status: "with_issues" | "failed" } =>
-                          book.status === "with_issues" || book.status === "failed"
-                      )
-                      .map((book) => ({
-                        fileName: book.fileName,
-                        status: book.status,
-                        reason: book.reason,
-                      }))
-                  )}
-                  className="mt-2 inline-flex text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors"
-                  data-testid="last-import-report-email"
-                >
-                  Email about this import
-                </a>
-              </div>
-            ) : null}
-          </section>
+        {isImportingBatch ? (
+          <ImportSessionReport
+            totalCount={batchTotalCount || pendingImportItems.length}
+            completedCount={batchImportProgress.completed}
+            withIssuesCount={batchImportProgress.withIssues}
+            failedCount={batchImportProgress.failed}
+            canceledCount={batchImportProgress.canceled}
+            isCanceling={isCancelingBatch}
+            elapsedMs={batchImportTiming.elapsedMs}
+            estimatedRemainingMs={batchEstimatedRemainingMs}
+            current={batchCurrent}
+            books={batchLiveBooks}
+            onCancel={handleCancelPendingImport}
+          />
         ) : null}
 
-        {pendingImportItems.length > 0 ? (
+        {!isImportingBatch && lastImportSummary && pendingImportItems.length === 0 && !pendingFolderImport ? (
+          <LastImportReport
+            summary={lastImportSummary}
+            onDismiss={() => setLastImportSummary(null)}
+          />
+        ) : null}
+
+        {!isImportingBatch && pendingImportItems.length > 0 ? (
           <BulkImportReview
             files={pendingImportItems}
             description={pendingImportDescription ?? undefined}
-            completedCount={batchImportProgress.completed}
-            failedCount={batchImportProgress.failed}
-            isImporting={isImportingBatch}
-            elapsedMs={batchImportTiming.elapsedMs}
-            processedBytes={batchImportTiming.processedBytes}
             onStart={() => {
               void handleStartPendingImport();
             }}
@@ -1079,13 +1356,13 @@ export default function Home() {
           />
         ) : null}
 
-        {pendingFolderImport ? (
+        {pendingFolderImport && pendingImportItems.length === 0 && !isImportingBatch ? (
           <NestedPickPrune
             root={pendingFolderImport.preview.root}
             title={`Review ${pendingFolderImport.sourceFolderName}`}
             description="Everything is selected. Remove books or folders you do not want before importing."
             confirmLabel="Import selected"
-            isBusy={isImportingBatch}
+            isBusy={false}
             onCancel={handleCancelPendingImport}
             onConfirm={(keptBookIds) => {
               void handleStartFolderImport(keptBookIds);
@@ -1131,60 +1408,114 @@ export default function Home() {
           </div>
         ) : null}
 
-        {/* Book Section */}
-        {view === "library" ? (
-          <motion.section
-            id="home-panel-library"
-            role="tabpanel"
-            aria-labelledby="home-tab-library"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.4 }}
-          >
-            <motion.h2
-              className="text-xs uppercase tracking-[0.2em] text-neutral-500 mb-4 px-1"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4, delay: 0.5 }}
+        {isCancelImportConfirmOpen ? (
+          <div className="fixed inset-0 z-50 flex items-end bg-black/55 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+            <button
+              type="button"
+              aria-label="Keep importing"
+              className="absolute inset-0"
+              data-testid="cancel-import-dismiss"
+              onClick={() => setIsCancelImportConfirmOpen(false)}
+            />
+            <div
+              className="relative w-full rounded-2xl border border-neutral-800 bg-neutral-900 p-4 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] shadow-2xl shadow-black/60"
+              data-testid="cancel-import-confirm"
             >
-              Your Library
-            </motion.h2>
+              <h2 className="text-base font-semibold text-neutral-100">Cancel this import?</h2>
+              <p className="mt-2 text-sm leading-relaxed text-neutral-400">
+                Finished books will stay in your library. The current book and books still waiting will be removed.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  data-testid="cancel-import-keep"
+                  onClick={() => setIsCancelImportConfirmOpen(false)}
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm font-semibold text-neutral-300"
+                >
+                  Keep importing
+                </button>
+                <button
+                  type="button"
+                  data-testid="cancel-import-confirm-action"
+                  onClick={handleConfirmCancelImport}
+                  className="rounded-xl border border-rose-400/40 bg-rose-500/15 px-3 py-2.5 text-sm font-semibold text-rose-100"
+                >
+                  Cancel import
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
-            <LibraryTreeView
-              entries={entries}
-              layout={libraryLayout}
-              isLoading={isLoading}
-              deletingBookId={deletingBookId}
-              busyBookIds={busyBookIds}
-              onLayoutChange={handleLibraryLayoutChange}
-              onCreateFolder={handleCreateLibraryFolder}
-              onDeleteFolderOnly={handleDeleteLibraryFolderOnly}
-              onDeleteFolderWithContents={(folderId) => {
-                void handleDeleteLibraryFolderWithContents(folderId);
-              }}
-              onOpenBook={(entry) => {
-                void handleOpenOrRetry(entry);
-              }}
-              onEditBook={handleOpenEdit}
-              onDeleteBook={(entry) => {
-                void handleDelete(entry);
-              }}
-            />
-          </motion.section>
-        ) : (
-          <section id="home-panel-mood" role="tabpanel" aria-labelledby="home-tab-mood">
-            <MoodView
-              books={libraryBooks}
-              libraryLayout={libraryLayout}
-              onOpenBook={(bookId) => {
-                const entry = entryById.get(bookId);
-                if (!entry) return;
-                if (entry.processingStatus !== "completed") return;
-                setLocation(`/reader/${bookId}`);
-              }}
-            />
-          </section>
-        )}
+        {/* Book Section — inert while a foreground import session owns the screen */}
+        <div
+          className={isImportingBatch ? "pointer-events-none select-none opacity-45" : undefined}
+          aria-hidden={isImportingBatch || undefined}
+        >
+          {view === "library" ? (
+            <motion.section
+              id="home-panel-library"
+              role="tabpanel"
+              aria-labelledby="home-tab-library"
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.5, delay: shouldReduceMotion ? 0 : 0.4 }}
+            >
+              <motion.h2
+                className="text-xs uppercase tracking-[0.2em] text-neutral-500 mb-4 px-1"
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: shouldReduceMotion ? 0 : 0.4, delay: shouldReduceMotion ? 0 : 0.5 }}
+              >
+                Your Library
+              </motion.h2>
+
+              <LibraryTreeView
+                entries={entries}
+                layout={libraryLayout}
+                isLoading={isLoading}
+                deletingBookId={deletingBookId}
+                busyBookIds={busyBookIds}
+                onLayoutChange={handleLibraryLayoutChange}
+                onCreateFolder={handleCreateLibraryFolder}
+                onDeleteFolderOnly={handleDeleteLibraryFolderOnly}
+                onDeleteFolderWithContents={(folderId) => {
+                  void handleDeleteLibraryFolderWithContents(folderId);
+                }}
+                onBulkDelete={(request) => {
+                  if (isImportingBatch) return;
+                  void handleBulkDelete(request);
+                }}
+                onOpenBook={(entry) => {
+                  if (isImportingBatch) return;
+                  void handleOpenOrRetry(entry);
+                }}
+                onEditBook={(entry) => {
+                  if (isImportingBatch) return;
+                  handleOpenEdit(entry);
+                }}
+                onDeleteBook={(entry) => {
+                  if (isImportingBatch) return;
+                  void handleDelete(entry);
+                }}
+              />
+            </motion.section>
+          ) : (
+            <section id="home-panel-mood" role="tabpanel" aria-labelledby="home-tab-mood">
+              <MoodView
+                books={libraryBooks}
+                libraryLayout={libraryLayout}
+                onOpenBook={(bookId) => {
+                  if (isImportingBatch) return;
+                  const entry = entryById.get(bookId);
+                  if (!entry) return;
+                  if (entry.processingStatus !== "completed") return;
+                  setLocation(`/reader/${bookId}`);
+                }}
+              />
+            </section>
+          )}
+        </div>
 
         {importError ? (
           <div className="rounded-xl border border-red-500/40 bg-red-950/40 px-3 py-2 text-sm text-red-200">
@@ -1194,10 +1525,13 @@ export default function Home() {
 
         {/* Footer */}
         <motion.footer
-          className="text-center pt-8 space-y-2"
-          initial={{ opacity: 0 }}
+          className={`text-center pt-8 space-y-2 ${
+            isImportingBatch ? "pointer-events-none select-none opacity-45" : ""
+          }`}
+          aria-hidden={isImportingBatch || undefined}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.6 }}
+          transition={{ duration: shouldReduceMotion ? 0 : 0.5, delay: shouldReduceMotion ? 0 : 0.6 }}
         >
           <p className="text-xs text-neutral-600">
             Offline-first mode: imports, settings, and progress are stored locally
@@ -1215,6 +1549,13 @@ export default function Home() {
                   "If a book failed, attach the EPUB/PDF if you can.",
                 ].join("\n"),
               })}
+              aria-disabled={isImportingBatch || undefined}
+              tabIndex={isImportingBatch ? -1 : undefined}
+              onClick={(event) => {
+                if (isImportingBatch) {
+                  event.preventDefault();
+                }
+              }}
               className="text-neutral-400 underline underline-offset-2 hover:text-neutral-300 transition-colors"
               data-testid="home-support-email"
             >

@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 
 export type NormalReaderToolbarState = "edge" | "expanded" | "hidden";
 
@@ -25,6 +25,7 @@ export default function NormalReaderToolbar({
   onChapterAction,
   onSettings,
 }: NormalReaderToolbarProps) {
+  const shouldReduceMotion = useReducedMotion();
   const expanded = state === "expanded";
   const hidden = state === "hidden";
   const clampedProgress = progressPercent === null
@@ -120,7 +121,7 @@ export default function NormalReaderToolbar({
             }}
             initial={false}
             animate={{ width: `${clampedProgress}%` }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.3, ease: "easeOut" }}
           />
         </div>
       </header>

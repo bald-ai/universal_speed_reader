@@ -1,4 +1,12 @@
-import { BookParserError, parseBookBytes } from "@/lib/bookParser";
+import {
+  BookParserError,
+  MAX_BOOK_PARAGRAPHS,
+  parseBookBytes as defaultParseBookBytes,
+  type ParseOptions,
+  type ParserOutput,
+} from "@/lib/bookParser";
+import { MAX_INLINE_MEDIA_LENGTH } from "@/lib/bookParser/validate";
+import type { BookFormat, BookImage as ParsedBookImage } from "@/lib/bookParser/types";
 import { removeBookReferences } from "@/lib/moodStore";
 import { removeBookFromLibraryLayout, updateLibraryLayout } from "@/lib/libraryLayoutStore";
 import { getBookRepository } from "@/lib/storage/appRepository";
@@ -12,14 +20,11 @@ import {
   hasSequentialParagraphIds,
   normalizeChapters,
 } from "@/lib/import/normalization";
-import { epubCoverDataUrl } from "@/lib/import/epubCoverDataUrl";
-import { createPdfCoverDataUrl } from "@/lib/import/pdfImageRenderer";
 import { clearBookImageSrcCache } from "@/lib/reader/resolveBookImageSrc";
 import {
   classifyImportDiagnostics,
   ensureImagesMissingWarning,
 } from "@/lib/import/importDiagnostics";
-import { MAX_INLINE_MEDIA_LENGTH } from "@/lib/bookParser/validate";
 import type {
   BookImageRow,
   BookRow,
@@ -28,7 +33,14 @@ import type {
   ProcessingStatus,
   ProcessingWarning,
 } from "@/types/storage";
-import type { BookFormat, BookImage as ParsedBookImage } from "@/lib/bookParser/types";
+
+type ParseBookBytesFn = (options: ParseOptions) => Promise<ParserOutput>;
+let parseBookBytesImpl: ParseBookBytesFn = defaultParseBookBytes;
+
+/** Test-only override so paragraph-cap tests avoid 50k-paragraph EPUB parses. */
+export function __setParseBookBytesForTests(parseFn: ParseBookBytesFn | null): void {
+  parseBookBytesImpl = parseFn ?? defaultParseBookBytes;
+}
 
 const MAX_IMPORT_SIZE_BYTES = 150 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 180_000;
@@ -45,17 +57,21 @@ export type ImportPayload = {
 
 type ImportOptions = {
   inlineSourceMode?: "idle" | "bounded";
+  /** When aborted, stops creating/queueing this book and purges any partial row. */
+  signal?: AbortSignal;
 };
 
-type ImportSnapshotRow = {
+export type ImportSnapshotStatus = ProcessingStatus | "canceled";
+
+export type ImportSnapshotRow = {
   bookId: string;
-  status: ProcessingStatus;
+  status: ImportSnapshotStatus;
   error: string | null;
   warnings: ProcessingWarning[] | null;
 };
 
 type ImportTerminalOutcome = {
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "canceled";
   attempt: number;
   error: string | null;
   warnings: ProcessingWarning[] | null;
@@ -91,10 +107,23 @@ function createBookId(): string {
   return `book-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-class ImportCancelledError extends Error {
+export class ImportCancelledError extends Error {
   constructor() {
     super("Import cancelled");
     this.name = "ImportCancelledError";
+  }
+}
+
+export function isImportAbortError(error: unknown): boolean {
+  if (error instanceof ImportCancelledError) return true;
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error && error.name === "AbortError") return true;
+  return false;
+}
+
+function throwIfImportAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new ImportCancelledError();
   }
 }
 
@@ -259,6 +288,16 @@ function validateSource(source: Pick<RawBookRecord, "fileName" | "sizeBytes">): 
   return null;
 }
 
+function fileNameFromBook(book: BookRow): string {
+  const encoded = book.source_uri.split("/").pop();
+  if (!encoded) return book.title || "Unknown file";
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
 type RawStoreAdapter = {
   store: (record: RawBookRecord) => Promise<void>;
   load: (bookId: string) => Promise<RawBookRecord | null>;
@@ -270,6 +309,7 @@ export class BookImportService {
   private readonly queue: ImportTask[] = [];
   private readonly cancelledBookIds = new Set<string>();
   private activeBookId: string | null = null;
+  private activeTask: ImportTask | null = null;
   private activeAbortController: AbortController | null = null;
   private isRunning = false;
   private readonly repositoryPromise: Promise<BookRepository>;
@@ -277,7 +317,7 @@ export class BookImportService {
   private enqueueLock: Promise<void> = Promise.resolve();
   private inlineBatchBytes = 0;
   private inlineBatchTasks = 0;
-  /** Terminal outcomes retained after hard-fail purge so Last import can still report them. */
+  /** Terminal outcomes retained after hard-fail/cancel purge so Last import can still report them. */
   private readonly terminalOutcomes = new Map<string, ImportTerminalOutcome>();
   private legacyFailedPurgePromise: Promise<void> | null = null;
 
@@ -316,6 +356,37 @@ export class BookImportService {
     return () => this.listeners.delete(listener);
   }
 
+  /** Resolves when no task is executing and the queue is empty. */
+  waitForIdle(signal?: AbortSignal): Promise<void> {
+    if (!this.isRunning && this.queue.length === 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const finish = () => {
+        unsubscribe();
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        finish();
+      };
+      const unsubscribe = this.subscribe(() => {
+        if (!this.isRunning && this.queue.length === 0) {
+          finish();
+        }
+      });
+      if (signal?.aborted) {
+        finish();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      // Re-check in case the queue drained between the initial check and subscribe.
+      if (!this.isRunning && this.queue.length === 0) {
+        finish();
+      }
+    });
+  }
+
   async importFromFile(file: File, options?: ImportOptions): Promise<string> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     return this.importFromBytes({
@@ -326,6 +397,9 @@ export class BookImportService {
   }
 
   async importFromBytes(payload: ImportPayload, options?: ImportOptions): Promise<string> {
+    const signal = options?.signal;
+    throwIfImportAborted(signal);
+
     const repository = await this.repositoryPromise;
     const now = Date.now();
     const bookId = createBookId();
@@ -360,6 +434,15 @@ export class BookImportService {
     });
     this.emit();
 
+    const purgeIfAborted = async (): Promise<boolean> => {
+      if (!signal?.aborted) return false;
+      await this.recordCanceledAndDelete(bookId, attempt, payload.fileName);
+      return true;
+    };
+    if (await purgeIfAborted()) {
+      throw new ImportCancelledError();
+    }
+
     const source: RawBookRecord = {
       bookId,
       fileName: payload.fileName,
@@ -383,6 +466,22 @@ export class BookImportService {
       options?.inlineSourceMode ?? "idle"
     );
     if (inlineReservationBytes !== null) {
+      if (await purgeIfAborted()) {
+        this.releaseInlineSource({
+          bookId,
+          attempt,
+          source: {
+            fileName: source.fileName,
+            mimeType: source.mimeType,
+            sizeBytes: source.sizeBytes,
+          },
+          inlineReservationBytes,
+          clearProgressOnSuccess: false,
+          clearExistingContentBeforeParse: false,
+          purgeOnHardFailure: true,
+        });
+        throw new ImportCancelledError();
+      }
       this.queue.push({
         bookId,
         attempt,
@@ -400,12 +499,19 @@ export class BookImportService {
       });
       this.emit();
       void this.runQueue();
+      if (await purgeIfAborted()) {
+        throw new ImportCancelledError();
+      }
       return bookId;
     }
 
     try {
       await this.rawStore.store(source);
     } catch (error) {
+      if (isImportAbortError(error) || signal?.aborted) {
+        await this.recordCanceledAndDelete(bookId, attempt, payload.fileName);
+        throw new ImportCancelledError();
+      }
       const message = error instanceof Error ? error.message : String(error);
       await this.failImport(
         repository,
@@ -418,6 +524,10 @@ export class BookImportService {
         { fileName: payload.fileName, purge: true }
       );
       return bookId;
+    }
+
+    if (await purgeIfAborted()) {
+      throw new ImportCancelledError();
     }
 
     this.queue.push({
@@ -434,6 +544,9 @@ export class BookImportService {
     });
     this.emit();
     void this.runQueue();
+    if (await purgeIfAborted()) {
+      throw new ImportCancelledError();
+    }
     return bookId;
   }
 
@@ -631,34 +744,72 @@ export class BookImportService {
 
   async deleteBook(bookId: string): Promise<void> {
     await this.withEnqueueLock(async () => {
-      // Allow delete during processing: cancel the active/queued import, then remove rows.
-      this.cancelledBookIds.add(bookId);
-      if (this.activeBookId === bookId) {
-        this.activeAbortController?.abort();
-      }
+      await this.deleteBookLocked(bookId);
+    });
+  }
 
-      const removedTasks: ImportTask[] = [];
-      for (let index = this.queue.length - 1; index >= 0; index -= 1) {
-        if (this.queue[index]?.bookId !== bookId) continue;
-        const [removedTask] = this.queue.splice(index, 1);
-        if (removedTask) {
-          removedTasks.push(removedTask);
-          this.releaseInlineSource(removedTask);
-        }
-      }
+  /**
+   * Cancels in-flight/queued new imports for the given book IDs.
+   * Books that already completed are left untouched. Scope is only these IDs.
+   *
+   * All targeted queued tasks are removed and the active task is aborted
+   * synchronously before any awaited cleanup, so the serial queue cannot
+   * advance into another cancel target while the first book is being purged.
+   */
+  async cancelBooks(bookIds: string[]): Promise<void> {
+    const uniqueIds = Array.from(new Set(bookIds.filter((id) => id.trim().length > 0)));
+    if (uniqueIds.length === 0) return;
 
+    await this.withEnqueueLock(async () => {
+      const idSet = new Set(uniqueIds);
+      const { removedTasks, activePersist } = this.stopImportTasksLocked(idSet);
       const repository = await this.repositoryPromise;
-      await repository.deleteBook(bookId);
-      await Promise.all(removedTasks.map((task) => task.persistSource?.then(() => undefined)));
-      await this.rawStore.remove(bookId);
-      clearBookTokenCache(bookId);
-      await clearBookImageSrcCache(bookId);
-      await removeBookReferences(bookId, { repository });
-      await updateLibraryLayout(
-        (layout) => removeBookFromLibraryLayout(layout, bookId),
-        { repository }
-      );
-      await this.removeDeletedBookTtsRules(repository, bookId);
+      const cleanupTargets: string[] = [];
+
+      for (const bookId of uniqueIds) {
+        const existingOutcome = this.terminalOutcomes.get(bookId);
+        if (existingOutcome?.status === "completed" || existingOutcome?.status === "failed") {
+          this.cancelledBookIds.delete(bookId);
+          continue;
+        }
+        const book = await repository.getBook(bookId);
+        if (!book) {
+          if (existingOutcome?.status !== "canceled") {
+            this.terminalOutcomes.set(bookId, {
+              status: "canceled",
+              attempt: 0,
+              error: null,
+              warnings: null,
+              fileName: "Unknown file",
+            });
+          }
+          cleanupTargets.push(bookId);
+          continue;
+        }
+        if (book.processing_status === "completed") {
+          this.cancelledBookIds.delete(bookId);
+          continue;
+        }
+        const jobs = await repository.listImportJobs(bookId);
+        const attempt = jobs[jobs.length - 1]?.attempt ?? 0;
+        this.terminalOutcomes.set(bookId, {
+          status: "canceled",
+          attempt,
+          error: null,
+          warnings: null,
+          fileName: fileNameFromBook(book),
+        });
+        cleanupTargets.push(bookId);
+      }
+
+      await Promise.all([
+        ...removedTasks.map((task) => task.persistSource?.then(() => undefined)),
+        activePersist?.then(() => undefined),
+      ]);
+
+      for (const bookId of cleanupTargets) {
+        await this.purgeBookRowsLocked(bookId);
+      }
       this.emit();
     });
   }
@@ -686,6 +837,80 @@ export class BookImportService {
     return rows;
   }
 
+  private async recordCanceledAndDelete(
+    bookId: string,
+    attempt: number,
+    fileName: string
+  ): Promise<void> {
+    const existing = this.terminalOutcomes.get(bookId);
+    if (existing?.status !== "completed" && existing?.status !== "failed") {
+      this.terminalOutcomes.set(bookId, {
+        status: "canceled",
+        attempt,
+        error: null,
+        warnings: null,
+        fileName,
+      });
+    }
+    await this.deleteBook(bookId);
+  }
+
+  /**
+   * Synchronously mark targets canceled, remove them from the queue, and abort
+   * the active task when it is in the set. Caller must hold `withEnqueueLock`.
+   */
+  private stopImportTasksLocked(bookIds: Set<string>): {
+    removedTasks: ImportTask[];
+    activePersist: Promise<RawSourcePersistResult> | undefined;
+  } {
+    for (const bookId of bookIds) {
+      this.cancelledBookIds.add(bookId);
+    }
+
+    const removedTasks: ImportTask[] = [];
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const task = this.queue[index];
+      if (!task || !bookIds.has(task.bookId)) continue;
+      this.queue.splice(index, 1);
+      removedTasks.push(task);
+      this.releaseInlineSource(task);
+    }
+
+    let activePersist: Promise<RawSourcePersistResult> | undefined;
+    if (this.activeBookId && bookIds.has(this.activeBookId)) {
+      this.activeAbortController?.abort();
+      activePersist = this.activeTask?.persistSource;
+    }
+
+    return { removedTasks, activePersist };
+  }
+
+  /** Caller must hold `withEnqueueLock`. */
+  private async deleteBookLocked(bookId: string): Promise<void> {
+    const { removedTasks, activePersist } = this.stopImportTasksLocked(new Set([bookId]));
+    await Promise.all([
+      ...removedTasks.map((task) => task.persistSource?.then(() => undefined)),
+      activePersist?.then(() => undefined),
+    ]);
+    await this.purgeBookRowsLocked(bookId);
+    this.emit();
+  }
+
+  /** Caller must hold `withEnqueueLock`. Persist waits should already be done. */
+  private async purgeBookRowsLocked(bookId: string): Promise<void> {
+    const repository = await this.repositoryPromise;
+    await repository.deleteBook(bookId);
+    await this.rawStore.remove(bookId);
+    clearBookTokenCache(bookId);
+    await clearBookImageSrcCache(bookId);
+    await removeBookReferences(bookId, { repository });
+    await updateLibraryLayout(
+      (layout) => removeBookFromLibraryLayout(layout, bookId),
+      { repository }
+    );
+    await this.removeDeletedBookTtsRules(repository, bookId);
+  }
+
   private async runQueue(): Promise<void> {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -701,6 +926,7 @@ export class BookImportService {
         }
         const repository = await this.repositoryPromise;
         this.activeBookId = task.bookId;
+        this.activeTask = task;
         this.activeAbortController = new AbortController();
         try {
           await this.executeTask(repository, task, this.activeAbortController.signal);
@@ -709,12 +935,16 @@ export class BookImportService {
           if (this.activeBookId === task.bookId) {
             this.activeBookId = null;
           }
+          if (this.activeTask?.bookId === task.bookId) {
+            this.activeTask = null;
+          }
           this.activeAbortController = null;
           this.cancelledBookIds.delete(task.bookId);
         }
       }
     } finally {
       this.activeBookId = null;
+      this.activeTask = null;
       this.activeAbortController = null;
       this.isRunning = false;
       this.emit();
@@ -818,20 +1048,26 @@ export class BookImportService {
         await repository.clearBookContent(bookId);
       }
 
+      // No mid-parse onPhaseChange → markStatus: those awaited SQLite writes stole
+      // wall-clock from the 30s parse budget. Status stays "validating" until terminal.
       const parsed = await withTimeout(
         (signal) =>
-          parseBookBytes({
+          parseBookBytesImpl({
             sourceBytes: storedSource.bytes,
             sourceName: storedSource.fileName,
             signal,
-            onPhaseChange: async (phase) => {
-              if (signal.aborted) return;
-              await markStatus(phase);
-            },
           }),
         IMPORT_TIMEOUT_MS,
         cancelSignal
       );
+
+      const paragraphCount = parsed.book.paragraphs.length;
+      if (paragraphCount > MAX_BOOK_PARAGRAPHS) {
+        throw new ImportFailure(
+          "Book too large",
+          `Book too large: this book has ${paragraphCount} paragraphs; maximum supported is ${MAX_BOOK_PARAGRAPHS}.`
+        );
+      }
 
       await ensureNotCancelled();
       await this.ensureTaskSourcePersisted(task);
@@ -889,11 +1125,10 @@ export class BookImportService {
         : computeTotalWords(parsed.book.paragraphs);
       await ensureNotCancelled();
       const rawCoverSrc = parsed.book.cover?.src ?? null;
+      // Covers are materialized during parse from the already-open document/archive.
       const coverDataUrl = parsed.book.format === "epub"
-        ? (isOversizedInlineCover(rawCoverSrc)
-          ? null
-          : await epubCoverDataUrl(storedSource.bytes, rawCoverSrc))
-        : await createPdfCoverDataUrl(storedSource.bytes);
+        ? (isOversizedInlineCover(rawCoverSrc) ? null : parsed.coverDataUrl ?? null)
+        : parsed.coverDataUrl ?? null;
       await ensureNotCancelled();
       let processingWarnings = classification.warnings.length > 0 ? [...classification.warnings] : [];
       if (droppedImageCount > 0) {
@@ -944,8 +1179,18 @@ export class BookImportService {
     } catch (unknownError) {
       if (
         unknownError instanceof ImportCancelledError ||
+        isImportAbortError(unknownError) ||
         this.cancelledBookIds.has(bookId) ||
+        cancelSignal?.aborted ||
         !(await repository.getBook(bookId))
+      ) {
+        return;
+      }
+      const message =
+        unknownError instanceof Error ? unknownError.message : String(unknownError);
+      if (
+        message.includes("import was cancelled") ||
+        message.includes("import was canceled")
       ) {
         return;
       }
@@ -1019,13 +1264,16 @@ export class BookImportService {
         }
       })();
 
-    this.terminalOutcomes.set(bookId, {
-      status: "failed",
-      attempt,
-      error: message,
-      warnings: null,
-      fileName: resolvedFileName,
-    });
+    // Do not overwrite a canceled outcome with a late failure from a purged worker.
+    if (this.terminalOutcomes.get(bookId)?.status !== "canceled") {
+      this.terminalOutcomes.set(bookId, {
+        status: "failed",
+        attempt,
+        error: message,
+        warnings: null,
+        fileName: resolvedFileName,
+      });
+    }
 
     if (!book) {
       this.emit();
@@ -1033,6 +1281,9 @@ export class BookImportService {
     }
 
     if (purge) {
+      if (this.terminalOutcomes.get(bookId)?.status === "canceled") {
+        return;
+      }
       await repository.setBookAndImportStatus(bookId, attempt, "failed", {
         processing_error: message,
         updated_at: Date.now(),
@@ -1087,12 +1338,15 @@ export class BookImportService {
     bookId: string,
     attempt: number,
     timeoutMs = IMPORT_TIMEOUT_MS + 120_000
-  ): Promise<ProcessingStatus> {
+  ): Promise<"completed" | "failed"> {
     const start = Date.now();
     let delayMs = 120;
     while (Date.now() - start < timeoutMs) {
       const outcome = this.terminalOutcomes.get(bookId);
       if (outcome?.attempt === attempt) {
+        if (outcome.status === "canceled") {
+          return "failed";
+        }
         return outcome.status;
       }
       const repository = await this.repositoryPromise;

@@ -17,6 +17,7 @@ export const DiagnosticCode = {
   collapsed_paragraphs: "collapsed_paragraphs",
   bad_paragraph_ids: "bad_paragraph_ids",
   scene_break_density: "scene_break_density",
+  too_many_paragraphs: "too_many_paragraphs",
   timeout: "timeout",
   totals_mismatch: "totals_mismatch",
   timing_invalid: "timing_invalid",

@@ -1,6 +1,6 @@
 
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 
 type Props = {
   isOpen: boolean;
@@ -23,6 +23,7 @@ export default function WordReplacementSheet({
   const [replacement, setReplacement] = useState("");
   const [scope, setScope] = useState<"global" | "book">("global");
   const [isPlaying, setIsPlaying] = useState(false);
+  const shouldReduceMotion = useReducedMotion();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -61,17 +62,17 @@ export default function WordReplacementSheet({
       {isOpen && (
         <motion.div
           className="fixed inset-0 z-40 flex items-end justify-center"
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={shouldReduceMotion ? undefined : { opacity: 0 }}
         >
           {/* Backdrop */}
           <motion.div
             className="absolute inset-0 bg-black/70 backdrop-blur-xl"
             onClick={onClose}
-            initial={{ opacity: 0 }}
+            initial={shouldReduceMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0 }}
           />
 
           {/* Sheet */}
@@ -81,10 +82,12 @@ export default function WordReplacementSheet({
             style={{
               paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)",
             }}
-            initial={{ y: "100%", opacity: 0 }}
+            initial={shouldReduceMotion ? false : { y: "100%", opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: "100%", opacity: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            exit={shouldReduceMotion ? undefined : { y: "100%", opacity: 0 }}
+            transition={shouldReduceMotion
+              ? { duration: 0 }
+              : { type: "spring", stiffness: 300, damping: 30 }}
           >
             {/* Drag handle */}
             <div className="flex justify-center pt-3 pb-1">

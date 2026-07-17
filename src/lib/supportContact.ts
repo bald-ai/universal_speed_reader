@@ -42,13 +42,7 @@ export function buildImportIssueMailto(books: ImportIssueBook[]): string {
     }
   }
 
-  const subject =
-    books.length === 1
-      ? `Import issue: ${books[0].fileName}`
-      : `Import issues (${books.length} books)`;
-
   return buildSupportMailto({
-    subject,
     body: lines.join("\n"),
   });
 }

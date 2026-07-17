@@ -1,5 +1,5 @@
 
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useSettings } from "@/contexts/SettingsContext";
 import type { Position } from "@/types/reading";
 import { useTts } from "@/contexts/TtsContext";
@@ -18,6 +18,7 @@ export default function TtsMiniBar(props: Props) {
   const { isOpen, startFrom, onClose } = props;
   const tts = useTts();
   const { settings, updateSettings } = useSettings();
+  const shouldReduceMotion = useReducedMotion();
   const isPlaying = tts.status === "playing";
   const isError = Boolean(tts.error);
   const isWarning = Boolean(tts.warning);
@@ -39,10 +40,10 @@ export default function TtsMiniBar(props: Props) {
         <motion.div
           className="fixed inset-x-0 bottom-0 z-30 px-4"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
-          initial={{ y: 12, opacity: 0 }}
+          initial={shouldReduceMotion ? false : { y: 12, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 12, opacity: 0 }}
-          transition={{ duration: 0.18 }}
+          exit={shouldReduceMotion ? undefined : { y: 12, opacity: 0 }}
+          transition={{ duration: shouldReduceMotion ? 0 : 0.18 }}
         >
           <div className="mx-auto w-fit max-w-full rounded-full border border-white/10 bg-neutral-950/85 px-2 py-1 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
             {isWarning ? (
@@ -61,10 +62,10 @@ export default function TtsMiniBar(props: Props) {
               {isError ? (
                 <motion.div
                   key="error"
-                  initial={{ opacity: 0, scale: 0.96 }}
+                  initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.96 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.16 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0, scale: 0.96 }}
+                  transition={{ duration: shouldReduceMotion ? 0 : 0.16 }}
                   className="flex items-center gap-2 rounded-full border border-red-400/25 bg-red-950/45 px-3 py-1"
                 >
                   <span className="max-w-[70vw] truncate text-xs text-red-200">{tts.error}</span>
@@ -79,10 +80,10 @@ export default function TtsMiniBar(props: Props) {
               ) : isPlaying ? (
                 <motion.div
                   key="playing"
-                  initial={{ opacity: 0, y: 8 }}
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.16 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0, y: -8 }}
+                  transition={{ duration: shouldReduceMotion ? 0 : 0.16 }}
                   className="flex items-center gap-1"
                 >
                   <button
@@ -110,10 +111,10 @@ export default function TtsMiniBar(props: Props) {
               ) : (
                 <motion.div
                   key="paused"
-                  initial={{ opacity: 0, y: 8 }}
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.16 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0, y: -8 }}
+                  transition={{ duration: shouldReduceMotion ? 0 : 0.16 }}
                   className="flex items-center gap-1"
                 >
                   <div className="flex items-center gap-1 px-1.5">
@@ -127,9 +128,9 @@ export default function TtsMiniBar(props: Props) {
                     </button>
                     <motion.span
                       key={settings.ttsPlaybackRate}
-                      initial={{ scale: 1.2, color: "#c4b5fd" }}
+                      initial={shouldReduceMotion ? false : { scale: 1.2, color: "#c4b5fd" }}
                       animate={{ scale: 1, color: "#e5e7eb" }}
-                      transition={{ duration: 0.24 }}
+                      transition={{ duration: shouldReduceMotion ? 0 : 0.24 }}
                       className="min-w-[40px] text-center text-xs font-semibold tabular-nums"
                     >
                       {settings.ttsPlaybackRate.toFixed(1)}x

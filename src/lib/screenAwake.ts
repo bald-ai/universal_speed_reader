@@ -66,7 +66,8 @@ function retainNativeKeepAwake(): () => void {
   };
 }
 
-export function startSpeedModeKeepAwake(): () => void {
+/** Keep the display awake while a foreground session needs the app alive (speed mode, import). */
+export function startKeepAwake(): () => void {
   const nativeAndroid = isNativeAndroid();
   const releaseNativeKeepAwake = nativeAndroid ? retainNativeKeepAwake() : null;
   let isDisposed = false;
@@ -193,4 +194,8 @@ export function startSpeedModeKeepAwake(): () => void {
       void releaseWebWakeLock();
     }
   };
+}
+
+export function startSpeedModeKeepAwake(): () => void {
+  return startKeepAwake();
 }

@@ -110,6 +110,8 @@ export interface ParseInternals {
 export interface ParserOutput {
   book: ParsedBook;
   internals: ParseInternals;
+  /** Library cover rendered during parse (data URL), or null when unavailable. */
+  coverDataUrl?: string | null;
 }
 
 export interface EvaluationRecord {

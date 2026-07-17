@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Last import — redesign</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /*
+      Import report mock:
+      - 8pt spacing, progressive disclosure, colour ≠ sole meaning
+      - Brand (violet) only on interactive controls
+      - Status: icon + label + count (not colour alone)
+      Visual language stays on the app's dark / Inter / violet system.
+    */
+    :root {
+      color-scheme: dark;
+      --bg: oklch(13% 0.01 280);
+      --raised: oklch(18% 0.012 280);
+      --overlay: oklch(22% 0.014 280);
+      --text: oklch(96% 0.01 280);
+      --text-muted: oklch(72% 0.015 280);
+      --text-faint: oklch(58% 0.012 280);
+      --stroke: oklch(32% 0.02 280);
+      --brand: oklch(72% 0.14 290);
+      --brand-soft: oklch(72% 0.14 290 / 0.14);
+      --ok: oklch(78% 0.14 155);
+      --ok-soft: oklch(78% 0.14 155 / 0.12);
+      --warn: oklch(82% 0.12 85);
+      --warn-soft: oklch(82% 0.12 85 / 0.12);
+      --fail: oklch(72% 0.16 25);
+      --fail-soft: oklch(72% 0.16 25 / 0.12);
+      --space-1: 8px;
+      --space-2: 16px;
+      --space-3: 24px;
+      --space-4: 32px;
+      --radius: 16px;
+      --radius-sm: 10px;
+      --shadow: 0 8px 28px oklch(0% 0 0 / 0.35);
+      --font: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+    a:hover { opacity: 0.88; }
+
+    .page {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: var(--space-4) var(--space-2) 80px;
+    }
+
+    .page-header { margin-bottom: var(--space-4); }
+    .eyebrow {
+      margin: 0 0 var(--space-1);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+    .page-header h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.25;
+      font-weight: 600;
+    }
+    .page-header p {
+      margin: var(--space-1) 0 0;
+      font-size: 15px;
+      color: var(--text-muted);
+      max-width: 52ch;
+    }
+    .phone {
+      width: 100%;
+      max-width: 390px;
+      min-height: 680px;
+      margin: 0 auto;
+      padding: var(--space-2);
+      border-radius: 28px;
+      background: oklch(10% 0.01 280);
+      box-shadow: var(--shadow), inset 0 0 0 1px var(--stroke);
+    }
+
+    .app-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 48px;
+      padding: 0 4px;
+      margin-bottom: var(--space-2);
+    }
+    .app-bar h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .app-bar .import-link {
+      min-height: 48px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--brand);
+      text-decoration: none;
+      background: none;
+      border: 0;
+      cursor: pointer;
+    }
+
+    .report {
+      border-radius: var(--radius);
+      background: var(--raised);
+      box-shadow: 0 1px 0 var(--stroke), var(--shadow);
+      overflow: hidden;
+      margin-bottom: var(--space-3);
+    }
+
+    .report-head {
+      display: flex;
+      align-items: stretch;
+      gap: 4px;
+      padding: 4px;
+    }
+    .report-toggle {
+      flex: 1;
+      min-width: 0;
+      min-height: 72px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      padding: 12px 12px 12px 16px;
+      text-align: left;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+    .report-toggle:hover { background: oklch(100% 0 0 / 0.03); }
+    .report-toggle:focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: 2px;
+    }
+
+    .report-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .report-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .report-chevron {
+      width: 16px;
+      height: 16px;
+      color: var(--text-faint);
+      transition: transform 0.15s ease;
+    }
+    .report[data-open="false"] .report-chevron { transform: rotate(-90deg); }
+    .report[data-open="false"] .report-body { display: none; }
+
+    .report-outcome {
+      margin: 0;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+    .report-outcome em {
+      font-style: normal;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .report-meta {
+      margin: 0;
+      font-size: 12px;
+      color: var(--text-faint);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .report-dismiss {
+      flex-shrink: 0;
+      align-self: center;
+      min-width: 48px;
+      min-height: 48px;
+      margin-right: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--text-muted);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .report-dismiss:hover { background: oklch(100% 0 0 / 0.04); color: var(--text); }
+    .report-dismiss:focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: 2px;
+    }
+    .report-dismiss svg { width: 16px; height: 16px; }
+
+    .report-body { border-top: 1px solid var(--stroke); }
+
+    .bucket + .bucket { border-top: 1px solid var(--stroke); }
+    .bucket-summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 52px;
+      padding: 12px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .bucket-summary::-webkit-details-marker { display: none; }
+    .bucket-summary:hover { background: oklch(100% 0 0 / 0.025); }
+    .bucket[open] .bucket-chevron { transform: rotate(180deg); }
+
+    .bucket-icon {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+    }
+    .bucket-icon svg { width: 15px; height: 15px; }
+    .bucket-icon.fail { background: var(--fail-soft); color: var(--fail); }
+    .bucket-icon.warn { background: var(--warn-soft); color: var(--warn); }
+    .bucket-icon.ok { background: var(--ok-soft); color: var(--ok); }
+
+    .bucket-label {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .bucket-label strong {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .bucket-label span {
+      font-size: 12px;
+      color: var(--text-faint);
+    }
+    .bucket-count {
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-muted);
+      min-width: 1.5ch;
+      text-align: right;
+    }
+    .bucket-chevron {
+      width: 16px;
+      height: 16px;
+      color: var(--text-faint);
+      transition: transform 0.15s ease;
+    }
+
+    .bucket-list {
+      list-style: none;
+      margin: 0;
+      padding: 0 16px 16px 56px;
+      display: grid;
+      gap: 8px;
+    }
+    .bucket-list li {
+      min-width: 0;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: oklch(100% 0 0 / 0.035);
+    }
+    .file-name {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-reason {
+      margin: 2px 0 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text-muted);
+    }
+    .ok-list {
+      padding-bottom: 8px;
+      max-height: 160px;
+      overflow: auto;
+    }
+    .ok-list .file-name {
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+    .bucket-list li:has(.more-ok) {
+      background: none;
+      padding: 2px 12px;
+    }
+    .more-ok {
+      margin: 0;
+      font-size: 12px;
+      color: var(--text-faint);
+    }
+
+    .report-foot {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      background: var(--overlay);
+    }
+    .report-foot p {
+      margin: 0;
+      flex: 1;
+      min-width: 180px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .report-foot a {
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      color: var(--brand);
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 4px;
+    }
+    .report-foot a:hover { text-decoration: underline; }
+
+    .section-label {
+      margin: 0 0 12px 4px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+
+    .lib-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 56px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border-radius: 12px;
+      background: var(--raised);
+    }
+    .cover {
+      width: 32px;
+      height: 44px;
+      border-radius: 4px;
+      background: linear-gradient(160deg, oklch(40% 0.04 280), oklch(28% 0.03 280));
+      flex-shrink: 0;
+    }
+    .lib-row h4 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .lib-row p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--text-faint);
+    }
+
+    .principles {
+      margin-top: var(--space-4);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--stroke);
+      max-width: 640px;
+    }
+    .principles h2 {
+      margin: 0 0 var(--space-2);
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .principles ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-muted);
+      font-size: 13px;
+      display: grid;
+      gap: 8px;
+    }
+    .principles li strong { color: var(--text); font-weight: 500; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .report-chevron, .bucket-chevron { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <p class="eyebrow">Design mock</p>
+      <h1>Last import — compact accordion</h1>
+      <p>
+        The import report as a single collapsible card: outcome first, details on demand,
+        and one clear path to get help.
+      </p>
+    </header>
+
+    <div class="phone" id="phone-a">
+      <div class="app-bar">
+        <h2>Your Library</h2>
+        <button type="button" class="import-link">+ Import</button>
+      </div>
+
+      <section class="report" data-report data-open="true" aria-label="Last import">
+        <div class="report-head">
+          <button type="button" class="report-toggle" data-toggle-report aria-expanded="true" aria-controls="report-body">
+            <div class="report-title-row">
+              <h3 class="report-title">Last import</h3>
+              <svg class="report-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <p class="report-outcome"><em>3 failed</em> · 2 with issues · 95 ok</p>
+            <p class="report-meta">24m 10s · 14.5 s/book · 2.1 s/MB · 412 MB</p>
+          </button>
+          <button type="button" class="report-dismiss" data-dismiss-report aria-label="Dismiss last import report">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <span>Dismiss</span>
+          </button>
+        </div>
+
+        <div class="report-body" id="report-body" data-report-body>
+          <details class="bucket" open>
+            <summary class="bucket-summary">
+              <span class="bucket-icon fail" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9" />
+                  <path stroke-linecap="round" d="M15 9l-6 6M9 9l6 6" />
+                </svg>
+              </span>
+              <span class="bucket-label">
+                <strong>Failed</strong>
+                <span>Not in library — import the file again</span>
+              </span>
+              <span class="bucket-count">3</span>
+              <svg class="bucket-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <ul class="bucket-list">
+              <li>
+                <p class="file-name">autonomous-driving-doab-36486.pdf</p>
+                <p class="file-reason">PDF parsing exceeded the 30s limit</p>
+              </li>
+              <li>
+                <p class="file-name">proceedings-of-the-scientific-practical….pdf</p>
+                <p class="file-reason">PDF parsing exceeded the 30s limit</p>
+              </li>
+              <li>
+                <p class="file-name">webster-s-unabridged-dictionary….epub</p>
+                <p class="file-reason">Corrupted or unreadable book</p>
+              </li>
+            </ul>
+          </details>
+
+          <details class="bucket">
+            <summary class="bucket-summary">
+              <span class="bucket-icon warn" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </span>
+              <span class="bucket-label">
+                <strong>With issues</strong>
+                <span>In library — openable with warnings</span>
+              </span>
+              <span class="bucket-count">2</span>
+              <svg class="bucket-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <ul class="bucket-list">
+              <li>
+                <p class="file-name">putting-a-face-on-it-doab-37849.pdf</p>
+                <p class="file-reason">Chapter list may be incomplete or unclear</p>
+              </li>
+              <li>
+                <p class="file-name">resilience-a-new-paradigm….pdf</p>
+                <p class="file-reason">Some pictures are missing</p>
+              </li>
+            </ul>
+          </details>
+
+          <details class="bucket">
+            <summary class="bucket-summary">
+              <span class="bucket-icon ok" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.5 12.5l2.5 2.5 4.5-5" />
+                </svg>
+              </span>
+              <span class="bucket-label">
+                <strong>OK</strong>
+                <span>Imported cleanly</span>
+              </span>
+              <span class="bucket-count">95</span>
+              <svg class="bucket-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <ul class="bucket-list ok-list">
+              <li><p class="file-name">war-and-peace-pg2600.epub</p></li>
+              <li><p class="file-name">wuthering-heights-pg768.epub</p></li>
+              <li><p class="file-name">pride-and-prejudice-pg1342.epub</p></li>
+              <li><p class="more-ok">+ 92 more</p></li>
+            </ul>
+          </details>
+
+          <div class="report-foot">
+            <p>Something look wrong? Email the files — replies within 24h.</p>
+            <a href="#" onclick="return false">Email about this import</a>
+          </div>
+        </div>
+      </section>
+
+      <p class="section-label">Your Library</p>
+      <div class="lib-row">
+        <div class="cover"></div>
+        <div>
+          <h4>Pride and Prejudice</h4>
+          <p>Jane Austen · 22%</p>
+        </div>
+      </div>
+      <div class="lib-row">
+        <div class="cover"></div>
+        <div>
+          <h4>The Count of Monte Cristo</h4>
+          <p>Alexandre Dumas · 2%</p>
+        </div>
+      </div>
+    </div>
+
+    <section class="principles">
+      <h2>Design notes</h2>
+      <ul>
+        <li><strong>Outcome first:</strong> “3 failed” leads; timing is one quiet meta line.</li>
+        <li><strong>Progressive disclosure:</strong> the whole report collapses; Failed opens by default, OK stays closed.</li>
+        <li><strong>Status ≠ colour:</strong> icon tile + label + count, with a short helper under each bucket.</li>
+        <li><strong>Dismissible:</strong> one card, one dismiss — no duplicate error banner under the library.</li>
+        <li><strong>Brand colour:</strong> violet only on Import / Email / focus — not the card frame.</li>
+      </ul>
+    </section>
+  </div>
+
+  <script>
+    const report = document.querySelector("[data-report]");
+    const toggle = document.querySelector("[data-toggle-report]");
+    const dismiss = document.querySelector("[data-dismiss-report]");
+
+    toggle?.addEventListener("click", () => {
+      const open = report.getAttribute("data-open") !== "false";
+      report.setAttribute("data-open", open ? "false" : "true");
+      toggle.setAttribute("aria-expanded", open ? "false" : "true");
+    });
+
+    dismiss?.addEventListener("click", () => {
+      report.style.display = "none";
+    });
+  </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -21,8 +21,23 @@ import NestedPickPrune, {
   type PickPruneFolderNode,
   type PickPruneTreeNode,
 } from "@/components/library/NestedPickPrune";
+import LibraryBulkBar from "@/components/library/LibraryBulkBar";
+import { useLibraryLongPress } from "@/components/library/useLibraryLongPress";
+import {
+  collectSelectedBookIds,
+  countBooksInFolderIds,
+  formatLibrarySelectionCount,
+  getMovableSelection,
+  getRootSelectedFolderIds,
+  librarySelectionKey,
+  listAllLibrarySelectionKeys,
+  setFolderSubtreeSelected,
+  syncCascadeFolderSelection,
+  toggleLibrarySelection,
+} from "@/lib/library/bulkSelection";
 import {
   getBookIdsInFolderSubtree,
+  getFolderDescendantIds,
   getFolderPathLabels,
   getParentIdForBook,
   moveBookToFolder,
@@ -37,6 +52,11 @@ import BookFormatBadge from "@/components/library/BookFormatBadge";
 import type { Mood } from "@/types/book";
 import type { LibraryFolder, LibraryLayout, LibraryLayoutItemId } from "@/types/libraryLayout";
 
+export type BulkLibraryDeleteRequest =
+  | { mode: "books"; bookIds: string[] }
+  | { mode: "folders-only"; folderIds: string[] }
+  | { mode: "folders-with-contents"; folderIds: string[]; bookIds: string[] };
+
 type LibraryTreeViewProps = {
   entries: LibraryEntry[];
   layout: LibraryLayout;
@@ -47,6 +67,7 @@ type LibraryTreeViewProps = {
   onCreateFolder: (parentId: string | null) => void;
   onDeleteFolderOnly: (folderId: string) => void;
   onDeleteFolderWithContents: (folderId: string) => void;
+  onBulkDelete: (request: BulkLibraryDeleteRequest) => void | Promise<void>;
   onOpenBook: (entry: LibraryEntry) => void;
   onEditBook: (entry: LibraryEntry) => void;
   onDeleteBook: (entry: LibraryEntry) => void;
@@ -213,15 +234,63 @@ function RowActionItem(props: {
   );
 }
 
+function SelectionCheckbox(props: {
+  checked: boolean;
+  partial?: boolean;
+  disabled?: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  const { checked, partial, disabled, label, onToggle } = props;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-checked={partial && !checked ? "mixed" : checked}
+      role="checkbox"
+      disabled={disabled}
+      data-testid="library-selection-checkbox"
+      onClick={(event) => {
+        event.stopPropagation();
+        if (disabled) return;
+        onToggle();
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg disabled:opacity-45"
+    >
+      <span
+        aria-hidden="true"
+        className={`inline-flex h-5 w-5 items-center justify-center rounded-md border-[1.5px] ${
+          checked
+            ? "border-cyan-400/70 bg-cyan-400/20 text-cyan-100"
+            : partial
+              ? "border-cyan-400/55 bg-cyan-400/12 text-cyan-100"
+              : "border-neutral-600 bg-neutral-950/45 text-transparent"
+        }`}
+      >
+        {partial && !checked ? (
+          <span className="block h-0.5 w-2.5 rounded-sm bg-current" />
+        ) : (
+          <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M2.5 6.2L5 8.7L9.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </span>
+    </button>
+  );
+}
+
 function SortableShell(props: {
   id: string;
   data: DragData;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
-  const { id, data, children } = props;
+  const { id, data, disabled, children } = props;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
     data,
+    disabled: !!disabled,
   });
   return (
     <div
@@ -232,7 +301,7 @@ function SortableShell(props: {
         opacity: isDragging ? 0.55 : 1,
       }}
       {...attributes}
-      {...listeners}
+      {...(disabled ? {} : listeners)}
     >
       {children}
     </div>
@@ -244,31 +313,71 @@ function FolderRow(props: {
   depth: number;
   childCount: number;
   expanded: boolean;
+  isSelecting: boolean;
+  isSelected: boolean;
+  isPartial: boolean;
+  inputArmored: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onCreateChild: () => void;
   onSendToMood: () => void;
   onDelete: () => void;
+  onEnterSelect: () => void;
+  onToggleSelect: () => void;
 }) {
-  const { folder, depth, childCount, expanded, onToggle, onEdit, onCreateChild, onSendToMood, onDelete } = props;
+  const {
+    folder,
+    depth,
+    childCount,
+    expanded,
+    isSelecting,
+    isSelected,
+    isPartial,
+    inputArmored,
+    onToggle,
+    onEdit,
+    onCreateChild,
+    onSendToMood,
+    onDelete,
+    onEnterSelect,
+    onToggleSelect,
+  } = props;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { isOver, setNodeRef } = useDroppable({
     id: `drop-folder:${folder.id}`,
     data: { kind: "folder-drop", folderId: folder.id },
+    disabled: isSelecting,
+  });
+  const longPress = useLibraryLongPress({
+    disabled: isSelecting,
+    onLongPress: onEnterSelect,
   });
   const icon = getIconEmoji(folder.icon) ?? "📁";
   return (
     <div
       ref={setNodeRef}
+      data-testid={`library-folder-row-${folder.id}`}
       className={`relative rounded-xl border bg-gradient-to-br ${folderColorClass(folder.color)} px-3 py-2 transition-shadow ${
-        isOver ? "shadow-[0_0_0_1px_rgba(103,232,249,0.75)]" : ""
+        isSelected ? "shadow-[0_0_0_1px_rgba(34,211,238,0.55)]" : isOver ? "shadow-[0_0_0_1px_rgba(103,232,249,0.75)]" : ""
       }`}
       style={{ marginLeft: depth * 14 }}
+      onPointerDown={longPress.onPointerDown}
+      onPointerMove={longPress.onPointerMove}
+      onPointerUp={longPress.onPointerUp}
+      onPointerCancel={longPress.onPointerCancel}
+      onContextMenu={longPress.onContextMenu}
+      onClick={() => {
+        if (!isSelecting || inputArmored) return;
+        onToggleSelect();
+      }}
     >
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={onToggle}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
           onPointerDown={(event) => event.stopPropagation()}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-black/20 text-sm text-neutral-100"
           aria-label={expanded ? "Collapse folder" : "Expand folder"}
@@ -276,24 +385,45 @@ function FolderRow(props: {
           {expanded ? "⌄" : "›"}
         </button>
         <div className="text-base leading-none">{icon}</div>
-        <button type="button" onClick={onToggle} onPointerDown={(event) => event.stopPropagation()} className="min-w-0 flex-1 text-left">
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (isSelecting) {
+              if (!inputArmored) onToggleSelect();
+              return;
+            }
+            onToggle();
+          }}
+          className="min-w-0 flex-1 text-left"
+        >
           <div className="truncate text-sm font-semibold text-neutral-50">{folder.label}</div>
           <div className="text-[11px] text-neutral-400">{childCount} items</div>
         </button>
-        <RowActionsMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-          <RowActionItem onClick={() => { setIsMenuOpen(false); onCreateChild(); }}>
-            New subfolder
-          </RowActionItem>
-          <RowActionItem onClick={() => { setIsMenuOpen(false); onSendToMood(); }}>
-            Send to mood...
-          </RowActionItem>
-          <RowActionItem onClick={() => { setIsMenuOpen(false); onEdit(); }}>
-            Edit
-          </RowActionItem>
-          <RowActionItem danger onClick={() => { setIsMenuOpen(false); onDelete(); }}>
-            Delete
-          </RowActionItem>
-        </RowActionsMenu>
+        {isSelecting ? (
+          <SelectionCheckbox
+            checked={isSelected}
+            partial={isPartial}
+            disabled={inputArmored}
+            label={isSelected ? `Deselect ${folder.label}` : `Select ${folder.label}`}
+            onToggle={onToggleSelect}
+          />
+        ) : (
+          <RowActionsMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+            <RowActionItem onClick={() => { setIsMenuOpen(false); onCreateChild(); }}>
+              New subfolder
+            </RowActionItem>
+            <RowActionItem onClick={() => { setIsMenuOpen(false); onSendToMood(); }}>
+              Send to mood...
+            </RowActionItem>
+            <RowActionItem onClick={() => { setIsMenuOpen(false); onEdit(); }}>
+              Edit
+            </RowActionItem>
+            <RowActionItem danger onClick={() => { setIsMenuOpen(false); onDelete(); }}>
+              Delete
+            </RowActionItem>
+          </RowActionsMenu>
+        )}
       </div>
     </div>
   );
@@ -304,30 +434,80 @@ function BookRow(props: {
   depth: number;
   isDeleting: boolean;
   isBusy: boolean;
+  isSelecting: boolean;
+  isSelected: boolean;
+  inputArmored: boolean;
   onOpen: () => void;
   onEdit: () => void;
   onMove: () => void;
   onSendToMood: () => void;
   onDelete: () => void;
+  onEnterSelect: () => void;
+  onToggleSelect: () => void;
 }) {
-  const { entry, depth, isDeleting, isBusy, onOpen, onEdit, onMove, onSendToMood, onDelete } = props;
+  const {
+    entry,
+    depth,
+    isDeleting,
+    isBusy,
+    isSelecting,
+    isSelected,
+    inputArmored,
+    onOpen,
+    onEdit,
+    onMove,
+    onSendToMood,
+    onDelete,
+    onEnterSelect,
+    onToggleSelect,
+  } = props;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showWarnings, setShowWarnings] = useState(false);
   const canEdit = entry.processingStatus === "completed" || entry.processingStatus === "failed";
   const canOpen = entry.processingStatus === "completed";
-  const canRetry = entry.processingStatus === "failed";
   const hasWarnings = entry.processingWarnings.length > 0;
   const coverUrl = entry.coverUrl ?? getBookCoverPlaceholder(entry.progressPercent);
+  const longPress = useLibraryLongPress({
+    disabled: isSelecting,
+    onLongPress: onEnterSelect,
+  });
+
+  const handleActivate = () => {
+    if (isSelecting) {
+      if (!inputArmored) onToggleSelect();
+      return;
+    }
+    onOpen();
+  };
+
   return (
     <div
-      className="relative rounded-xl border border-neutral-800/70 bg-neutral-900/80 px-3 py-2"
+      data-testid={`library-book-row-${entry.id}`}
+      className={`relative rounded-xl border border-neutral-800/70 bg-neutral-900/80 px-3 py-2 ${
+        isSelected ? "shadow-[0_0_0_1px_rgba(34,211,238,0.55)]" : ""
+      }`}
       style={{ marginLeft: depth * 14 }}
+      onPointerDown={longPress.onPointerDown}
+      onPointerMove={longPress.onPointerMove}
+      onPointerUp={longPress.onPointerUp}
+      onPointerCancel={longPress.onPointerCancel}
+      onContextMenu={longPress.onContextMenu}
     >
       <div className="flex items-center gap-2">
-        <button type="button" onClick={onOpen} disabled={!canOpen || isDeleting || isBusy} className="shrink-0 disabled:opacity-50">
+        <button
+          type="button"
+          onClick={handleActivate}
+          disabled={!isSelecting && (!canOpen || isDeleting || isBusy)}
+          className="shrink-0 disabled:opacity-50"
+        >
           <img src={coverUrl} alt="" className="h-12 w-9 rounded-md bg-neutral-800 object-cover" loading="lazy" decoding="async" />
         </button>
-        <button type="button" onClick={onOpen} disabled={!canOpen || isDeleting || isBusy} className="min-w-0 flex-1 text-left disabled:opacity-50">
+        <button
+          type="button"
+          onClick={handleActivate}
+          disabled={!isSelecting && (!canOpen || isDeleting || isBusy)}
+          className="min-w-0 flex-1 text-left disabled:opacity-50"
+        >
           <div className="flex min-w-0 items-center gap-1.5">
             <div className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-100">{entry.title}</div>
             <BookFormatBadge format={entry.sourceFormat} />
@@ -340,7 +520,7 @@ function BookRow(props: {
             <span className="text-[11px] text-neutral-500">{entry.processingStatus !== "completed" ? entry.processingStatusLabel : `${entry.progressPercent}%`}</span>
           </div>
         </button>
-        {hasWarnings ? (
+        {hasWarnings && !isSelecting ? (
           <button
             type="button"
             data-testid={`library-warning-${entry.id}`}
@@ -352,29 +532,33 @@ function BookRow(props: {
             !
           </button>
         ) : null}
-        <RowActionsMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-          {canRetry ? (
-            <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onOpen(); }}>
-              Retry import
+        {isSelecting ? (
+          <SelectionCheckbox
+            checked={isSelected}
+            disabled={inputArmored}
+            label={isSelected ? `Deselect ${entry.title}` : `Select ${entry.title}`}
+            onToggle={onToggleSelect}
+          />
+        ) : (
+          <RowActionsMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+            {canEdit ? (
+              <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onEdit(); }}>
+                {isBusy ? "Working..." : "Edit"}
+              </RowActionItem>
+            ) : null}
+            <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onMove(); }}>
+              Move to folder...
             </RowActionItem>
-          ) : null}
-          {canEdit ? (
-            <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onEdit(); }}>
-              {isBusy ? "Working..." : "Edit"}
+            <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onSendToMood(); }}>
+              Send to mood...
             </RowActionItem>
-          ) : null}
-          <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onMove(); }}>
-            Move to folder...
-          </RowActionItem>
-          <RowActionItem disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onSendToMood(); }}>
-            Send to mood...
-          </RowActionItem>
-          <RowActionItem danger disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onDelete(); }}>
-            {isDeleting ? "Deleting..." : "Delete"}
-          </RowActionItem>
-        </RowActionsMenu>
+            <RowActionItem danger disabled={isDeleting || isBusy} onClick={() => { setIsMenuOpen(false); onDelete(); }}>
+              {isDeleting ? "Deleting..." : "Delete"}
+            </RowActionItem>
+          </RowActionsMenu>
+        )}
       </div>
-      {showWarnings && hasWarnings ? (
+      {showWarnings && hasWarnings && !isSelecting ? (
         <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-100">
           {entry.processingWarnings.map((warning) => (
             <p key={warning.code} className="leading-relaxed">
@@ -523,6 +707,93 @@ function MoveBookSheet(props: {
         </div>
         <div className="border-t border-neutral-800 p-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
           <button type="button" onClick={onClose} className="w-full rounded-xl border border-neutral-700 px-4 py-2 text-sm font-semibold text-neutral-300">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoveSelectionSheet(props: {
+  summary: string;
+  layout: LibraryLayout;
+  disabledFolderIds: Set<string>;
+  onClose: () => void;
+  onMove: (parentId: string | null) => void;
+}) {
+  const { summary, layout, disabledFolderIds, onClose, onMove } = props;
+  const folders = sortFolders(layout.folders);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/55 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+      <div className="max-h-[78dvh] w-full overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl shadow-black/60">
+        <div className="border-b border-neutral-800 p-4">
+          <div className="text-sm font-semibold text-neutral-100">Move to folder...</div>
+          <div className="mt-1 truncate text-xs text-neutral-500">{summary}</div>
+        </div>
+        <div className="max-h-[58dvh] overflow-auto p-2">
+          <button
+            type="button"
+            onClick={() => onMove(null)}
+            className="w-full rounded-xl px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800"
+          >
+            Library root
+          </button>
+          {folders.map((folder) => {
+            const path = [...getFolderPathLabels(layout, folder.parentId), folder.label].join(" / ");
+            const disabled = disabledFolderIds.has(folder.id);
+            return (
+              <button
+                key={folder.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => onMove(folder.id)}
+                className="mt-1 w-full rounded-xl px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {path}
+              </button>
+            );
+          })}
+        </div>
+        <div className="border-t border-neutral-800 p-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+          <button type="button" onClick={onClose} className="w-full rounded-xl border border-neutral-700 px-4 py-2 text-sm font-semibold text-neutral-300">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkDeleteFoldersDialog(props: {
+  folderCount: number;
+  bookCount: number;
+  onCancel: () => void;
+  onDeleteOnly: () => void;
+  onDeleteWithContents: () => void;
+}) {
+  const { folderCount, bookCount, onCancel, onDeleteOnly, onDeleteWithContents } = props;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/55 px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
+      <div className="w-full rounded-2xl border border-neutral-800 bg-neutral-900 p-4 shadow-2xl shadow-black/60">
+        <div className="text-base font-semibold text-neutral-100">
+          Delete {folderCount} folder{folderCount === 1 ? "" : "s"}?
+        </div>
+        <p className="mt-1 text-sm text-neutral-400">
+          Choose whether books stay in your Library or get deleted too.
+        </p>
+        <div className="mt-4 grid gap-2">
+          <button type="button" onClick={onDeleteOnly} className="rounded-xl border border-neutral-700 bg-neutral-950 px-4 py-3 text-left text-sm font-semibold text-neutral-100">
+            Delete folders only
+            <span className="block text-xs font-normal text-neutral-500">Move contents up one level.</span>
+          </button>
+          <button type="button" onClick={onDeleteWithContents} className="rounded-xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-left text-sm font-semibold text-red-200">
+            Delete folders + contents
+            <span className="block text-xs font-normal text-red-200/70">
+              Delete {bookCount} book{bookCount === 1 ? "" : "s"} from the app.
+            </span>
+          </button>
+          <button type="button" onClick={onCancel} className="rounded-xl border border-neutral-700 px-4 py-2 text-sm font-semibold text-neutral-300">
             Cancel
           </button>
         </div>
@@ -776,6 +1047,7 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
     onCreateFolder,
     onDeleteFolderOnly,
     onDeleteFolderWithContents,
+    onBulkDelete,
     onOpenBook,
     onEditBook,
     onDeleteBook,
@@ -784,8 +1056,20 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
   const [editingFolder, setEditingFolder] = useState<LibraryFolder | null>(null);
   const [deletingFolder, setDeletingFolder] = useState<LibraryFolder | null>(null);
   const [movingBook, setMovingBook] = useState<LibraryEntry | null>(null);
+  const [movingSelection, setMovingSelection] = useState(false);
+  const [bulkDeleteFolders, setBulkDeleteFolders] = useState<{
+    folderIds: string[];
+    bookIds: string[];
+    bookCount: number;
+  } | null>(null);
   const [moodAssignmentTarget, setMoodAssignmentTarget] = useState<MoodAssignmentTarget | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 120, tolerance: 6 } }));
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [partialFolderIds, setPartialFolderIds] = useState<Set<string>>(() => new Set());
+  const [inputArmored, setInputArmored] = useState(false);
+  const armorTimerRef = useRef<number>(0);
+  // Distance-based drag so a still long-press can enter multi-select.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const foldersForParent = useCallback(
     (parentId: string | null) => sortFolders(layout.folders.filter((folder) => folder.parentId === parentId)),
@@ -812,8 +1096,50 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
     [onLayoutChange]
   );
 
+  const armAgainstGhostClick = useCallback(() => {
+    setInputArmored(true);
+    window.clearTimeout(armorTimerRef.current);
+    armorTimerRef.current = window.setTimeout(() => {
+      setInputArmored(false);
+    }, 450);
+  }, []);
+
+  const applySelection = useCallback((nextSelected: Set<string>) => {
+    const synced = syncCascadeFolderSelection(nextSelected, layout);
+    setSelected(synced.selected);
+    setPartialFolderIds(synced.partialFolderIds);
+  }, [layout]);
+
+  const exitSelecting = useCallback(() => {
+    setIsSelecting(false);
+    setSelected(new Set());
+    setPartialFolderIds(new Set());
+    setMovingSelection(false);
+    setBulkDeleteFolders(null);
+  }, []);
+
+  const enterSelecting = useCallback((item: LibraryLayoutItemId) => {
+    setIsSelecting(true);
+    armAgainstGhostClick();
+    if (item.kind === "folder") {
+      applySelection(setFolderSubtreeSelected(new Set(), layout, item.id, true));
+    } else {
+      applySelection(new Set([librarySelectionKey(item)]));
+    }
+  }, [applySelection, armAgainstGhostClick, layout]);
+
+  const selectionSummary = useMemo(
+    () => formatLibrarySelectionCount(selected),
+    [selected]
+  );
+
+  const allSelectionKeys = useMemo(() => listAllLibrarySelectionKeys(layout), [layout]);
+  const allSelected =
+    allSelectionKeys.length > 0 && allSelectionKeys.every((key) => selected.has(key));
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      if (isSelecting) return;
       const active = parseItemKey(String(event.active.id));
       if (!active || !event.over) return;
       const overId = String(event.over.id);
@@ -840,8 +1166,63 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
       if (activeIndex === -1 || overIndex === -1 || activeIndex === overIndex) return;
       applyLayout(reorderLibraryLevel(layout, parentId, arrayMove(currentItems, activeIndex, overIndex)));
     },
-    [applyLayout, layout, levelItems]
+    [applyLayout, isSelecting, layout, levelItems]
   );
+
+  const handleBulkDelete = useCallback(() => {
+    if (selected.size === 0 || inputArmored) return;
+    const rootFolderIds = getRootSelectedFolderIds(selected, layout);
+    const selectedBookIds = collectSelectedBookIds(selected);
+    if (rootFolderIds.length === 0) {
+      void onBulkDelete({ mode: "books", bookIds: selectedBookIds });
+      exitSelecting();
+      return;
+    }
+    const folderBookCount = countBooksInFolderIds(layout, rootFolderIds);
+    const booksOutsideFolders = selectedBookIds.filter((bookId) => {
+      return !rootFolderIds.some((folderId) =>
+        getBookIdsInFolderSubtree(layout, folderId).includes(bookId)
+      );
+    });
+    if (folderBookCount === 0 && booksOutsideFolders.length === 0) {
+      void onBulkDelete({ mode: "folders-only", folderIds: rootFolderIds });
+      exitSelecting();
+      return;
+    }
+    setBulkDeleteFolders({
+      folderIds: rootFolderIds,
+      bookIds: selectedBookIds,
+      bookCount: folderBookCount + booksOutsideFolders.length,
+    });
+  }, [exitSelecting, inputArmored, layout, onBulkDelete, selected]);
+
+  const handleBulkMove = useCallback((parentId: string | null) => {
+    const movable = getMovableSelection(selected, layout);
+    let next = layout;
+    for (const folderId of movable.folderIds) {
+      next = moveLibraryFolder(next, folderId, parentId);
+    }
+    for (const bookId of movable.bookIds) {
+      next = moveBookToFolder(next, bookId, parentId);
+    }
+    applyLayout(next);
+    if (parentId) {
+      setExpanded((current) => new Set(current).add(parentId));
+    }
+    setMovingSelection(false);
+    exitSelecting();
+  }, [applyLayout, exitSelecting, layout, selected]);
+
+  const disabledMoveFolderIds = useMemo(() => {
+    const movable = getMovableSelection(selected, layout);
+    const blocked = new Set<string>();
+    for (const folderId of movable.folderIds) {
+      for (const id of getFolderDescendantIds(layout, folderId)) {
+        blocked.add(id);
+      }
+    }
+    return blocked;
+  }, [layout, selected]);
 
   const renderLevel = (parentId: string | null, depth: number): ReactNode => {
     const folders = foldersForParent(parentId);
@@ -853,14 +1234,23 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
           {folders.map((folder) => {
             const isExpanded = expanded.has(folder.id);
             const childCount = foldersForParent(folder.id).length + entriesForParent(folder.id).length;
+            const folderKey = librarySelectionKey({ kind: "folder", id: folder.id });
             return (
               <div key={folder.id} className="space-y-3">
-                <SortableShell id={itemKey({ kind: "folder", id: folder.id })} data={{ kind: "folder", id: folder.id, parentId }}>
+                <SortableShell
+                  id={itemKey({ kind: "folder", id: folder.id })}
+                  data={{ kind: "folder", id: folder.id, parentId }}
+                  disabled={isSelecting}
+                >
                   <FolderRow
                     folder={folder}
                     depth={depth}
                     childCount={childCount}
                     expanded={isExpanded}
+                    isSelecting={isSelecting}
+                    isSelected={selected.has(folderKey)}
+                    isPartial={partialFolderIds.has(folder.id)}
+                    inputArmored={inputArmored}
                     onToggle={() => {
                       setExpanded((current) => {
                         const next = new Set(current);
@@ -882,6 +1272,12 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
                       });
                     }}
                     onDelete={() => setDeletingFolder(folder)}
+                    onEnterSelect={() => enterSelecting({ kind: "folder", id: folder.id })}
+                    onToggleSelect={() => {
+                      applySelection(
+                        toggleLibrarySelection(selected, layout, { kind: "folder", id: folder.id })
+                      );
+                    }}
                   />
                 </SortableShell>
                 {isExpanded ? renderLevel(folder.id, depth + 1) : null}
@@ -891,13 +1287,22 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
           {books.map((entry) => {
             const isDeleting = deletingBookId === entry.id;
             const isBusy = busyBookIds.has(entry.id);
+            const bookKey = librarySelectionKey({ kind: "book", id: entry.id });
             return (
-              <SortableShell key={entry.id} id={itemKey({ kind: "book", id: entry.id })} data={{ kind: "book", id: entry.id, parentId }}>
+              <SortableShell
+                key={entry.id}
+                id={itemKey({ kind: "book", id: entry.id })}
+                data={{ kind: "book", id: entry.id, parentId }}
+                disabled={isSelecting}
+              >
                 <BookRow
                   entry={entry}
                   depth={depth}
                   isDeleting={isDeleting}
                   isBusy={isBusy}
+                  isSelecting={isSelecting}
+                  isSelected={selected.has(bookKey)}
+                  inputArmored={inputArmored}
                   onOpen={() => onOpenBook(entry)}
                   onEdit={() => onEditBook(entry)}
                   onMove={() => setMovingBook(entry)}
@@ -909,6 +1314,12 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
                     });
                   }}
                   onDelete={() => onDeleteBook(entry)}
+                  onEnterSelect={() => enterSelecting({ kind: "book", id: entry.id })}
+                  onToggleSelect={() => {
+                    applySelection(
+                      toggleLibrarySelection(selected, layout, { kind: "book", id: entry.id })
+                    );
+                  }}
                 />
               </SortableShell>
             );
@@ -936,13 +1347,43 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
 
   return (
     <div className="space-y-4 pb-[calc(env(safe-area-inset-bottom,0px)+12rem)]">
-      <button
-        type="button"
-        onClick={() => onCreateFolder(null)}
-        className="w-full rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/20 px-4 py-3 text-sm font-semibold text-neutral-400 hover:border-cyan-400/40 hover:text-cyan-200"
-      >
-        + New folder
-      </button>
+      {isSelecting ? (
+        <LibraryBulkBar
+          summary={selectionSummary}
+          selectAllLabel={allSelected ? "Clear" : "Select all"}
+          disabled={selected.size === 0 || inputArmored}
+          onSelectAll={() => {
+            if (allSelected) {
+              applySelection(new Set());
+              return;
+            }
+            applySelection(new Set(allSelectionKeys));
+          }}
+          onMove={() => {
+            if (selected.size === 0 || inputArmored) return;
+            setMovingSelection(true);
+          }}
+          onSendToMood={() => {
+            if (selected.size === 0 || inputArmored) return;
+            const bookIds = collectSelectedBookIds(selected);
+            setMoodAssignmentTarget({
+              kind: "book",
+              title: selectionSummary,
+              bookIds,
+            });
+          }}
+          onCancel={exitSelecting}
+          onDelete={handleBulkDelete}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => onCreateFolder(null)}
+          className="w-full rounded-2xl border border-dashed border-neutral-700 bg-neutral-900/20 px-4 py-3 text-sm font-semibold text-neutral-400 hover:border-cyan-400/40 hover:text-cyan-200"
+        >
+          + New folder
+        </button>
+      )}
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         {renderLevel(null, 0)}
@@ -975,6 +1416,28 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
         />
       ) : null}
 
+      {bulkDeleteFolders ? (
+        <BulkDeleteFoldersDialog
+          folderCount={bulkDeleteFolders.folderIds.length}
+          bookCount={bulkDeleteFolders.bookCount}
+          onCancel={() => setBulkDeleteFolders(null)}
+          onDeleteOnly={() => {
+            void onBulkDelete({ mode: "folders-only", folderIds: bulkDeleteFolders.folderIds });
+            setBulkDeleteFolders(null);
+            exitSelecting();
+          }}
+          onDeleteWithContents={() => {
+            void onBulkDelete({
+              mode: "folders-with-contents",
+              folderIds: bulkDeleteFolders.folderIds,
+              bookIds: bulkDeleteFolders.bookIds,
+            });
+            setBulkDeleteFolders(null);
+            exitSelecting();
+          }}
+        />
+      ) : null}
+
       {movingBook ? (
         <MoveBookSheet
           entry={movingBook}
@@ -987,12 +1450,24 @@ export default function LibraryTreeView(props: LibraryTreeViewProps) {
         />
       ) : null}
 
+      {movingSelection ? (
+        <MoveSelectionSheet
+          summary={selectionSummary}
+          layout={layout}
+          disabledFolderIds={disabledMoveFolderIds}
+          onClose={() => setMovingSelection(false)}
+          onMove={handleBulkMove}
+        />
+      ) : null}
+
       {moodAssignmentTarget?.kind === "book" ? (
         <MoodAssignmentSheet
           title={moodAssignmentTarget.title}
           bookIds={moodAssignmentTarget.bookIds}
           onClose={() => setMoodAssignmentTarget(null)}
-          onAssigned={() => undefined}
+          onAssigned={() => {
+            if (isSelecting) exitSelecting();
+          }}
         />
       ) : null}
       {moodAssignmentTarget?.kind === "folder" ? (
